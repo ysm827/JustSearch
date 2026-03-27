@@ -11,5 +11,5 @@ services:
       - ./user_data:/app/user_data
     environment:
       - HEADLESS=true
-    command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
