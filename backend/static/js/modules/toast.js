@@ -19,8 +19,9 @@ export function showToast(message, type = 'info', duration = 3000) {
 
     toast.innerHTML = `
         <span class="material-symbols-rounded">${icon}</span>
-        <span class="toast-message">${message}</span>
+        <span class="toast-message"></span>
     `;
+    toast.querySelector('.toast-message').textContent = message;
 
     container.appendChild(toast);
 
