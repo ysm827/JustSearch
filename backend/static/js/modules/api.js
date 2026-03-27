@@ -24,8 +24,15 @@ export async function saveSettingsAPI(newSettings) {
             body: JSON.stringify(newSettings)
         });
         if (res.ok) {
-            setSettings(newSettings);
-            applyTheme(newSettings.theme);
+            const data = await res.json();
+            // Update state with server response (contains masked api_key)
+            if (data.settings) {
+                setSettings(data.settings);
+                applyTheme(data.settings.theme);
+            } else {
+                setSettings(newSettings);
+                applyTheme(newSettings.theme);
+            }
             return true;
         }
     } catch (e) {
@@ -116,7 +123,6 @@ export async function streamChat(query, callbacks) {
             body: JSON.stringify({
                 query: query,
                 session_id: state.currentSessionId,
-                api_key: state.settings.api_key,
                 base_url: state.settings.base_url,
                 model: model || state.settings.model_id,
                 search_engine: state.settings.search_engine,

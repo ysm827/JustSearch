@@ -20,6 +20,14 @@ DEFAULT_SETTINGS = {
 
 _api_key_index = 0
 
+def mask_api_key(api_key: str) -> str:
+    """Mask API key for display, e.g. sk-****1234"""
+    if not api_key:
+        return ""
+    if len(api_key) <= 8:
+        return "****"
+    return api_key[:3] + "****" + api_key[-4:]
+
 def get_next_api_key(api_keys_str: str) -> str:
     """
     Get the next API key from a comma-separated string in a round-robin fashion.

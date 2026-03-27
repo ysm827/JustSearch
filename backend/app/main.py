@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from .workflow import SearchWorkflow
 from .chat_manager import list_chats, load_chat_history, save_chat_history, delete_chat, get_chat_path, delete_all_chats
-from .settings_manager import load_settings, save_settings, DEFAULT_SETTINGS, get_next_api_key
+from .settings_manager import load_settings, save_settings, DEFAULT_SETTINGS, get_next_api_key, mask_api_key
 from .browser_manager import init_global_browser, shutdown_global_browser, get_interaction_session, mark_interaction_completed
 import base64
 
@@ -58,7 +58,6 @@ class ChatRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     model: Optional[str] = None
-    api_key: Optional[str] = None
     base_url: Optional[str] = None
     search_engine: Optional[str] = None
     max_results: Optional[int] = 8
@@ -74,6 +73,9 @@ class SettingsModel(BaseModel):
     max_results: Optional[int] = 8
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
+
+# Sensitive fields that should be masked when sent to frontend
+_SENSITIVE_FIELDS = {"api_key"}
 
 # Endpoints
 
@@ -131,23 +133,42 @@ def delete_all_chats_endpoint():
 
 @app.get("/api/settings")
 async def get_settings_endpoint():
-    return await load_settings()
+    settings = await load_settings()
+    # Mask sensitive fields before sending to frontend
+    for field in _SENSITIVE_FIELDS:
+        if field in settings and settings[field]:
+            settings[field] = mask_api_key(settings[field])
+    return settings
 
 @app.get("/api/settings/default")
 def get_default_settings_endpoint():
-    return DEFAULT_SETTINGS
+    settings = DEFAULT_SETTINGS.copy()
+    for field in _SENSITIVE_FIELDS:
+        if field in settings and settings[field]:
+            settings[field] = mask_api_key(settings[field])
+    return settings
 
 @app.post("/api/settings")
 async def update_settings_endpoint(settings: SettingsModel):
-    # Convert pydantic model to dict, excluding None values if needed, 
+    # Convert pydantic model to dict, excluding None values if needed,
     # but here we want to overwrite so we use model_dump
     current = await load_settings()
     new_settings = settings.model_dump()
+
+    # If api_key is masked (starts with same prefix + ****), keep the existing one
+    incoming_key = new_settings.get("api_key", "")
+    if incoming_key and "****" in incoming_key:
+        new_settings["api_key"] = current.get("api_key", "")
+
     # Merge with current to preserve keys not in model if any
     current.update(new_settings)
-    
+
     if await save_settings(current):
-        return {"status": "ok"}
+        # Return masked settings
+        for field in _SENSITIVE_FIELDS:
+            if field in current and current[field]:
+                current[field] = mask_api_key(current[field])
+        return {"status": "ok", "settings": current}
     raise HTTPException(status_code=500, detail="Failed to save settings")
 
 @app.websocket("/ws/browser/{session_id}")
@@ -255,12 +276,12 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     defaults = await load_settings()
-    api_key = request.api_key or defaults.get("api_key")
-    
+    api_key = defaults.get("api_key", "")
+
     # Apply round-robin selection if multiple keys are provided
     if api_key:
         api_key = get_next_api_key(api_key)
-        
+
     base_url = request.base_url or defaults.get("base_url")
     
     model = request.model

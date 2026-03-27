@@ -283,6 +283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('max-results-input').value = state.settings.max_results || 8;
             document.getElementById('max-iterations-input').value = state.settings.max_iterations || 5;
             document.getElementById('api-key-input').value = state.settings.api_key || '';
+            document.getElementById('api-key-input').placeholder = state.settings.api_key ? '已配置 (留空保持不变)' : '输入 API Key';
             document.getElementById('base-url-input').value = state.settings.base_url || '';
             document.getElementById('model-input').value = state.settings.model_id || '';
             document.getElementById('interactive-search-input').checked = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
@@ -309,12 +310,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
         saveSettingsBtn.addEventListener('click', async () => {
+             const apiKeyInput = document.getElementById('api-key-input');
+             let apiKeyValue = apiKeyInput.value.trim();
+
+             // If the value looks masked (unchanged), don't send it
+             if (apiKeyValue && apiKeyValue.includes('****')) {
+                 apiKeyValue = '';
+             }
+
              const newSettings = {
                 theme: document.getElementById('theme-select').value,
                 search_engine: document.getElementById('engine-select').value,
                 max_results: parseInt(document.getElementById('max-results-input').value) || 8,
                 max_iterations: parseInt(document.getElementById('max-iterations-input').value) || 5,
-                api_key: document.getElementById('api-key-input').value,
+                api_key: apiKeyValue,
                 base_url: document.getElementById('base-url-input').value,
                 model_id: document.getElementById('model-input').value,
                 interactive_search: document.getElementById('interactive-search-input').checked
