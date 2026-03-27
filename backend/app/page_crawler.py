@@ -1,9 +1,11 @@
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
 import os
 import random
+import socket
 import urllib.parse
 
 from playwright.async_api import Page
@@ -13,6 +15,42 @@ from .browser_context import get_new_page, _GLOBAL_CONTEXT
 from .interaction import register_interaction_session, remove_interaction_session
 
 logger = logging.getLogger(__name__)
+
+# Private network ranges to block
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def is_private_url(url: str) -> bool:
+    """Check if a URL points to a private/internal network address."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return True  # No hostname = invalid
+
+        # Block localhost variants
+        if hostname in ("localhost", "localhost.localdomain"):
+            return True
+
+        # Try to resolve hostname and check if IP is private
+        addrinfo = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for family, _, _, _, sockaddr in addrinfo:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return True
+    except (socket.gaierror, ValueError, OSError):
+        pass  # If we can't resolve, let it through (DNS may resolve later)
+
+    return False
 
 
 async def resolve_redirect_url(url: str, log_func=None) -> str:
@@ -241,6 +279,12 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         await init_global_browser()
 
     final_url = await resolve_redirect_url(url, log_func)
+
+    # SSRF protection: block private/internal network addresses
+    if is_private_url(final_url):
+        if log_func:
+            log_func(f"浏览器: 拒绝访问内网地址 {final_url}")
+        return "错误: 不允许访问内网地址"
 
     page = await get_new_page()
     await stealth.apply_stealth_async(page)
