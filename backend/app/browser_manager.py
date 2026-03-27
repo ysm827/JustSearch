@@ -260,7 +260,7 @@ class BrowserManager:
                 except Exception as e:
                     if log_func: log_func(f"浏览器: 搜索页面加载失败: {e}")
                     return []
-            
+
             # Check for CAPTCHA (Mainly for Google)
             try:
                 content = await page.content()
@@ -274,11 +274,9 @@ class BrowserManager:
                         if await page.query_selector(check):
                             detected_captcha = True
                             break
-                    except:
+                    except Exception:
                         pass
                 elif check in content:
-                    detected_captcha = True
-                    break
 
             if detected_captcha:
                 print(f"CAPTCHA detected on {engine_name}!")
@@ -313,7 +311,7 @@ class BrowserManager:
                     try:
                         await page.wait_for_selector(config["wait_selector"], timeout=60000)
                         if log_func: log_func("浏览器: 验证码已解决，继续...")
-                    except:
+                    except asyncio.TimeoutError:
                         if log_func: log_func("浏览器: 验证码未及时解决。")
             
             # Wait for results
@@ -564,9 +562,9 @@ class BrowserManager:
                             
                     except Exception as e:
                          if log_func: log_func(f"浏览器: GitHub 页面分析失败: {e}")
-            except:
+            except Exception:
                 pass
-            
+
             # --- Interactive Mode ---
             if interactive_mode and query and llm_client:
                 try:
@@ -633,7 +631,7 @@ class BrowserManager:
                             # Wait for potential new content
                             try:
                                 await page.wait_for_load_state("networkidle", timeout=3000)
-                            except:
+                            except Exception:
                                 await asyncio.sleep(2.0)
                         else:
                             if log_func: log_func("浏览器: AI 决定不点击任何元素。")
@@ -658,7 +656,7 @@ class BrowserManager:
                             # We should wait for the new page to load.
                             try:
                                 await page.wait_for_load_state("domcontentloaded", timeout=5000)
-                            except:
+                            except Exception:
                                 await asyncio.sleep(2) # Fallback sleep
                             continue
                     # For other errors, we might want to log but return empty string rather than crashing

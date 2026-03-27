@@ -194,30 +194,30 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
                     if x is not None and y is not None:
                         try:
                             await page.mouse.click(x, y)
-                        except:
+                        except Exception:
                             pass
-                
+
                 elif action == "scroll":
                     delta_y = data.get("dy", 0)
                     try:
                         await page.mouse.wheel(0, delta_y)
-                    except:
+                    except Exception:
                         pass
-                    
+
                 elif action == "type":
                     text = data.get("text")
                     if text:
                         try:
                             await page.keyboard.type(text)
-                        except:
+                        except Exception:
                             pass
-                
+
                 elif action == "key":
                     key = data.get("key")
                     if key:
                         try:
                             await page.keyboard.press(key)
-                        except:
+                        except Exception:
                             pass
 
                 elif action == "complete":
@@ -246,7 +246,7 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
     finally:
         try:
             await websocket.close()
-        except:
+        except Exception:
             pass
 
 @app.post("/api/chat")

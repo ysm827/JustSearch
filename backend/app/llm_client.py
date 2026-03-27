@@ -31,7 +31,7 @@ class LLMClient:
                 return json.loads(match.group(0))
                 
             return None
-        except Exception:
+        except (json.JSONDecodeError, ValueError, KeyError):
             return None
 
     async def analyze_task(self, user_input: str, history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:

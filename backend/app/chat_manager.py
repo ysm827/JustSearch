@@ -34,7 +34,7 @@ async def save_chat_history(session_id, messages, title=None):
                     content = await f.read()
                     data = json.loads(content)
                     title = data.get('title', '新对话')
-            except:
+            except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
                 title = messages[0]['content'][:30] + "..." if messages else "新对话"
         else:
             title = messages[0]['content'][:30] + "..." if messages else "新对话"
@@ -63,7 +63,7 @@ async def list_chats():
                     "title": data.get("title", "无标题对话"),
                     "timestamp": data.get("timestamp", "")
                 }
-        except:
+        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
             return None
 
     tasks = [read_chat_meta(f) for f in files]
