@@ -100,6 +100,8 @@ async def save_settings(settings):
     try:
         async with aiofiles.open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
             await f.write(json.dumps(settings, indent=4, ensure_ascii=False))
+        # Restrict file permissions to owner only (contains API keys)
+        os.chmod(SETTINGS_FILE, 0o600)
         return True
     except Exception as e:
         logger.error("Error saving settings: %s", e)
