@@ -58,10 +58,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="JustSearch", lifespan=lifespan)
 
-# CORS
+# CORS - configurable via CORS_ORIGINS env var (comma-separated), defaults to localhost only
+_cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
+_cors_origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
