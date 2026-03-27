@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, Request
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -21,7 +21,7 @@ import base64
 
 logger = logging.getLogger(__name__)
 
-# Authentication
+# Authentication - token is injected into the HTML page automatically
 AUTH_TOKEN = None
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -431,6 +431,17 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
 
 @app.get("/")
 async def read_index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    # Inject auth token into the HTML so the frontend can use it automatically
+    html_path = os.path.join(STATIC_DIR, "index.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    token = _get_auth_token()
+    # Insert a meta tag with the token right after <head>
+    html = html.replace(
+        "<head>",
+        f'<head>\n<meta name="auth-token" content="{token}">',
+        1
+    )
+    return HTMLResponse(content=html)
 
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

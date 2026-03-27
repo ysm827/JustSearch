@@ -157,7 +157,7 @@ class BrowserManager:
             results = []
             for attempt in range(3):
                 try:
-                    results = await page.evaluate("""([selectors, max_results]) => {
+                    results = await page.evaluate(r"""([selectors, max_results]) => {
                         const results = [];
                         let count = 0;
 

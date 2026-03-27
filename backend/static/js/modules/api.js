@@ -37,10 +37,14 @@ function showAuthPrompt() {
     }
 }
 
-// Restore token from localStorage on load
+// Restore token from localStorage, or read from meta tag injected by server
 const savedToken = localStorage.getItem('auth_token');
+const metaToken = document.querySelector('meta[name="auth-token"]');
 if (savedToken) {
     state.authToken = savedToken;
+} else if (metaToken) {
+    state.authToken = metaToken.getAttribute('content');
+    localStorage.setItem('auth_token', state.authToken);
 }
 
 export async function saveSettingsAPI(newSettings) {
