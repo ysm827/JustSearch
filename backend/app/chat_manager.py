@@ -77,19 +77,16 @@ async def list_chats():
     chats.sort(key=lambda x: x['timestamp'], reverse=True)
     return chats
 
-def delete_chat(session_id):
-    # os.remove is synchronous but fast enough for file system ops usually, 
-    # but strictly speaking for async pureness we could use run_in_executor if needed.
-    # For now, os.remove is acceptable as it's not I/O blocking in the same way as read/write content.
+async def delete_chat(session_id):
     file_path = os.path.join(CHATS_DIR, f"{session_id}.json")
     if os.path.exists(file_path):
-        os.remove(file_path)
+        await asyncio.to_thread(os.remove, file_path)
 
-def delete_all_chats():
+async def delete_all_chats():
     files = glob.glob(os.path.join(CHATS_DIR, "*.json"))
     for f in files:
         try:
-            os.remove(f)
+            await asyncio.to_thread(os.remove, f)
         except Exception as e:
             logger.error("Failed to delete %s: %s", f, e)
 

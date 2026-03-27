@@ -113,6 +113,14 @@
                     <label>最大迭代次数</label>
                     <input type="number" id="max-iterations-input" placeholder="5" min="1" max="10">
                 </div>
+                <div class="form-group">
+                    <label>最大并发页面数</label>
+                    <input type="number" id="max-concurrent-pages-input" placeholder="10" min="1" max="30" title="同时打开的浏览器页面上限，防止内存溢出">
+                </div>
+                <div class="form-group">
+                    <label>对话上下文轮数</label>
+                    <input type="number" id="max-context-turns-input" placeholder="6" min="1" max="20" title="发送给 AI 的最近对话轮数，越多上下文越长但消耗更多 token">
+                </div>
                 <div class="form-group" style="display: flex; align-items: center; justify-content: space-between;">
                     <label for="interactive-search-input" style="margin-bottom: 0;">交互式深度搜索 (Beta)</label>
                     <input type="checkbox" id="interactive-search-input" style="width: auto;" checked>

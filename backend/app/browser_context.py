@@ -16,6 +16,11 @@ _SEARCH_LOCK = asyncio.Lock()
 _LAST_REQUEST_TIME = 0
 _MIN_SEARCH_INTERVAL = 4.0  # Minimum seconds between search requests
 
+# 并发控制：限制同时打开的页面数，防止 OOM
+_MAX_CONCURRENT_PAGES = int(os.getenv("MAX_CONCURRENT_PAGES", "10"))
+_PAGE_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+_MAX_BROWSER_RESTART_RETRIES = 3  # 浏览器重启最大重试次数
+
 # List of modern Chrome User Agents for macOS/Windows to rotate
 CHROME_USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -135,28 +140,67 @@ async def shutdown_global_browser():
     """Shuts down the global browser instance."""
     global _GLOBAL_PLAYWRIGHT, _GLOBAL_CONTEXT
     if _GLOBAL_CONTEXT:
-        await _GLOBAL_CONTEXT.close()
+        try:
+            await _GLOBAL_CONTEXT.close()
+        except Exception as e:
+            logger.warning("Error closing browser context: %s", e)
         _GLOBAL_CONTEXT = None
     if _GLOBAL_PLAYWRIGHT:
-        await _GLOBAL_PLAYWRIGHT.stop()
+        try:
+            await _GLOBAL_PLAYWRIGHT.stop()
+        except Exception as e:
+            logger.warning("Error stopping playwright: %s", e)
         _GLOBAL_PLAYWRIGHT = None
     logger.info("Global Browser Shutdown.")
 
 
 async def get_new_page() -> Page:
-    """Creates a new page, restarting the browser if the context is closed."""
+    """
+    Creates a new page with concurrency control.
+    Restarts the browser if the context is closed (up to _MAX_BROWSER_RESTART_RETRIES times).
+    """
     global _GLOBAL_CONTEXT
 
     if not _GLOBAL_CONTEXT:
         await init_global_browser()
 
-    try:
-        return await _GLOBAL_CONTEXT.new_page()
-    except Exception as e:
-        if "Target page, context or browser has been closed" in str(e):
-            logger.warning("Browser context error: %s. Restarting browser...", e)
-            await shutdown_global_browser()
-            # Restore previous headless mode
-            await init_global_browser(headless_override=_CURRENT_HEADLESS_MODE)
+    # 并发控制：等待信号量
+    await _PAGE_SEMAPHORE.acquire()
+
+    for attempt in range(1, _MAX_BROWSER_RESTART_RETRIES + 1):
+        try:
             return await _GLOBAL_CONTEXT.new_page()
-        raise e
+        except Exception as e:
+            if "Target page, context or browser has been closed" in str(e):
+                logger.warning("Browser context error (attempt %d/%d): %s",
+                               attempt, _MAX_BROWSER_RESTART_RETRIES, e)
+                try:
+                    await shutdown_global_browser()
+                    await init_global_browser(headless_override=_CURRENT_HEADLESS_MODE)
+                except Exception as restart_err:
+                    logger.error("Browser restart failed (attempt %d/%d): %s",
+                                 attempt, _MAX_BROWSER_RESTART_RETRIES, restart_err)
+                    if attempt == _MAX_BROWSER_RESTART_RETRIES:
+                        _PAGE_SEMAPHORE.release()
+                        raise RuntimeError(
+                            f"浏览器连续重启 {_MAX_BROWSER_RESTART_RETRIES} 次均失败: {restart_err}"
+                        ) from restart_err
+                    await asyncio.sleep(2 * attempt)  # 指数退避
+            else:
+                _PAGE_SEMAPHORE.release()
+                raise e
+
+    # 理论上不会到这里
+    _PAGE_SEMAPHORE.release()
+    raise RuntimeError("无法创建新的浏览器页面")
+
+
+async def release_page(page: Page):
+    """关闭页面并释放信号量。应在 finally 块中调用。"""
+    try:
+        if page:
+            await page.close()
+    except Exception as e:
+        logger.warning("关闭页面时出错: %s", e)
+    finally:
+        _PAGE_SEMAPHORE.release()

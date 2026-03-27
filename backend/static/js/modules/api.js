@@ -176,72 +176,109 @@ export async function fetchGitHubStats() {
 
 export async function streamChat(query, callbacks) {
     const { onLog, onAnswerChunk, onAnswer, onSources, onError, onDone, onMeta, signal, model } = callbacks;
-    
-    try {
-        const response = await authedFetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                query: query,
-                session_id: state.currentSessionId,
-                base_url: state.settings.base_url,
-                model: model || state.settings.model_id,
-                search_engine: state.settings.search_engine,
-                max_results: state.settings.max_results,
-                max_iterations: state.settings.max_iterations,
-                interactive_search: state.settings.interactive_search
-            }),
-            signal: signal
-        });
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+    const MAX_RETRIES = 2;
+    const RETRY_DELAY = 3000; // 3 秒
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n\n');
-            buffer = lines.pop(); 
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const response = await authedFetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: query,
+                    session_id: state.currentSessionId,
+                    base_url: state.settings.base_url,
+                    model: model || state.settings.model_id,
+                    search_engine: state.settings.search_engine,
+                    max_results: state.settings.max_results,
+                    max_iterations: state.settings.max_iterations,
+                    interactive_search: state.settings.interactive_search
+                }),
+                signal: signal
+            });
 
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.slice(6);
-                    if (dataStr === '[DONE]') {
-                        if (onDone) onDone();
-                        return;
-                    }
-                    
-                    try {
-                        const event = JSON.parse(dataStr);
-                        
-                        if (event.type === 'meta' && onMeta) {
-                            onMeta(event.session_id);
+            // Handle non-200 responses (e.g. 400 missing API key)
+            if (!response.ok) {
+                let errMsg = `请求失败 (${response.status})`;
+                try {
+                    const errData = await response.json();
+                    if (errData.detail) errMsg = errData.detail;
+                } catch (e) {}
+                if (onError) onError(errMsg);
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let lastEventOffset = 0; // 记录已处理的位置，用于重连时跳过已处理内容
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    lastEventOffset += line.length + 2; // +2 for \n\n
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.slice(6);
+                        if (dataStr === '[DONE]') {
+                            if (onDone) onDone();
+                            return; // 正常结束，无需重试
                         }
-                        else if (event.type === 'log' && onLog) {
-                            onLog(event.content);
-                        }  
-                        else if (event.type === 'sources' && onSources) {
-                            onSources(event.content);
+
+                        try {
+                            const event = JSON.parse(dataStr);
+
+                            if (event.type === 'meta' && onMeta) {
+                                onMeta(event.session_id);
+                            }
+                            else if (event.type === 'log' && onLog) {
+                                onLog(event.content);
+                            }
+                            else if (event.type === 'sources' && onSources) {
+                                onSources(event.content);
+                            }
+                            else if (event.type === 'answer_chunk' && onAnswerChunk) {
+                                onAnswerChunk(event.content);
+                            }
+                            else if (event.type === 'answer' && onAnswer) {
+                                onAnswer(event.content, event.session_id);
+                            }
+                            else if (event.type === 'error' && onError) {
+                                onError(event.content);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing SSE event', e);
                         }
-                        else if (event.type === 'answer_chunk' && onAnswerChunk) {
-                            onAnswerChunk(event.content);
-                        }
-                        else if (event.type === 'answer' && onAnswer) {
-                            onAnswer(event.content, event.session_id);
-                        }
-                        else if (event.type === 'error' && onError) {
-                            onError(event.content);
-                        }
-                    } catch (e) {
-                        console.error('Error parsing SSE event', e);
                     }
                 }
             }
+
+            // 流正常结束
+            return;
+
+        } catch (e) {
+            // AbortError 是用户主动取消，不重试
+            if (e.name === 'AbortError') {
+                throw e;
+            }
+
+            // 网络错误等可重试
+            if (attempt < MAX_RETRIES) {
+                console.warn(`SSE 连接断开 (尝试 ${attempt + 1}/${MAX_RETRIES + 1})，${RETRY_DELAY / 1000} 秒后重连...`, e);
+                if (onLog) {
+                    onLog(`网络连接中断，正在重连 (${attempt + 1}/${MAX_RETRIES + 1})...`);
+                }
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+            } else {
+                console.error('SSE 连接重试耗尽:', e);
+                throw e;
+            }
         }
-    } catch (e) {
-        throw e; // Let caller handle AbortError etc.
     }
 }

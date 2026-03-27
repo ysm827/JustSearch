@@ -11,7 +11,7 @@ from typing import List, Dict
 
 from .browser_context import (
     _GLOBAL_CONTEXT, _SEARCH_LOCK, _LAST_REQUEST_TIME, _MIN_SEARCH_INTERVAL,
-    init_global_browser, shutdown_global_browser, get_new_page
+    init_global_browser, shutdown_global_browser, get_new_page, release_page
 )
 from .search_engine import load_selectors
 from .interaction import (
@@ -21,6 +21,13 @@ from .interaction import (
 from .page_crawler import crawl_page
 
 logger = logging.getLogger(__name__)
+
+
+def _truncate_for_log(text: str, max_len: int = 50) -> str:
+    """截断搜索词用于日志输出，避免泄露完整查询。"""
+    if not text or len(text) <= max_len:
+        return text
+    return text[:max_len] + "..."
 
 
 class BrowserManager:
@@ -48,11 +55,12 @@ class BrowserManager:
         engine_name = self.engine.capitalize()
 
         page = await get_new_page()
-        await self.stealth.apply_stealth_async(page)
-
         try:
+            await self.stealth.apply_stealth_async(page)
+
+            safe_query = _truncate_for_log(query)
             if log_func:
-                log_func(f"浏览器: 正在前往 {engine_name} 搜索 '{query}'...")
+                log_func(f"浏览器: 正在前往 {engine_name} 搜索 '{safe_query}'...")
 
             delay = random.uniform(1.0, 2.0)
             await asyncio.sleep(delay)
@@ -229,6 +237,11 @@ class BrowserManager:
                             continue
                     raise e
 
+            # 降级兜底：CSS 选择器解析无结果时，尝试从页面纯文本提取链接
+            if not results:
+                logger.info("CSS 选择器解析无结果，尝试降级文本提取...")
+                results = await self._fallback_text_extract(page, query, log_func)
+
             if log_func:
                 log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
             return results
@@ -239,7 +252,43 @@ class BrowserManager:
                 log_func(f"浏览器错误: {msg}")
             return []
         finally:
-            await page.close()
+            await release_page(page)
+
+    async def _fallback_text_extract(self, page: Page, query: str, log_func=None) -> List[Dict]:
+        """
+        降级方案：当 CSS 选择器解析失败时，从页面纯文本 + 链接提取搜索结果。
+        """
+        try:
+            items = await page.evaluate(r"""(maxResults) => {
+                const results = [];
+                const anchors = document.querySelectorAll('a[href^="http"]');
+                let count = 0;
+                for (const a of anchors) {
+                    if (count >= maxResults) break;
+                    const href = a.href;
+                    // 跳过搜索引擎自身的导航链接
+                    if (href.includes('search?') || href.includes('/l/')) continue;
+                    const title = (a.innerText || a.textContent || '').trim();
+                    if (title.length < 5 || title.length > 200) continue;
+                    // 获取附近的文本作为摘要
+                    const parent = a.closest('div, article, li') || a.parentElement;
+                    const snippet = parent ? parent.innerText.replace(title, '').trim().substring(0, 200) : '';
+                    results.push({ title, url: href, snippet });
+                    count++;
+                }
+                return results;
+            }""", self.max_results)
+
+            # 给结果编号
+            for i, item in enumerate(items):
+                item['id'] = i + 1
+
+            if items and log_func:
+                log_func(f"浏览器: 降级文本提取到 {len(items)} 个结果。")
+            return items
+        except Exception as e:
+            logger.warning("降级文本提取失败: %s", e)
+            return []
 
     async def crawl_page(self, url: str, log_func=None, interactive_mode: bool = False,
                          query: str = None, llm_client=None, session_id: str = None) -> str:

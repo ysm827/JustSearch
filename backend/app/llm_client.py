@@ -10,32 +10,86 @@ from .prompts import TASK_ANALYSIS_PROMPT, RELEVANCE_ASSESSMENT_PROMPT, CLICK_DE
 
 logger = logging.getLogger(__name__)
 
+# 默认上下文轮数，可通过 settings 覆盖
+_DEFAULT_CONTEXT_TURNS = 6
+
+# LLM 调用最大重试次数和超时
+_LLM_MAX_RETRIES = 3
+_LLM_TIMEOUT = 120  # 秒
+
+
 class LLMClient:
-    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1", model: str = "deepseek-ai/deepseek-v3.2"):
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1",
+                 model: str = "deepseek-ai/deepseek-v3.2", max_context_turns: int = _DEFAULT_CONTEXT_TURNS):
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            max_retries=_LLM_MAX_RETRIES,
+            timeout=_LLM_TIMEOUT,
+        )
         self.model = model
+        self.max_context_turns = max_context_turns
 
     def _extract_json(self, text: str) -> Optional[Dict]:
-        """Helper to safely extract JSON from LLM response"""
+        """
+        健壮地从 LLM 响应中提取 JSON。
+        优先级: 直接解析 > markdown 代码块 > 贪婪正则
+        """
+        if not text:
+            return None
+
+        # 1. 直接尝试解析整段文本
+        text = text.strip()
         try:
-            # 1. Try to find code block with json
-            match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+            data = json.loads(text)
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # 2. 尝试从 markdown 代码块提取（```json ... ``` 或 ``` ... ```）
+        code_block_patterns = [
+            r'```json\s*\n?(.*?)\n?\s*```',
+            r'```\s*\n?(.*?)\n?\s*```',
+        ]
+        for pattern in code_block_patterns:
+            match = re.search(pattern, text, re.DOTALL)
             if match:
-                return json.loads(match.group(1))
-            
-            # 2. Try to find code block without language
-            match = re.search(r'```\s*(\{.*?\})\s*```', text, re.DOTALL)
-            if match:
-                return json.loads(match.group(1))
-                
-            # 3. Try to find raw JSON object
-            match = re.search(r'\{.*\}', text, re.DOTALL)
-            if match:
-                return json.loads(match.group(0))
-                
-            return None
-        except (json.JSONDecodeError, ValueError, KeyError):
-            return None
+                try:
+                    data = json.loads(match.group(1).strip())
+                    if isinstance(data, dict):
+                        return data
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+        # 3. 找到最外层的 { ... } 或 [ ... ] 并尝试解析
+        # 使用括号匹配来处理嵌套结构
+        for opener, closer in [('{', '}'), ('[', ']')]:
+            start = text.find(opener)
+            if start == -1:
+                continue
+            depth = 0
+            for i in range(start, len(text)):
+                if text[i] == opener:
+                    depth += 1
+                elif text[i] == closer:
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start:i + 1]
+                        try:
+                            data = json.loads(candidate)
+                            if isinstance(data, (dict, list)):
+                                return data
+                        except (json.JSONDecodeError, ValueError):
+                            break
+
+        return None
+
+    def _build_context_messages(self, history: Optional[List[Dict[str, str]]], max_turns: int) -> List[Dict[str, str]]:
+        """从历史记录中构建上下文消息，限制轮数。"""
+        if not history:
+            return []
+        return history[-max_turns:]
 
     async def analyze_task(self, user_input: str, history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """
@@ -46,32 +100,30 @@ class LLMClient:
         system_prompt = TASK_ANALYSIS_PROMPT.format(current_time=current_time)
 
         messages = [{"role": "system", "content": system_prompt}]
-        
+
         # Add conversation history if available
-        if history:
-            # We only take the last few turns to keep context relevant and short
-            recent_history = history[-6:] 
-            for msg in recent_history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                messages.append({"role": role, "content": content})
-        
+        context = self._build_context_messages(history, self.max_context_turns)
+        for msg in context:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            messages.append({"role": role, "content": content})
+
         messages.append({"role": "user", "content": user_input})
-        
+
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages
             )
             content = response.choices[0].message.content
-            
+
             data = self._extract_json(content)
             if data:
                 return data
-            
+
             # Fallback
             return {"type": "search", "queries": [user_input]}
-            
+
         except Exception as e:
             logger.error("Error in analyze_task: %s", e)
             return {"type": "search", "queries": [user_input]}
@@ -84,8 +136,8 @@ class LLMClient:
         """
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = RELEVANCE_ASSESSMENT_PROMPT.format(current_time=current_time)
-        
-        user_message = f"Query: {query}\n\nSnippets:\n"
+
+        user_message = f"Query: {_truncate_for_log(query)}\n\nSnippets:\n"
         for item in snippets:
             date_info = f"Date: {item.get('date', 'N/A')}\n" if item.get('date') else ""
             user_message += f"ID [{item['id']}]: Title: {item['title']}\n{date_info}Snippet: {item['snippet']}\n\n"
@@ -99,11 +151,11 @@ class LLMClient:
                 ]
             )
             content = response.choices[0].message.content
-            
+
             data = self._extract_json(content)
             if data:
                 return data.get("relevant_ids", [])
-            
+
             return [s['id'] for s in snippets[:3]]
         except Exception as e:
             logger.error("Error in assess_relevance: %s", e)
@@ -118,15 +170,15 @@ class LLMClient:
         """
         if not elements:
             return []
-            
+
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = CLICK_DECISION_PROMPT.format(current_time=current_time)
-        
-        user_message = f"Query: {query}\n\nClickable Elements:\n"
+
+        user_message = f"Query: {_truncate_for_log(query)}\n\nClickable Elements:\n"
         # Limit elements to avoid token overflow
         for el in elements[:50]:
             user_message += f"ID [{el['id']}]: [{el['tag']}] {el['text'][:100]}\n"
-            
+
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
@@ -136,7 +188,7 @@ class LLMClient:
                 ]
             )
             content = response.choices[0].message.content
-            
+
             data = self._extract_json(content)
             if data:
                 return data.get("clicked_ids", [])
@@ -152,24 +204,22 @@ class LLMClient:
         Returns: {"status": "sufficient"|"insufficient", "answer": "..."}
         """
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+
         system_prompt = ANSWER_GENERATION_PROMPT.format(current_time=current_time)
-        
+
         messages = [{"role": "system", "content": system_prompt}]
-        
+
         # Add conversation history context if available
-        if history:
-             # We only take the last few turns
-            recent_history = history[-6:]
-            for msg in recent_history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                messages.append({"role": role, "content": content})
-        
+        context = self._build_context_messages(history, self.max_context_turns)
+        for msg in context:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            messages.append({"role": role, "content": content})
+
         user_message = f"Question: {query}\n\nSources:\n"
         for src in sources:
-            # Add strict length limit per source context to avoid token overflow
-            content_preview = src['content'][:5000] 
+            # 智能段落截取：在段落边界截断，而非硬切
+            content_preview = _smart_truncate(src['content'], max_chars=8000)
             date_info = f" (Date: {src.get('date')})" if src.get('date') else ""
             user_message += f"Source [{src['id']}] (Title: {src['title']}{date_info}):\n{content_preview}\n\n"
 
@@ -181,18 +231,18 @@ class LLMClient:
                 messages=messages,
                 stream=True
             )
-            
+
             full_content = ""
-            status = "sufficient" # Default assumption
+            status = "sufficient"  # Default assumption
             parsing_header = True
             header_buffer = ""
             answer_started = False
-            
+
             async for chunk in response:
                 if chunk.choices and chunk.choices[0].delta.content:
                     content = chunk.choices[0].delta.content
                     full_content += content
-                    
+
                     if parsing_header:
                         header_buffer += content
                         # Check for Status
@@ -200,7 +250,7 @@ class LLMClient:
                              status_line = [line for line in header_buffer.split("\n") if "Status:" in line][0]
                              if "insufficient" in status_line.lower():
                                  status = "insufficient"
-                        
+
                         # Check for Answer start
                         if "Answer:" in header_buffer:
                             parts = header_buffer.split("Answer:", 1)
@@ -212,7 +262,7 @@ class LLMClient:
                                 answer_started = True
                                 if status == "sufficient" and stream_callback and answer_chunk:
                                     stream_callback(answer_chunk)
-                        
+
                         # Safety valve: if buffer gets too long without Answer:, maybe model didn't follow format
                         if len(header_buffer) > 500 and not answer_started:
                             parsing_header = False
@@ -227,16 +277,50 @@ class LLMClient:
 
             # Post-processing to extract clean answer from full_content
             final_answer = full_content
-            if "Answer:" in full_content:
-                final_answer = full_content.split("Answer:", 1)[1].strip()
-            elif "Status:" in full_content:
+            if "Answer:" in final_answer:
+                final_answer = final_answer.split("Answer:", 1)[1].strip()
+            elif "Status:" in final_answer:
                  # Fallback if Answer: tag missing but Status present
-                 lines = full_content.split("\n")
+                 lines = final_answer.split("\n")
                  # Filter out metadata lines
                  final_answer = "\n".join([l for l in lines if not l.startswith("Status:") and not l.startswith("Missing_Info:")])
-            
+
             return {"status": status, "answer": final_answer.strip()}
 
         except Exception as e:
             logger.error("Error in generate_answer: %s", e)
             return {"status": "sufficient", "answer": f"生成答案时出错: {e}"}
+
+
+def _truncate_for_log(text: str, max_len: int = 50) -> str:
+    """截断文本用于日志输出，避免泄露完整查询。"""
+    if not text or len(text) <= max_len:
+        return text
+    return text[:max_len] + "..."
+
+
+def _smart_truncate(text: str, max_chars: int = 8000) -> str:
+    """
+    智能截取文本，尽量在段落/句子边界截断。
+    如果文本本身短于限制，直接返回。
+    """
+    if not text or len(text) <= max_chars:
+        return text or ""
+
+    # 找到 max_chars 附近的段落边界（双换行）
+    truncated = text[:max_chars]
+    last_paragraph = truncated.rfind('\n\n')
+    if last_paragraph > max_chars * 0.5:  # 至少保留 50% 的内容
+        return truncated[:last_paragraph].rstrip() + "\n\n[... 内容已截取]"
+
+    # 退而求其次：单换行边界
+    last_newline = truncated.rfind('\n')
+    if last_newline > max_chars * 0.5:
+        return truncated[:last_newline].rstrip() + "\n[... 内容已截取]"
+
+    # 最后手段：句号/问号/叹号
+    last_sentence = max(truncated.rfind('。'), truncated.rfind('.'), truncated.rfind('!'), truncated.rfind('?'))
+    if last_sentence > max_chars * 0.5:
+        return truncated[:last_sentence + 1] + "[... 内容已截取]"
+
+    return truncated + "[... 内容已截取]"

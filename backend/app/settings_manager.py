@@ -36,12 +36,14 @@ def get_or_create_auth_token() -> str:
 DEFAULT_SETTINGS = {
     "theme": "light",
     "api_key": "",
-    "base_url": "https://api-proxy.de/nvidia/v1",
-    "model_id": "deepseek-ai/deepseek-v3.2,moonshotai/kimi-k2-instruct-0905,moonshotai/kimi-k2-thinking",
+    "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+    "model_id": "glm-5.1",
     "search_engine": "duckduckgo",
     "max_results": 8,
     "max_iterations": 5,
-    "interactive_search": True
+    "interactive_search": True,
+    "max_concurrent_pages": 10,
+    "max_context_turns": 6,
 }
 
 _api_key_index = 0

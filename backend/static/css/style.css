@@ -609,23 +609,36 @@ body {
 
 .modal-content {
     background-color: var(--background-color);
-    margin: 10% auto;
-    padding: 20px;
+    margin: 5vh auto;
+    padding: 0;
     border-radius: 12px;
-    width: 400px;
+    width: 420px;
+    max-width: 90vw;
+    max-height: 85vh;
     box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .modal-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    padding: 20px 20px 0;
+    flex-shrink: 0;
 }
 
 .modal-header h2 {
     margin: 0;
     font-size: 18px;
+}
+
+.modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 .close-btn {
@@ -707,6 +720,9 @@ body {
     display: flex;
     gap: 10px;
     margin-top: 20px;
+    flex-shrink: 0;
+    padding: 15px 20px;
+    border-top: 1px solid var(--hover-bg);
 }
 
 .modal-actions button {
@@ -870,7 +886,7 @@ body {
     
     .modal-content {
         width: 90%;
-        margin: 20% auto;
+        margin: 5vh auto;
     }
     
     .hero-logo span {

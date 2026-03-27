@@ -11,7 +11,7 @@ import urllib.parse
 from playwright.async_api import Page
 from playwright_stealth import Stealth
 
-from .browser_context import get_new_page, _GLOBAL_CONTEXT
+from .browser_context import get_new_page, release_page, _GLOBAL_CONTEXT
 from .interaction import register_interaction_session, remove_interaction_session
 
 logger = logging.getLogger(__name__)
@@ -302,8 +302,15 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         try:
             await page.goto(final_url, wait_until="domcontentloaded", timeout=20000)
         except Exception as e:
+            err_msg = str(e)
+            is_timeout = "Timeout" in err_msg or "timeout" in err_msg
             if log_func:
-                log_func(f"浏览器: 加载页面超时或失败 {final_url}: {e}")
+                if is_timeout:
+                    log_func(f"浏览器: 加载页面超时 {final_url}")
+                else:
+                    log_func(f"浏览器: 加载页面失败 {final_url}: {e}")
+            if is_timeout:
+                return "[CRAWL_TIMEOUT]"
             return ""
 
         # Wait for content to stabilize
@@ -339,4 +346,4 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             log_func(f"浏览器错误: {msg}")
         return f"爬取页面时出错: {str(e)}"
     finally:
-        await page.close()
+        await release_page(page)

@@ -245,7 +245,9 @@ export function createLogContainer(logs) {
         logs.forEach(log => {
             const entry = document.createElement('div');
             entry.className = 'log-entry';
-            entry.innerHTML = `<span>${log}</span>`;
+            const span = document.createElement('span');
+            span.textContent = log;
+            entry.appendChild(span);
             logDetails.appendChild(entry);
         });
     }

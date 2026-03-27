@@ -1,16 +1,20 @@
 import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './modules/state.js';
 import { createCopyButton } from './modules/utils.js';
-import { initUI, elements, renderHistory, renderMessages, appendMessage, scrollToBottom, createDynamicLogContainer, renderWithCitations, updateActiveHistoryItem } from './modules/ui.js';
+import { initUI, elements, renderHistory, renderMessages, appendMessage, scrollToBottom, updateActiveHistoryItem } from './modules/ui.js';
 import { showToast } from './modules/toast.js';
+import { setupChatHandler } from './modules/chat.js';
 import * as API from './modules/api.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     initUI();
-    
+
     // --- Initialization ---
-    const settings = await API.fetchSettings(); // This also applies theme
+    const settings = await API.fetchSettings();
     updateModelSelector(settings.model_id);
     const history = await API.fetchHistory();
+
+    const { loadChat, deleteChat } = setupChatHandler(elements, renderHistory);
+
     renderHistory(history, state.currentSessionId, {
         onSelect: loadChat,
         onDelete: deleteChat
@@ -22,32 +26,32 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const currentVal = select.value;
         select.innerHTML = '';
-        
+
         if (!modelString) {
-             // Fallback
-             const option = document.createElement('option');
-             option.value = '';
-             option.textContent = 'Default';
-             select.appendChild(option);
-             return;
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'Default';
+            select.appendChild(option);
+            return;
         }
 
         const models = modelString.split(',').map(s => s.trim()).filter(s => s);
-        
+
         if (models.length === 0) {
-             const option = document.createElement('option');
-             option.value = '';
-             option.textContent = 'Default';
-             select.appendChild(option);
-             return;
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'Default';
+            select.appendChild(option);
+            return;
         }
 
         models.forEach(model => {
             const option = document.createElement('option');
             option.value = model;
-            option.textContent = model;
-            // Add tooltip so users can see full model name on hover
-            option.title = model;
+            // 友好短名：取斜杠后最后一段
+            const shortName = model.includes('/') ? model.split('/').pop() : model;
+            option.textContent = shortName;
+            option.title = model; // 完整名称在 tooltip
             select.appendChild(option);
         });
 
@@ -102,40 +106,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             elements.mobileOverlay.classList.remove('active');
         });
 
-        // Window Resize Handling for Stability
         window.addEventListener('resize', () => {
             if (window.innerWidth > 768) {
                 elements.sidebar.classList.remove('mobile-open');
                 elements.mobileOverlay.classList.remove('active');
             }
-        });
-
-        // Chat
-        elements.sendBtn.addEventListener('click', handleSendMessage);
-        elements.userInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSendMessage();
-            }
-        });
-
-        // Auto-resize textarea
-        elements.userInput.addEventListener('input', () => {
-            const text = elements.userInput.value;
-            elements.userInput.style.height = '40px'; // Reset to base height to calculate scrollHeight
-            const scrollHeight = elements.userInput.scrollHeight;
-            const maxHeight = 200; // Matches CSS max-height
-            
-            if (scrollHeight > maxHeight) {
-                elements.userInput.style.height = maxHeight + 'px';
-                elements.userInput.style.overflowY = 'auto';
-            } else {
-                elements.userInput.style.height = scrollHeight + 'px';
-                elements.userInput.style.overflowY = 'hidden';
-            }
-
-            // Disable send button when input is empty
-            updateSendButtonState();
         });
 
         elements.newChatBtn.addEventListener('click', () => {
@@ -148,152 +123,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             elements.userInput.style.height = '40px';
             elements.userInput.style.overflowY = 'hidden';
             elements.userInput.focus();
-            updateSendButtonState();
         });
-        
-        // Settings Modal
+
         setupSettingsModal();
         setupPasswordToggle();
         setupBrowserModal();
     }
 
-    function updateSendButtonState() {
-        const hasText = elements.userInput.value.trim().length > 0;
-        elements.sendBtn.disabled = !hasText && !state.isProcessing;
-        elements.sendBtn.style.opacity = (hasText || state.isProcessing) ? '1' : '0.4';
-        elements.sendBtn.style.cursor = (hasText || state.isProcessing) ? 'pointer' : 'default';
-    }
-
-    function setupBrowserModal() {
-        const modal = document.getElementById('browser-modal');
-        const closeBtn = document.getElementById('browser-close-btn');
-        const completeBtn = document.getElementById('browser-complete-btn');
-        const img = document.getElementById('browser-viewport');
-        const status = document.querySelector('.browser-status-overlay');
-        
-        if (!modal) return;
-
-        let ws = null;
-
-        closeBtn.addEventListener('click', () => {
-            modal.style.display = 'none';
-            if (ws) {
-                ws.close();
-                ws = null;
-            }
-        });
-
-        completeBtn.addEventListener('click', () => {
-            if (ws) {
-                ws.send(JSON.stringify({ action: 'complete' }));
-                completeBtn.disabled = true;
-                completeBtn.textContent = '正在提交...';
-            }
-        });
-
-        // Click handling on image
-        img.addEventListener('mousedown', (e) => {
-            if (!ws || img.style.display === 'none') return;
-            
-            const rect = img.getBoundingClientRect();
-            
-            // Map click on <img> to click on original viewport
-            const x = (e.clientX - rect.left) * (img.naturalWidth / rect.width);
-            const y = (e.clientY - rect.top) * (img.naturalHeight / rect.height);
-            
-            ws.send(JSON.stringify({
-                action: 'click',
-                x: x,
-                y: y
-            }));
-        });
-
-        // Scroll support for CAPTCHA pages
-        img.addEventListener('wheel', (e) => {
-            if (!ws || img.style.display === 'none') return;
-            e.preventDefault();
-            
-            ws.send(JSON.stringify({
-                action: 'scroll',
-                dy: e.deltaY
-            }));
-        }, { passive: false });
-
-        // Keyboard support for CAPTCHA pages
-        img.addEventListener('keydown', (e) => {
-            if (!ws || img.style.display === 'none') return;
-            ws.send(JSON.stringify({ action: 'key', key: e.key }));
-        });
-        // Make the image focusable for keyboard events
-        img.tabIndex = 0;
-        
-        // Expose open function to state or window
-        state.openBrowserModal = (sessionId) => {
-            modal.style.display = 'block'; 
-            status.style.display = 'block';
-            status.textContent = '正在连接浏览器...';
-            img.style.display = 'none';
-            completeBtn.disabled = false;
-            completeBtn.textContent = '完成验证，继续执行';
-            
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const tokenParam = state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : '';
-            const wsUrl = `${protocol}//${window.location.host}/ws/browser/${sessionId}${tokenParam}`;
-            
-            if (ws) ws.close();
-            ws = new WebSocket(wsUrl);
-            
-            ws.onopen = () => {
-                status.textContent = '已连接。等待画面...';
-                // Focus the viewport for keyboard input
-                img.focus();
-            };
-            
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                
-                if (data.type === 'frame') {
-                    status.style.display = 'none';
-                    img.style.display = 'block';
-                    img.src = `data:image/jpeg;base64,${data.image}`;
-                } else if (data.type === 'status') {
-                     if (data.msg === 'Completed') {
-                         modal.style.display = 'none';
-                         if (ws) {
-                             ws.close();
-                             ws = null;
-                         }
-                     }
-                }
-            };
-            
-            ws.onclose = () => {
-                if (modal.style.display !== 'none') {
-                    // Only show disconnected if we didn't close it intentionally
-                    if (completeBtn.textContent !== '正在提交...') {
-                        status.style.display = 'block';
-                        status.textContent = '连接已断开 (会话可能已结束)';
-                    }
-                }
-            };
-            
-            ws.onerror = (e) => {
-                console.error("WS Error", e);
-                status.textContent = '连接错误';
-            };
-        };
-    }
-    
     function setupPasswordToggle() {
         const toggleBtn = document.getElementById('toggle-api-key-btn');
         const apiKeyInput = document.getElementById('api-key-input');
-        
+
         if (toggleBtn && apiKeyInput) {
             toggleBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 const type = apiKeyInput.getAttribute('type') === 'password' ? 'text' : 'password';
                 apiKeyInput.setAttribute('type', type);
-                
+
                 const icon = toggleBtn.querySelector('.material-symbols-rounded');
                 if (icon) {
                     icon.textContent = type === 'password' ? 'visibility' : 'visibility_off';
@@ -301,7 +147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
     }
-    
+
     function setupSettingsModal() {
         const settingsBtn = document.getElementById('settings-btn');
         const closeBtn = document.querySelector('.close-btn');
@@ -320,8 +166,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('base-url-input').value = state.settings.base_url || '';
             document.getElementById('model-input').value = state.settings.model_id || '';
             document.getElementById('interactive-search-input').checked = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
+            document.getElementById('max-concurrent-pages-input').value = state.settings.max_concurrent_pages || 10;
+            document.getElementById('max-context-turns-input').value = state.settings.max_context_turns || 6;
 
-            // Fetch GitHub Stars (uses client-side cache)
             const starsCountElement = document.getElementById('github-stars-count');
             if (starsCountElement) {
                 const stats = await API.fetchGitHubStats();
@@ -345,7 +192,6 @@ document.addEventListener('DOMContentLoaded', async () => {
              const apiKeyInput = document.getElementById('api-key-input');
              let apiKeyValue = apiKeyInput.value.trim();
 
-             // If the value looks masked (unchanged), don't send it
              if (apiKeyValue && apiKeyValue.includes('****')) {
                  apiKeyValue = '';
              }
@@ -358,9 +204,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 api_key: apiKeyValue,
                 base_url: document.getElementById('base-url-input').value,
                 model_id: document.getElementById('model-input').value,
-                interactive_search: document.getElementById('interactive-search-input').checked
+                interactive_search: document.getElementById('interactive-search-input').checked,
+                max_concurrent_pages: parseInt(document.getElementById('max-concurrent-pages-input').value) || 10,
+                max_context_turns: parseInt(document.getElementById('max-context-turns-input').value) || 6,
             };
-            
+
             if (await API.saveSettingsAPI(newSettings)) {
                 updateModelSelector(newSettings.model_id);
                 elements.settingsModal.style.display = 'none';
@@ -369,7 +217,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast('保存设置失败', 'error');
             }
         });
-        
+
         resetSettingsBtn.addEventListener('click', async () => {
             if (!confirm('您确定要恢复默认设置吗？')) return;
             const defaults = await API.restoreDefaultSettingsAPI();
@@ -382,6 +230,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 document.getElementById('base-url-input').value = defaults.base_url || '';
                 document.getElementById('model-input').value = defaults.model_id || '';
                 document.getElementById('interactive-search-input').checked = defaults.interactive_search !== undefined ? defaults.interactive_search : true;
+                document.getElementById('max-concurrent-pages-input').value = defaults.max_concurrent_pages || 10;
+                document.getElementById('max-context-turns-input').value = defaults.max_context_turns || 6;
                 showToast('已恢复默认设置', 'success');
             } else {
                 showToast('加载默认设置失败', 'error');
@@ -389,7 +239,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         clearHistoryBtn.addEventListener('click', async () => {
-            // Add confirmation dialog for destructive action
             if (!confirm('确定要清除所有对话历史吗？此操作不可撤销。')) return;
             if (await API.clearHistoryAPI()) {
                  setCurrentSessionId(null);
@@ -406,156 +255,103 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    async function loadChat(sessionId) {
-        setCurrentSessionId(sessionId);
-        updateActiveHistoryItem(sessionId);
-        const data = await API.fetchChat(sessionId);
-        if (data) {
-            renderMessages(data.messages);
-        }
-    }
+    function setupBrowserModal() {
+        const modal = document.getElementById('browser-modal');
+        const closeBtn = document.getElementById('browser-close-btn');
+        const completeBtn = document.getElementById('browser-complete-btn');
+        const img = document.getElementById('browser-viewport');
+        const status = document.querySelector('.browser-status-overlay');
 
-    async function deleteChat(sessionId) {
-        if (await API.deleteChatAPI(sessionId)) {
-            if (state.currentSessionId === sessionId) {
-                elements.newChatBtn.click();
+        if (!modal) return;
+
+        let ws = null;
+
+        closeBtn.addEventListener('click', () => {
+            modal.style.display = 'none';
+            if (ws) {
+                ws.close();
+                ws = null;
             }
-            const history = await API.fetchHistory();
-            renderHistory(history, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat });
-            showToast('对话已删除', 'success');
-        } else {
-            showToast('删除对话失败', 'error');
-        }
-    }
+        });
 
-    async function handleSendMessage() {
-        if (state.isProcessing) {
-            if (state.abortController) {
-                state.abortController.abort();
-                setAbortController(null);
+        completeBtn.addEventListener('click', () => {
+            if (ws) {
+                ws.send(JSON.stringify({ action: 'complete' }));
+                completeBtn.disabled = true;
+                completeBtn.textContent = '正在提交...';
             }
-            return;
-        }
+        });
 
-        const text = elements.userInput.value.trim();
-        if (!text) return;
+        img.addEventListener('mousedown', (e) => {
+            if (!ws || img.style.display === 'none') return;
+            const rect = img.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (img.naturalWidth / rect.width);
+            const y = (e.clientY - rect.top) * (img.naturalHeight / rect.height);
+            ws.send(JSON.stringify({ action: 'click', x, y }));
+        });
 
-        const selectedModel = document.getElementById('model-select').value;
+        img.addEventListener('wheel', (e) => {
+            if (!ws || img.style.display === 'none') return;
+            e.preventDefault();
+            ws.send(JSON.stringify({ action: 'scroll', dy: e.deltaY }));
+        }, { passive: false });
 
-        elements.userInput.value = '';
-        elements.userInput.style.height = '40px';
-        elements.userInput.style.overflowY = 'hidden';
-        setIsProcessing(true);
-        updateSendButtonState();
-        elements.heroSection.style.display = 'none';
+        img.addEventListener('keydown', (e) => {
+            if (!ws || img.style.display === 'none') return;
+            ws.send(JSON.stringify({ action: 'key', key: e.key }));
+        });
+        img.tabIndex = 0;
 
-        const sendBtnIcon = elements.sendBtn.querySelector('.material-symbols-rounded');
-        sendBtnIcon.textContent = 'stop_circle';
+        state.openBrowserModal = (sessionId) => {
+            modal.style.display = 'block';
+            status.style.display = 'block';
+            status.textContent = '正在连接浏览器...';
+            img.style.display = 'none';
+            completeBtn.disabled = false;
+            completeBtn.textContent = '完成验证，继续执行';
 
-        appendMessage('user', text);
-        scrollToBottom();
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const tokenParam = state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : '';
+            const wsUrl = `${protocol}//${window.location.host}/ws/browser/${sessionId}${tokenParam}`;
 
-        // Assistant Message Placeholder
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message assistant';
-        
-        // Log Container
-        const { logContainer, logDetails, spinner, statusText } = createDynamicLogContainer();
-        msgDiv.appendChild(logContainer);
+            if (ws) ws.close();
+            ws = new WebSocket(wsUrl);
 
-        // Content
-        const answerDiv = document.createElement('div');
-        answerDiv.className = 'message-content markdown-body';
-        const contentWrapper = document.createElement('div');
-        contentWrapper.innerHTML = '<span class="blinking-cursor">...</span>';
-        answerDiv.appendChild(contentWrapper);
-        msgDiv.appendChild(answerDiv);
-        elements.chatContainer.appendChild(msgDiv);
-        scrollToBottom();
+            ws.onopen = () => {
+                status.textContent = '已连接。等待画面...';
+                img.focus();
+            };
 
-        const controller = new AbortController();
-        setAbortController(controller);
-        
-        let currentAnswerBuffer = '';
-        const copyBtn = createCopyButton(() => currentAnswerBuffer);
-        answerDiv.appendChild(copyBtn);
-
-        let currentSources = [];
-        let hasReceivedChunk = false;
-
-        try {
-            await API.streamChat(text, {
-                model: selectedModel,
-                signal: controller.signal,
-                onMeta: (sessionId) => {
-                    setCurrentSessionId(sessionId);
-                },
-                onLog: (msg) => {
-                    if (msg.includes('ACTION_REQUIRED: CAPTCHA_DETECTED')) {
-                        if (state.openBrowserModal) {
-                            state.openBrowserModal(state.currentSessionId);
-                        }
-                        msg = "需要人工验证。请在弹出的窗口中解决验证码。";
-                    }
-                    logContainer.style.display = 'block';
-                    statusText.textContent = msg;
-                    const entry = document.createElement('div');
-                    entry.className = 'log-entry';
-                    entry.innerHTML = `<span class="log-timestamp">${new Date().toLocaleTimeString()}</span> <span>${msg}</span>`;
-                    logDetails.appendChild(entry);
-                    logDetails.scrollTop = logDetails.scrollHeight;
-                },
-                onSources: (sources) => {
-                    currentSources = sources;
-                },
-                onAnswerChunk: (chunk) => {
-                    // Remove blinking cursor on first real chunk
-                    if (!hasReceivedChunk) {
-                        hasReceivedChunk = true;
-                        contentWrapper.innerHTML = '';
-                    }
-                    currentAnswerBuffer += chunk;
-                    contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
-                    scrollToBottom();
-                },
-                onAnswer: (finalAnswer, sessionId) => {
-                    currentAnswerBuffer = finalAnswer;
-                    // Ensure cursor is removed
-                    contentWrapper.innerHTML = renderWithCitations(finalAnswer, currentSources);
-                    setCurrentSessionId(sessionId);
-                    
-                    // Refresh history list to show new chat title
-                    API.fetchHistory().then(h => renderHistory(h, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat }));
-                },
-                onError: (err) => {
-                    // Remove blinking cursor on error too
-                    contentWrapper.innerHTML = `<div style="color:red">Error: ${err}</div>`;
-                },
-                onDone: () => {
-                     // Done
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'frame') {
+                    status.style.display = 'none';
+                    img.style.display = 'block';
+                    img.src = `data:image/jpeg;base64,${data.image}`;
+                } else if (data.type === 'status') {
+                     if (data.msg === 'Completed') {
+                         modal.style.display = 'none';
+                         if (ws) {
+                             ws.close();
+                             ws = null;
+                         }
+                     }
                 }
-            });
-        } catch (e) {
-             // Clean up blinking cursor on abort/error
-             if (!hasReceivedChunk) {
-                 contentWrapper.innerHTML = '';
-             }
+            };
 
-             if (e.name === 'AbortError') {
-                contentWrapper.innerHTML += `<div style="color:orange; margin-top: 10px;">[已由用户停止]</div>`;
-            } else {
-                console.error(e);
-                contentWrapper.innerHTML += `<div style="color:red">网络错误: ${e.message}</div>`;
-            }
-        } finally {
-            setIsProcessing(false);
-            setAbortController(null);
-            sendBtnIcon.textContent = 'send';
-            updateSendButtonState();
-            
-            spinner.classList.remove('rotating');
-            spinner.textContent = 'check_circle';
-            statusText.textContent = '已完成';
-        }
+            ws.onclose = () => {
+                if (modal.style.display !== 'none') {
+                    if (completeBtn.textContent !== '正在提交...') {
+                        status.style.display = 'block';
+                        status.textContent = '连接已断开 (会话可能已结束)';
+                    }
+                }
+            };
+
+            ws.onerror = (e) => {
+                console.error("WS Error", e);
+                status.textContent = '连接错误';
+            };
+        };
     }
 });

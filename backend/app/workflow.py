@@ -4,8 +4,8 @@ from .llm_client import LLMClient
 from .browser_manager import BrowserManager
 
 class SearchWorkflow:
-    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "duckduckgo", max_results: int = 8, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None):
-        self.llm = LLMClient(api_key, base_url, model)
+    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "duckduckgo", max_results: int = 8, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_context_turns: int = 6):
+        self.llm = LLMClient(api_key, base_url, model, max_context_turns=max_context_turns)
         # Pass the search engine preference to the browser manager
         self.browser = BrowserManager(engine=search_engine, max_results=max_results)
         self.max_iterations = max_iterations
@@ -95,6 +95,10 @@ class SearchWorkflow:
                         content = await self.browser.crawl_page(url, log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id)
                         visited_urls.add(url)
                         source_id_counter += 1
+                        # 过滤超时/空内容
+                        if content == "[CRAWL_TIMEOUT]" or not content:
+                            progress_callback(f"跳过超时/空页面: {url}")
+                            continue
                         new_sources.append({
                             "id": source_id_counter, 
                             "url": url, 
@@ -177,13 +181,18 @@ class SearchWorkflow:
                             for i, item in enumerate(to_crawl):
                                 visited_urls.add(item['url'])
                                 source_id_counter += 1
+                                content = contents[i]
+                                # 过滤超时/空内容
+                                if content == "[CRAWL_TIMEOUT]" or not content:
+                                    progress_callback(f"跳过超时/空页面: {item['url']}")
+                                    continue
                                 # [07] Structure Data
                                 new_sources.append({
                                     "id": source_id_counter, 
                                     "title": item['title'],
                                     "url": item['url'],
                                     "date": item.get('date', ''),
-                                    "content": contents[i]
+                                    "content": content
                                 })
                 
                 accumulated_sources.extend(new_sources)

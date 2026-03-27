@@ -97,6 +97,8 @@ class SettingsModel(BaseModel):
     max_results: Optional[int] = 8
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
+    max_concurrent_pages: Optional[int] = 10
+    max_context_turns: Optional[int] = 6
 
 # Sensitive fields that should be masked when sent to frontend
 _SENSITIVE_FIELDS = {"api_key"}
@@ -146,13 +148,13 @@ async def get_chat_endpoint(session_id: str, _auth: None = Depends(verify_token)
     return history
 
 @app.delete("/api/history/{session_id}")
-def delete_chat_endpoint(session_id: str, _auth: None = Depends(verify_token)):
-    delete_chat(session_id)
+async def delete_chat_endpoint(session_id: str, _auth: None = Depends(verify_token)):
+    await delete_chat(session_id)
     return {"status": "ok"}
 
 @app.delete("/api/history")
-def delete_all_chats_endpoint(_auth: None = Depends(verify_token)):
-    delete_all_chats()
+async def delete_all_chats_endpoint(_auth: None = Depends(verify_token)):
+    await delete_all_chats()
     return {"status": "ok"}
 
 @app.get("/api/settings")
@@ -326,14 +328,16 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
     max_results = request.max_results or defaults.get("max_results", 8)
     max_iterations = request.max_iterations or defaults.get("max_iterations", 5)
     interactive_search = request.interactive_search if request.interactive_search is not None else defaults.get("interactive_search", True)
+    max_context_turns = defaults.get("max_context_turns", 6)
     
     if not api_key:
-        # Fallback to env var if available, or error
+        # Fallback to env var if available
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-             # We can't raise HTTP exception inside streaming response easily if we start streaming.
-             # But here we haven't started.
-             pass # Let the workflow fail or prompt user
+            raise HTTPException(
+                status_code=400,
+                detail="请先在设置中配置 API 密钥（API Key）。"
+            )
 
     # Ensure session_id
     session_id = request.session_id
@@ -344,7 +348,7 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
     # Note: SearchWorkflow might fail if api_key is missing. 
     # We should catch this.
     try:
-        workflow = SearchWorkflow(api_key, base_url, model, search_engine, max_results, max_iterations, interactive_search, session_id=session_id)
+        workflow = SearchWorkflow(api_key, base_url, model, search_engine, max_results, max_iterations, interactive_search, session_id=session_id, max_context_turns=max_context_turns)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     
