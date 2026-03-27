@@ -672,16 +672,6 @@ class BrowserManager:
                 content = page.prepend_text + content
                 content_len = len(content)
             
-            # DEBUG: Print content snippet to verify what LLM sees
-            print(f"\n--- CRAWLED CONTENT SNIPPET ({url}) ---\n{content[:1000]}\n----------------------------------------\n")
-            
-            # Write full content to file for debugging
-            try:
-                with open("crawled_debug.txt", "w", encoding="utf-8") as f:
-                    f.write(f"URL: {url}\nContent:\n{content}")
-            except Exception as e:
-                print(f"Failed to write debug file: {e}")
-
             if log_func: log_func(f"浏览器: 已爬取 {url} - 提取了 {content_len} 个字符。")
             return content.strip()
             
