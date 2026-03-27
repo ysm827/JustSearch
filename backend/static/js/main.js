@@ -46,6 +46,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             const option = document.createElement('option');
             option.value = model;
             option.textContent = model;
+            // Add tooltip so users can see full model name on hover
+            option.title = model;
             select.appendChild(option);
         });
 
@@ -119,6 +121,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Auto-resize textarea
         elements.userInput.addEventListener('input', () => {
+            const text = elements.userInput.value;
             elements.userInput.style.height = '40px'; // Reset to base height to calculate scrollHeight
             const scrollHeight = elements.userInput.scrollHeight;
             const maxHeight = 200; // Matches CSS max-height
@@ -130,18 +133,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                 elements.userInput.style.height = scrollHeight + 'px';
                 elements.userInput.style.overflowY = 'hidden';
             }
+
+            // Disable send button when input is empty
+            updateSendButtonState();
         });
 
         elements.newChatBtn.addEventListener('click', () => {
             setCurrentSessionId(null);
             elements.chatContainer.innerHTML = '';
-            elements.chatContainer.appendChild(elements.heroSection);
             elements.heroSection.style.display = 'block';
+            elements.chatContainer.appendChild(elements.heroSection);
             updateActiveHistoryItem(null);
             elements.userInput.value = '';
             elements.userInput.style.height = '40px';
             elements.userInput.style.overflowY = 'hidden';
             elements.userInput.focus();
+            updateSendButtonState();
         });
         
         // Settings Modal
@@ -149,7 +156,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupPasswordToggle();
         setupBrowserModal();
     }
-    
+
+    function updateSendButtonState() {
+        const hasText = elements.userInput.value.trim().length > 0;
+        elements.sendBtn.disabled = !hasText && !state.isProcessing;
+        elements.sendBtn.style.opacity = (hasText || state.isProcessing) ? '1' : '0.4';
+        elements.sendBtn.style.cursor = (hasText || state.isProcessing) ? 'pointer' : 'default';
+    }
+
     function setupBrowserModal() {
         const modal = document.getElementById('browser-modal');
         const closeBtn = document.getElementById('browser-close-btn');
@@ -184,9 +198,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             const rect = img.getBoundingClientRect();
             
             // Map click on <img> to click on original viewport
-            // img.naturalWidth is the actual width of the screenshot (viewport width)
-            // rect.width is the displayed width
-            
             const x = (e.clientX - rect.left) * (img.naturalWidth / rect.width);
             const y = (e.clientY - rect.top) * (img.naturalHeight / rect.height);
             
@@ -196,6 +207,25 @@ document.addEventListener('DOMContentLoaded', async () => {
                 y: y
             }));
         });
+
+        // Scroll support for CAPTCHA pages
+        img.addEventListener('wheel', (e) => {
+            if (!ws || img.style.display === 'none') return;
+            e.preventDefault();
+            
+            ws.send(JSON.stringify({
+                action: 'scroll',
+                dy: e.deltaY
+            }));
+        }, { passive: false });
+
+        // Keyboard support for CAPTCHA pages
+        img.addEventListener('keydown', (e) => {
+            if (!ws || img.style.display === 'none') return;
+            ws.send(JSON.stringify({ action: 'key', key: e.key }));
+        });
+        // Make the image focusable for keyboard events
+        img.tabIndex = 0;
         
         // Expose open function to state or window
         state.openBrowserModal = (sessionId) => {
@@ -215,6 +245,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             ws.onopen = () => {
                 status.textContent = '已连接。等待画面...';
+                // Focus the viewport for keyboard input
+                img.focus();
             };
             
             ws.onmessage = (event) => {
@@ -289,10 +321,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('model-input').value = state.settings.model_id || '';
             document.getElementById('interactive-search-input').checked = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
 
-            // Fetch GitHub Stars
+            // Fetch GitHub Stars (uses client-side cache)
             const starsCountElement = document.getElementById('github-stars-count');
             if (starsCountElement) {
-                starsCountElement.textContent = '...';
                 const stats = await API.fetchGitHubStats();
                 if (stats && stats.stars !== undefined) {
                     starsCountElement.textContent = stats.stars;
@@ -358,12 +389,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         clearHistoryBtn.addEventListener('click', async () => {
+            // Add confirmation dialog for destructive action
+            if (!confirm('确定要清除所有对话历史吗？此操作不可撤销。')) return;
             if (await API.clearHistoryAPI()) {
                  setCurrentSessionId(null);
                  elements.historyList.innerHTML = '';
                  elements.chatContainer.innerHTML = '';
-                 elements.chatContainer.appendChild(elements.heroSection);
                  elements.heroSection.style.display = 'block';
+                 elements.chatContainer.appendChild(elements.heroSection);
                  updateActiveHistoryItem(null);
                  elements.settingsModal.style.display = 'none';
                  showToast('历史记录已清除', 'success');
@@ -413,6 +446,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         elements.userInput.style.height = '40px';
         elements.userInput.style.overflowY = 'hidden';
         setIsProcessing(true);
+        updateSendButtonState();
         elements.heroSection.style.display = 'none';
 
         const sendBtnIcon = elements.sendBtn.querySelector('.material-symbols-rounded');
@@ -447,6 +481,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         answerDiv.appendChild(copyBtn);
 
         let currentSources = [];
+        let hasReceivedChunk = false;
 
         try {
             await API.streamChat(text, {
@@ -474,12 +509,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                     currentSources = sources;
                 },
                 onAnswerChunk: (chunk) => {
+                    // Remove blinking cursor on first real chunk
+                    if (!hasReceivedChunk) {
+                        hasReceivedChunk = true;
+                        contentWrapper.innerHTML = '';
+                    }
                     currentAnswerBuffer += chunk;
                     contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
                     scrollToBottom();
                 },
                 onAnswer: (finalAnswer, sessionId) => {
                     currentAnswerBuffer = finalAnswer;
+                    // Ensure cursor is removed
                     contentWrapper.innerHTML = renderWithCitations(finalAnswer, currentSources);
                     setCurrentSessionId(sessionId);
                     
@@ -487,23 +528,30 @@ document.addEventListener('DOMContentLoaded', async () => {
                     API.fetchHistory().then(h => renderHistory(h, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat }));
                 },
                 onError: (err) => {
-                    contentWrapper.innerHTML += `<div style="color:red">Error: ${err}</div>`;
+                    // Remove blinking cursor on error too
+                    contentWrapper.innerHTML = `<div style="color:red">Error: ${err}</div>`;
                 },
                 onDone: () => {
                      // Done
                 }
             });
         } catch (e) {
+             // Clean up blinking cursor on abort/error
+             if (!hasReceivedChunk) {
+                 contentWrapper.innerHTML = '';
+             }
+
              if (e.name === 'AbortError') {
                 contentWrapper.innerHTML += `<div style="color:orange; margin-top: 10px;">[已由用户停止]</div>`;
             } else {
                 console.error(e);
-                contentWrapper.innerHTML = `<div style="color:red">网络错误: ${e.message}</div>`;
+                contentWrapper.innerHTML += `<div style="color:red">网络错误: ${e.message}</div>`;
             }
         } finally {
             setIsProcessing(false);
             setAbortController(null);
             sendBtnIcon.textContent = 'send';
+            updateSendButtonState();
             
             spinner.classList.remove('rotating');
             spinner.textContent = 'check_circle';

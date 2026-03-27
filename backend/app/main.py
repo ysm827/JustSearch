@@ -359,6 +359,7 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
 
         queue = asyncio.Queue()
         logs = []
+        accumulated_sources = []
         
         def progress_callback(msg):
             logs.append(msg)
@@ -368,6 +369,7 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
             queue.put_nowait({"type": "answer_chunk", "content": chunk})
             
         def source_callback(sources):
+            accumulated_sources.extend(sources)
             queue.put_nowait({"type": "sources", "content": sources})
 
         task = asyncio.create_task(workflow.run(request.query, progress_callback, stream_callback, context_messages, source_callback))
@@ -401,7 +403,7 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
                 
                 new_messages = [
                     {"role": "user", "content": request.query},
-                    {"role": "assistant", "content": result, "logs": logs}
+                    {"role": "assistant", "content": result, "logs": logs, "sources": accumulated_sources}
                 ]
                 
                 full_messages = existing_messages + new_messages

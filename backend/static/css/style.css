@@ -276,7 +276,7 @@ body {
     background-position: right 10px center;
     background-size: 10px;
     padding-right: 30px;
-    max-width: 200px;
+    max-width: 280px;
     text-overflow: ellipsis;
 }
 
@@ -589,6 +589,12 @@ body {
     color: var(--primary-color);
 }
 
+#send-btn:disabled {
+    color: var(--text-secondary);
+    opacity: 0.4;
+    cursor: default;
+}
+
 /* Modal */
 .modal {
     display: none;
@@ -736,6 +742,22 @@ body {
     color: white;
 }
 
+/* Blinking cursor for streaming */
+.blinking-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background-color: var(--primary-color);
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+    margin-left: 2px;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
 /* Markdown Styles */
 .markdown-body {
     font-family: 'Inter', sans-serif;
@@ -768,6 +790,7 @@ body {
     text-decoration: none;
     cursor: pointer;
     margin: 0 2px;
+    font-weight: 500;
 }
 
 .citation-link:hover {
@@ -1091,14 +1114,4 @@ body {
     font-size: 0.9em;
     color: var(--text-secondary);
     margin-right: 15px;
-}
-
-.spin-anim {
-    animation: spin 1s linear infinite;
-    font-size: 2em;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
 }

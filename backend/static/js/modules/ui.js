@@ -54,33 +54,93 @@ function initScrollBehavior() {
     });
 }
 
+/**
+ * Group chats by date for sidebar display.
+ * Groups: "今天", "昨天", "本周", "更早"
+ */
+function groupChatsByDate(history) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today.getTime() - 86400000);
+    // Start of this week (Monday)
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+
+    const groups = {
+        '今天': [],
+        '昨天': [],
+        '本周': [],
+        '更早': []
+    };
+
+    history.forEach(chat => {
+        const ts = chat.timestamp ? new Date(chat.timestamp) : null;
+        if (!ts) {
+            groups['更早'].push(chat);
+            return;
+        }
+        const chatDate = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate());
+        if (chatDate.getTime() >= today.getTime()) {
+            groups['今天'].push(chat);
+        } else if (chatDate.getTime() >= yesterday.getTime()) {
+            groups['昨天'].push(chat);
+        } else if (chatDate.getTime() >= weekStart.getTime()) {
+            groups['本周'].push(chat);
+        } else {
+            groups['更早'].push(chat);
+        }
+    });
+
+    return groups;
+}
+
 export function renderHistory(history, currentSessionId, callbacks) {
     const { onSelect, onDelete } = callbacks;
     elements.historyList.innerHTML = '';
     
-    history.forEach(chat => {
-        const item = document.createElement('div');
-        item.className = 'history-item';
-        if (chat.id === currentSessionId) item.classList.add('active');
-        
-        const titleSpan = document.createElement('span');
-        titleSpan.className = 'history-title';
-        titleSpan.textContent = chat.title || '新对话';
-        item.appendChild(titleSpan);
+    if (!history || history.length === 0) return;
 
-        const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'delete-history-btn';
-        deleteBtn.title = '删除对话';
-        deleteBtn.innerHTML = '<span class="material-symbols-rounded">delete</span>';
-        deleteBtn.onclick = (e) => {
-            e.stopPropagation();
-            onDelete(chat.id);
-        };
-        item.appendChild(deleteBtn);
+    const groups = groupChatsByDate(history);
+    const groupOrder = ['今天', '昨天', '本周', '更早'];
 
-        item.dataset.id = chat.id;
-        item.onclick = () => onSelect(chat.id);
-        elements.historyList.appendChild(item);
+    groupOrder.forEach(groupName => {
+        const items = groups[groupName];
+        if (items.length === 0) return;
+
+        const group = document.createElement('div');
+        group.className = 'history-group';
+
+        const header = document.createElement('div');
+        header.className = 'history-group-header';
+        header.textContent = groupName;
+        group.appendChild(header);
+
+        items.forEach(chat => {
+            const item = document.createElement('div');
+            item.className = 'history-item';
+            if (chat.id === currentSessionId) item.classList.add('active');
+            
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'history-title';
+            titleSpan.textContent = chat.title || '新对话';
+            item.appendChild(titleSpan);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-history-btn';
+            deleteBtn.title = '删除对话';
+            deleteBtn.innerHTML = '<span class="material-symbols-rounded">delete</span>';
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                onDelete(chat.id);
+            };
+            item.appendChild(deleteBtn);
+
+            item.dataset.id = chat.id;
+            item.onclick = () => onSelect(chat.id);
+            group.appendChild(item);
+        });
+
+        elements.historyList.appendChild(group);
     });
 }
 
@@ -95,23 +155,25 @@ export function updateActiveHistoryItem(sessionId) {
 }
 
 export function renderMessages(messages) {
+    // Always clear everything first to avoid duplicate hero
     elements.chatContainer.innerHTML = '';
+    
     if (!messages || messages.length === 0) {
-        elements.chatContainer.appendChild(elements.heroSection);
         elements.heroSection.style.display = 'block';
+        elements.chatContainer.appendChild(elements.heroSection);
         return;
     }
     
     elements.heroSection.style.display = 'none';
     
     messages.forEach(msg => {
-        appendMessage(msg.role, msg.content, msg.logs);
+        appendMessage(msg.role, msg.content, msg.logs, msg.sources);
     });
     
     scrollToBottom();
 }
 
-export function appendMessage(role, content, logs = null) {
+export function appendMessage(role, content, logs = null, sources = null) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     
@@ -124,8 +186,9 @@ export function appendMessage(role, content, logs = null) {
     
     if (role === 'assistant') {
         contentDiv.classList.add('markdown-body');
-        const sources = extractSources(content);
-        contentDiv.innerHTML = renderWithCitations(content, sources);
+        // Prefer stored sources from history, fallback to extracting from text
+        const resolvedSources = (sources && sources.length > 0) ? sources : extractSources(content);
+        contentDiv.innerHTML = renderWithCitations(content, resolvedSources);
     } else {
         contentDiv.textContent = content;
     }
@@ -140,7 +203,10 @@ export function appendMessage(role, content, logs = null) {
 }
 
 export function scrollToBottom() {
-    elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+    elements.chatContainer.scrollTo({
+        top: elements.chatContainer.scrollHeight,
+        behavior: 'smooth'
+    });
 }
 
 export function createLogContainer(logs) {
@@ -243,10 +309,11 @@ export function createDynamicLogContainer() {
 
 export function extractSources(text) {
     const sources = [];
-    const regex = /\[(\d+)\] \[.*?\]\((.*?)\)/g;
+    // Improved regex: handle URLs with parentheses by matching up to the last ) before ] or end
+    const regex = /\[(\d+)\] \[([^\]]*)\]\(([^)]+)\)/g;
     let match;
     while ((match = regex.exec(text)) !== null) {
-        sources.push({ id: match[1], url: match[2] });
+        sources.push({ id: match[1], title: match[2], url: match[3] });
     }
     return sources;
 }
@@ -295,9 +362,8 @@ export function renderWithCitations(text, sources) {
                     a.target = '_blank';
                     a.className = 'citation-link';
                     a.textContent = `[${id}]`;
-                    a.style.color = '#0066cc';
-                    a.style.textDecoration = 'none';
-                    a.style.cursor = 'pointer';
+                    a.title = source.title || source.url;
+                    // Use CSS variable instead of hardcoded color
                     fragment.appendChild(a);
                 } else {
                     fragment.appendChild(document.createTextNode(part));

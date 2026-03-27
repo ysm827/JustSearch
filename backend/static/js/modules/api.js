@@ -9,30 +9,11 @@ function getAuthHeaders() {
     return headers;
 }
 
-export async function fetchSettings() {
-    try {
-        const res = await fetch('/api/settings', { headers: getAuthHeaders() });
-        if (res.ok) {
-            const settings = await res.json();
-            setSettings(settings);
-            applyTheme(settings.theme);
-            return settings;
-        }
-        if (res.status === 401) {
-            showAuthPrompt();
-        }
-    } catch (e) {
-        console.error("Failed to load settings", e);
-    }
-    return null;
-}
-
 function showAuthPrompt() {
     const token = prompt('请输入访问令牌 (Authorization Token)：\n令牌在服务端启动时打印到控制台');
     if (token) {
         state.authToken = token.trim();
         localStorage.setItem('auth_token', token.trim());
-        // Retry the last request by reloading
         window.location.reload();
     }
 }
@@ -47,11 +28,46 @@ if (savedToken) {
     localStorage.setItem('auth_token', state.authToken);
 }
 
+/**
+ * Wrapper for fetch that handles 401 responses globally.
+ * On first 401, prompts for new token and reloads.
+ */
+async function authedFetch(url, options = {}) {
+    const headers = getAuthHeaders();
+    if (options.headers) {
+        Object.assign(headers, options.headers);
+    }
+    options.headers = headers;
+
+    const res = await fetch(url, options);
+    if (res.status === 401) {
+        // Token may have changed (e.g. server restart)
+        showAuthPrompt();
+        throw new Error('Unauthorized');
+    }
+    return res;
+}
+
+export async function fetchSettings() {
+    try {
+        const res = await authedFetch('/api/settings');
+        if (res.ok) {
+            const settings = await res.json();
+            setSettings(settings);
+            applyTheme(settings.theme);
+            return settings;
+        }
+    } catch (e) {
+        console.error("Failed to load settings", e);
+    }
+    return null;
+}
+
 export async function saveSettingsAPI(newSettings) {
     try {
-        const res = await fetch('/api/settings', {
+        const res = await authedFetch('/api/settings', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newSettings)
         });
         if (res.ok) {
@@ -74,7 +90,7 @@ export async function saveSettingsAPI(newSettings) {
 
 export async function restoreDefaultSettingsAPI() {
     try {
-        const res = await fetch('/api/settings/default', { headers: getAuthHeaders() });
+        const res = await authedFetch('/api/settings/default');
         if (res.ok) {
             return await res.json();
         }
@@ -86,7 +102,7 @@ export async function restoreDefaultSettingsAPI() {
 
 export async function fetchHistory() {
     try {
-        const res = await fetch('/api/history', { headers: getAuthHeaders() });
+        const res = await authedFetch('/api/history');
         if (res.ok) {
             return await res.json();
         }
@@ -98,9 +114,8 @@ export async function fetchHistory() {
 
 export async function deleteChatAPI(sessionId) {
     try {
-        const res = await fetch(`/api/history/${sessionId}`, {
-            method: 'DELETE',
-            headers: getAuthHeaders()
+        const res = await authedFetch(`/api/history/${sessionId}`, {
+            method: 'DELETE'
         });
         return res.ok;
     } catch (e) {
@@ -111,9 +126,8 @@ export async function deleteChatAPI(sessionId) {
 
 export async function clearHistoryAPI() {
     try {
-        const res = await fetch('/api/history', {
-            method: 'DELETE',
-            headers: getAuthHeaders()
+        const res = await authedFetch('/api/history', {
+            method: 'DELETE'
         });
         return res.ok;
     } catch (e) {
@@ -124,7 +138,7 @@ export async function clearHistoryAPI() {
 
 export async function fetchChat(sessionId) {
     try {
-        const res = await fetch(`/api/history/${sessionId}`, { headers: getAuthHeaders() });
+        const res = await authedFetch(`/api/history/${sessionId}`);
         if (res.ok) {
             return await res.json();
         }
@@ -134,25 +148,39 @@ export async function fetchChat(sessionId) {
     return null;
 }
 
+// Cache GitHub stars in memory to avoid repeated requests
+let _githubStarsCache = null;
+let _githubStarsCacheTime = 0;
+const GITHUB_STARS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
 export async function fetchGitHubStats() {
+    // Use in-memory cache to avoid fetching on every settings modal open
+    const now = Date.now();
+    if (_githubStarsCache && (now - _githubStarsCacheTime) < GITHUB_STARS_CACHE_TTL) {
+        return _githubStarsCache;
+    }
+
     try {
-        const res = await fetch('/api/stats/github', { headers: getAuthHeaders() });
+        const res = await authedFetch('/api/stats/github');
         if (res.ok) {
-            return await res.json();
+            const data = await res.json();
+            _githubStarsCache = data;
+            _githubStarsCacheTime = now;
+            return data;
         }
     } catch (e) {
         console.error("Failed to fetch GitHub stats", e);
     }
-    return { stars: 0 };
+    return _githubStarsCache || { stars: 0 };
 }
 
 export async function streamChat(query, callbacks) {
     const { onLog, onAnswerChunk, onAnswer, onSources, onError, onDone, onMeta, signal, model } = callbacks;
     
     try {
-        const response = await fetch('/api/chat', {
+        const response = await authedFetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 query: query,
                 session_id: state.currentSessionId,
