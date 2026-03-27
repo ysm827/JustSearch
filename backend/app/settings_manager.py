@@ -1,11 +1,36 @@
 import json
 import logging
 import os
+import secrets
 import aiofiles
 
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'settings.json')
+AUTH_TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.auth_token')
 
 logger = logging.getLogger(__name__)
+
+def get_or_create_auth_token() -> str:
+    """Load existing auth token or create a new one and save it."""
+    if os.path.exists(AUTH_TOKEN_FILE):
+        try:
+            with open(AUTH_TOKEN_FILE, 'r') as f:
+                token = f.read().strip()
+                if token:
+                    return token
+        except OSError as e:
+            logger.warning("Failed to read auth token file: %s", e)
+
+    # Generate new token
+    token = secrets.token_urlsafe(32)
+    try:
+        with open(AUTH_TOKEN_FILE, 'w') as f:
+            f.write(token)
+        # Restrict file permissions to owner only
+        os.chmod(AUTH_TOKEN_FILE, 0o600)
+    except OSError as e:
+        logger.error("Failed to save auth token: %s", e)
+
+    return token
 
 DEFAULT_SETTINGS = {
     "theme": "light",

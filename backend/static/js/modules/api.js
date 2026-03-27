@@ -1,14 +1,25 @@
 import { state, setSettings } from './state.js';
 import { applyTheme } from './utils.js';
 
+function getAuthHeaders() {
+    const headers = {};
+    if (state.authToken) {
+        headers['Authorization'] = `Bearer ${state.authToken}`;
+    }
+    return headers;
+}
+
 export async function fetchSettings() {
     try {
-        const res = await fetch('/api/settings');
+        const res = await fetch('/api/settings', { headers: getAuthHeaders() });
         if (res.ok) {
             const settings = await res.json();
             setSettings(settings);
             applyTheme(settings.theme);
             return settings;
+        }
+        if (res.status === 401) {
+            showAuthPrompt();
         }
     } catch (e) {
         console.error("Failed to load settings", e);
@@ -16,11 +27,27 @@ export async function fetchSettings() {
     return null;
 }
 
+function showAuthPrompt() {
+    const token = prompt('请输入访问令牌 (Authorization Token)：\n令牌在服务端启动时打印到控制台');
+    if (token) {
+        state.authToken = token.trim();
+        localStorage.setItem('auth_token', token.trim());
+        // Retry the last request by reloading
+        window.location.reload();
+    }
+}
+
+// Restore token from localStorage on load
+const savedToken = localStorage.getItem('auth_token');
+if (savedToken) {
+    state.authToken = savedToken;
+}
+
 export async function saveSettingsAPI(newSettings) {
     try {
         const res = await fetch('/api/settings', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify(newSettings)
         });
         if (res.ok) {
@@ -43,7 +70,7 @@ export async function saveSettingsAPI(newSettings) {
 
 export async function restoreDefaultSettingsAPI() {
     try {
-        const res = await fetch('/api/settings/default');
+        const res = await fetch('/api/settings/default', { headers: getAuthHeaders() });
         if (res.ok) {
             return await res.json();
         }
@@ -55,7 +82,7 @@ export async function restoreDefaultSettingsAPI() {
 
 export async function fetchHistory() {
     try {
-        const res = await fetch('/api/history');
+        const res = await fetch('/api/history', { headers: getAuthHeaders() });
         if (res.ok) {
             return await res.json();
         }
@@ -68,7 +95,8 @@ export async function fetchHistory() {
 export async function deleteChatAPI(sessionId) {
     try {
         const res = await fetch(`/api/history/${sessionId}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: getAuthHeaders()
         });
         return res.ok;
     } catch (e) {
@@ -80,7 +108,8 @@ export async function deleteChatAPI(sessionId) {
 export async function clearHistoryAPI() {
     try {
         const res = await fetch('/api/history', {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: getAuthHeaders()
         });
         return res.ok;
     } catch (e) {
@@ -91,7 +120,7 @@ export async function clearHistoryAPI() {
 
 export async function fetchChat(sessionId) {
     try {
-        const res = await fetch(`/api/history/${sessionId}`);
+        const res = await fetch(`/api/history/${sessionId}`, { headers: getAuthHeaders() });
         if (res.ok) {
             return await res.json();
         }
@@ -103,7 +132,7 @@ export async function fetchChat(sessionId) {
 
 export async function fetchGitHubStats() {
     try {
-        const res = await fetch('/api/stats/github');
+        const res = await fetch('/api/stats/github', { headers: getAuthHeaders() });
         if (res.ok) {
             return await res.json();
         }
@@ -119,7 +148,7 @@ export async function streamChat(query, callbacks) {
     try {
         const response = await fetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify({
                 query: query,
                 session_id: state.currentSessionId,

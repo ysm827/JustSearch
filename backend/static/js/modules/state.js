@@ -2,7 +2,8 @@ export const state = {
     currentSessionId: null,
     settings: {},
     isProcessing: false,
-    abortController: null
+    abortController: null,
+    authToken: null
 };
 
 export function setCurrentSessionId(id) {
