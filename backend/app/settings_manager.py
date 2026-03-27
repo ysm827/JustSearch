@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -44,6 +45,7 @@ DEFAULT_SETTINGS = {
 }
 
 _api_key_index = 0
+_api_key_lock = asyncio.Lock()
 
 def mask_api_key(api_key: str) -> str:
     """Mask API key for display, e.g. sk-****1234"""
@@ -53,28 +55,27 @@ def mask_api_key(api_key: str) -> str:
         return "****"
     return api_key[:3] + "****" + api_key[-4:]
 
-def get_next_api_key(api_keys_str: str) -> str:
+async def get_next_api_key(api_keys_str: str) -> str:
     """
     Get the next API key from a comma-separated string in a round-robin fashion.
-    If the string contains only one key or is empty, it returns the string as is (or empty).
+    Thread-safe with asyncio.Lock.
     """
     global _api_key_index
     if not api_keys_str:
         return api_keys_str
-        
-    # Split by comma and strip whitespace
+
     keys = [k.strip() for k in api_keys_str.split(',') if k.strip()]
-    
+
     if not keys:
         return ""
-        
+
     if len(keys) == 1:
         return keys[0]
-        
-    # Round-robin selection
-    current_key = keys[_api_key_index % len(keys)]
-    _api_key_index = (_api_key_index + 1) % len(keys)
-    
+
+    async with _api_key_lock:
+        current_key = keys[_api_key_index % len(keys)]
+        _api_key_index = (_api_key_index + 1) % len(keys)
+
     return current_key
 
 async def load_settings():

@@ -307,7 +307,7 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
 
     # Apply round-robin selection if multiple keys are provided
     if api_key:
-        api_key = get_next_api_key(api_key)
+        api_key = await get_next_api_key(api_key)
 
     base_url = request.base_url or defaults.get("base_url")
     
