@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 import aiofiles
 
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'settings.json')
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
     "theme": "light",
@@ -55,7 +58,7 @@ async def load_settings():
             settings.update(user_settings)
             return settings
     except Exception as e:
-        print(f"Error loading settings: {e}")
+        logger.error("Error loading settings: %s", e)
         return DEFAULT_SETTINGS.copy()
 
 async def save_settings(settings):
@@ -65,5 +68,5 @@ async def save_settings(settings):
             await f.write(json.dumps(settings, indent=4, ensure_ascii=False))
         return True
     except Exception as e:
-        print(f"Error saving settings: {e}")
+        logger.error("Error saving settings: %s", e)
         return False

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import asyncio
@@ -6,6 +7,8 @@ from datetime import datetime
 from typing import List, Dict, Optional, Callable, Any
 from openai import AsyncOpenAI
 from .prompts import TASK_ANALYSIS_PROMPT, RELEVANCE_ASSESSMENT_PROMPT, CLICK_DECISION_PROMPT, ANSWER_GENERATION_PROMPT
+
+logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1", model: str = "deepseek-ai/deepseek-v3.2"):
@@ -70,7 +73,7 @@ class LLMClient:
             return {"type": "search", "queries": [user_input]}
             
         except Exception as e:
-            print(f"Error in analyze_task: {e}")
+            logger.error("Error in analyze_task: %s", e)
             return {"type": "search", "queries": [user_input]}
 
     async def assess_relevance(self, query: str, snippets: List[Dict]) -> List[int]:
@@ -103,7 +106,7 @@ class LLMClient:
             
             return [s['id'] for s in snippets[:3]]
         except Exception as e:
-            print(f"Error in assess_relevance: {e}")
+            logger.error("Error in assess_relevance: %s", e)
             # Fallback: return top 3 if parsing fails
             return [s['id'] for s in snippets[:3]]
 
@@ -139,7 +142,7 @@ class LLMClient:
                 return data.get("clicked_ids", [])
             return []
         except Exception as e:
-            print(f"Error in decide_click_elements: {e}")
+            logger.error("Error in decide_click_elements: %s", e)
             return []
 
     async def generate_answer(self, query: str, sources: List[Dict], history: Optional[List[Dict[str, str]]] = None, stream_callback: Optional[Callable[[str], None]] = None) -> Dict[str, any]:
@@ -235,5 +238,5 @@ class LLMClient:
             return {"status": status, "answer": final_answer.strip()}
 
         except Exception as e:
-            print(f"Error in generate_answer: {e}")
+            logger.error("Error in generate_answer: %s", e)
             return {"status": "sufficient", "answer": f"生成答案时出错: {e}"}

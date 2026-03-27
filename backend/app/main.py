@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import logging
 import httpx
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -17,15 +18,17 @@ from .settings_manager import load_settings, save_settings, DEFAULT_SETTINGS, ge
 from .browser_manager import init_global_browser, shutdown_global_browser, get_interaction_session, mark_interaction_completed
 import base64
 
+logger = logging.getLogger(__name__)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    print(f"Startup: Loaded app from {__file__}")
+    logger.info("Startup: Loaded app from %s", __file__)
     await init_global_browser()
-    print("Registered routes:")
+    logger.debug("Registered routes:")
     for route in app.routes:
         if hasattr(route, "path"):
-            print(f"  {route.path}")
+            logger.debug("  %s", route.path)
     
     yield
     
@@ -174,7 +177,7 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
                         "image": b64_img
                     })
                 except Exception as e:
-                    print(f"Frame error: {e}")
+                    logger.error("Frame error: %s", e)
                     # If page is closed, we should stop
                     break
                     
@@ -227,7 +230,7 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
                     break
                     
         except Exception as e:
-            print(f"Input error: {e}")
+            logger.error("Input error: %s", e)
 
     # Run both
     tasks = [
@@ -365,12 +368,12 @@ async def chat_endpoint(request: ChatRequest):
             yield "data: [DONE]\n\n"
             
         except asyncio.CancelledError:
-            print(f"Task cancelled by client disconnect: {session_id}")
+            logger.info("Task cancelled by client disconnect: %s", session_id)
             task.cancel()
             raise
         finally:
             if not task.done():
-                print(f"Cleaning up running task: {session_id}")
+                logger.info("Cleaning up running task: %s", session_id)
                 task.cancel()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

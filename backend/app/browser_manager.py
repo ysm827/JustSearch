@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import random
 import urllib.parse
@@ -8,6 +9,8 @@ import json
 from playwright.async_api import async_playwright, Page
 from playwright_stealth import Stealth
 from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 # Global browser state
 _GLOBAL_PLAYWRIGHT = None
@@ -48,7 +51,7 @@ def get_browser_config(user_data_dir: str) -> Dict:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
         except Exception as e:
-            print(f"Error loading browser config: {e}")
+            logger.error("Error loading browser config: %s", e)
 
     # Generate missing fields
     if "user_agent" not in config:
@@ -65,7 +68,7 @@ def get_browser_config(user_data_dir: str) -> Dict:
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2)
     except Exception as e:
-        print(f"Error saving browser config: {e}")
+        logger.error("Error saving browser config: %s", e)
         
     return config
 
@@ -119,7 +122,7 @@ async def init_global_browser(headless_override: bool = None):
             ignore_default_args=["--enable-automation"],
         )
     except Exception as e:
-        print(f"Failed to launch Chrome: {e}. Trying default Chromium...")
+        logger.warning("Failed to launch Chrome: %s. Trying default Chromium...", e)
         _GLOBAL_CONTEXT = await _GLOBAL_PLAYWRIGHT.chromium.launch_persistent_context(
             user_data_dir=user_data_dir,
             headless=headless_mode,
@@ -135,7 +138,7 @@ async def init_global_browser(headless_override: bool = None):
             user_agent=user_agent,
             ignore_default_args=["--enable-automation"]
         )
-    print(f"Global Browser Initialized with UA: {user_agent}")
+    logger.info("Global Browser Initialized with UA: %s", user_agent)
 
 async def shutdown_global_browser():
     """Shuts down the global browser instance."""
@@ -146,7 +149,7 @@ async def shutdown_global_browser():
     if _GLOBAL_PLAYWRIGHT:
         await _GLOBAL_PLAYWRIGHT.stop()
         _GLOBAL_PLAYWRIGHT = None
-    print("Global Browser Shutdown.")
+    logger.info("Global Browser Shutdown.")
 
 async def get_new_page() -> Page:
     """Creates a new page, restarting the browser if the context is closed."""
@@ -159,7 +162,7 @@ async def get_new_page() -> Page:
         return await _GLOBAL_CONTEXT.new_page()
     except Exception as e:
         if "Target page, context or browser has been closed" in str(e):
-            print(f"Browser context error: {e}. Restarting browser...")
+            logger.warning("Browser context error: %s. Restarting browser...", e)
             await shutdown_global_browser()
             # Restore previous headless mode
             await init_global_browser(headless_override=_CURRENT_HEADLESS_MODE)
@@ -181,7 +184,7 @@ class BrowserManager:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            print(f"Error loading search selectors: {e}")
+            logger.error("Error loading search selectors: %s", e)
         
         # Fallback default
         return {
@@ -279,7 +282,7 @@ class BrowserManager:
                 elif check in content:
 
             if detected_captcha:
-                print(f"CAPTCHA detected on {engine_name}!")
+                logger.warning("CAPTCHA detected on %s!", engine_name)
                 if log_func: log_func("浏览器: 检测到验证码！等待手动解决...")
                 
                 if session_id:
@@ -321,7 +324,7 @@ class BrowserManager:
                 await asyncio.sleep(1.0) # Let the page settle
             except Exception as e:
                 msg = f"等待结果容器 ({config['wait_selector']}) 超时。"
-                print(msg)
+                logger.warning(msg)
                 if log_func: log_func(f"浏览器错误: {msg}")
                 return []
 
@@ -413,7 +416,7 @@ class BrowserManager:
             return results
         except Exception as e:
             msg = f"搜索错误: {e}"
-            print(msg)
+            logger.error(msg)
             if log_func: log_func(f"浏览器错误: {msg}")
             return []
         finally:
@@ -660,7 +663,7 @@ class BrowserManager:
                                 await asyncio.sleep(2) # Fallback sleep
                             continue
                     # For other errors, we might want to log but return empty string rather than crashing
-                    print(f"Extraction error on {url}: {e}")
+                    logger.error("Extraction error on %s: %s", url, e)
                     break
             
             content_len = len(content)
@@ -675,7 +678,7 @@ class BrowserManager:
             
         except Exception as e:
             msg = f"Crawl error for {url}: {e}"
-            print(msg)
+            logger.error(msg)
             if log_func: log_func(f"浏览器错误: {msg}")
             return f"爬取页面时出错: {str(e)}"
         finally:

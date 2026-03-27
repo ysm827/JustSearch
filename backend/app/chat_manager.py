@@ -1,9 +1,12 @@
 import os
 import json
+import logging
 import glob
 import aiofiles
 from datetime import datetime
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 # Define paths relative to the project root (one level up from src)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -18,7 +21,7 @@ async def load_chat_history(file_path):
             content = await f.read()
             return json.loads(content)
     except Exception as e:
-        print(f"加载对话失败：{e}")
+        logger.error("加载对话失败：%s", e)
         return None
 
 async def save_chat_history(session_id, messages, title=None):
@@ -88,7 +91,7 @@ def delete_all_chats():
         try:
             os.remove(f)
         except Exception as e:
-            print(f"Failed to delete {f}: {e}")
+            logger.error("Failed to delete %s: %s", f, e)
 
 def get_chat_path(session_id):
     return os.path.join(CHATS_DIR, f"{session_id}.json")
