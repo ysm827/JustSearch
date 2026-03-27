@@ -1,6 +1,6 @@
 // Initialize markdown-it
 const mdInstance = window.markdownit({
-    html: true,
+    html: false,
     linkify: true,
     typographer: true
 });
