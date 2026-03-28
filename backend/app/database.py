@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, JSON, select, delete, update
+from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, JSON, select, delete, update, text
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.sql import func
 
@@ -108,19 +108,23 @@ async def init_db():
         pool_pre_ping=True,
         pool_size=5,
         max_overflow=10,
+        connect_args={"check_same_thread": False},
     )
     _async_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
+    # Enable WAL mode for better concurrent read/write performance
     async with _engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA synchronous=NORMAL"))
+        await conn.execute(text("PRAGMA cache_size=-64000"))  # 64MB cache
         await conn.run_sync(Base.metadata.create_all)
 
     # Ensure missing columns are added (create_all only creates new tables)
     async with _engine.begin() as conn:
-        from sqlalchemy import text as sa_text
-        result = await conn.execute(sa_text("PRAGMA table_info('chat_messages')"))
+        result = await conn.execute(text("PRAGMA table_info('chat_messages')"))
         existing_cols = {row[1] for row in result}
         if "stats" not in existing_cols:
-            await conn.execute(sa_text(
+            await conn.execute(text(
                 "ALTER TABLE chat_messages ADD COLUMN stats JSON DEFAULT '{}'"
             ))
             logger.info("Added missing 'stats' column to chat_messages")
