@@ -15,6 +15,7 @@ from .browser_context import (
     get_context_pool_status,
 )
 from .search_engine import load_selectors
+from .engine_health import engine_health
 from .interaction import (
     _INTERACTION_SESSIONS, get_interaction_session,
     mark_interaction_completed, register_interaction_session, remove_interaction_session
@@ -245,10 +246,12 @@ class BrowserManager:
 
             if log_func:
                 log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
+            engine_health.record(engine, success=True)
             return results
         except Exception as e:
             msg = f"搜索错误: {e}"
             logger.error(msg)
+            engine_health.record(engine, success=False)
             if log_func:
                 log_func(f"浏览器错误: {msg}")
             return []
