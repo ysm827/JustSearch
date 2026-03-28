@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 import httpx
@@ -16,6 +17,22 @@ from .routers import chat as chat_router
 from .routers import history as history_router
 from .routers import settings as settings_router
 from .routers import stats as stats_router
+
+# Background cleanup task
+_cleanup_task = None
+
+
+async def _periodic_cleanup():
+    """Periodically clean up rate limiter and other in-memory state."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Every 5 minutes
+            from .rate_limiter import chat_limiter
+            chat_limiter.cleanup()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error("Cleanup task error: %s", e)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +62,10 @@ async def lifespan(app: FastAPI):
 
     await init_global_browser()
 
+    # Start periodic cleanup
+    global _cleanup_task
+    _cleanup_task = asyncio.create_task(_periodic_cleanup())
+
     logger.debug("Registered routes:")
     for route in app.routes:
         if hasattr(route, "path"):
@@ -53,6 +74,13 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+
     if _httpx_client:
         await _httpx_client.aclose()
         _httpx_client = None

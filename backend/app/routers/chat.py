@@ -20,6 +20,7 @@ from ..database import (
 )
 from ..workflow import SearchWorkflow
 from ..browser_manager import get_interaction_session, mark_interaction_completed
+from ..rate_limiter import chat_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,14 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
 
 @router.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
+    # Rate limiting
+    allowed, retry_after = chat_limiter.check("global")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"请求过于频繁，请在 {retry_after} 秒后重试。",
+        )
+
     defaults = await load_settings()
     api_key = defaults.get("api_key", "")
 

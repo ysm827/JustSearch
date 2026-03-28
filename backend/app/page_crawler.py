@@ -113,6 +113,9 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("fe80::/10"),
 ]
 
+# PDF URL pattern
+_PDF_PATTERN = re.compile(r'\.pdf(\?.*)?$', re.IGNORECASE)
+
 
 def is_private_url(url: str) -> bool:
     """Check if a URL points to a private/internal network address."""
