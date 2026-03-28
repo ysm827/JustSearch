@@ -298,10 +298,9 @@ class SearchWorkflow:
                 if result.get("status") == "sufficient":
                     progress_callback("答案状态: 充分")
                     final_answer = result.get("answer")
-                    formatted_result = self._format_references(final_answer, accumulated_sources)
                     if stats_callback:
                         stats_callback({"sites_searched": total_search_results, "iterations": iteration})
-                    return formatted_result
+                    return final_answer
                 else:
                     last_feedback = result.get("answer")
                     if iteration < self.max_iterations:
@@ -314,7 +313,7 @@ class SearchWorkflow:
                          final_answer = f"经过 {iteration} 次尝试后，我无法找到完全充分的答案。以下是基于现有信息的结果：\n\n{result.get('answer')}"
                          if stats_callback:
                              stats_callback({"sites_searched": total_search_results, "iterations": iteration})
-                         return self._format_references(final_answer, accumulated_sources)
+                         return final_answer
             
             return "多次尝试后未能生成有效答案。"
             
