@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from ..database import (
     load_settings, save_chat_history, load_chat_history, get_chat_path, get_next_api_key,
+    delete_message,
 )
 from ..workflow import SearchWorkflow
 from ..browser_manager import get_interaction_session, mark_interaction_completed
@@ -284,3 +285,17 @@ async def chat_endpoint(request: ChatRequest):
                 task.cancel()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+class DeleteMessageRequest(BaseModel):
+    session_id: str
+    message_index: int  # 0-based
+
+
+@router.delete("/api/chat/message")
+async def delete_message_endpoint(request: DeleteMessageRequest):
+    """Delete a single message from a chat session by index."""
+    ok = await delete_message(request.session_id, request.message_index)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"status": "ok"}

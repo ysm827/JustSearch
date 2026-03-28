@@ -1,6 +1,7 @@
 import { md, createCopyButton } from './utils.js';
 import { renameChatAPI } from './api.js';
 import { showToast } from './toast.js';
+import { state } from './state.js';
 
 /**
  * 自定义确认弹窗（替代浏览器原生 confirm）。
@@ -292,14 +293,14 @@ export function renderMessages(messages) {
     
     elements.heroSection.style.display = 'none';
     
-    messages.forEach(msg => {
-        appendMessage(msg.role, msg.content, msg.logs, msg.sources, msg.stats);
+    messages.forEach((msg, idx) => {
+        appendMessage(msg.role, msg.content, msg.logs, msg.sources, msg.stats, idx);
     });
     
     scrollToBottom();
 }
 
-export function appendMessage(role, content, logs = null, sources = null, stats = null) {
+export function appendMessage(role, content, logs = null, sources = null, stats = null, messageIndex = null) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     
@@ -321,6 +322,23 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
     
     const copyBtn = createCopyButton(content);
     contentDiv.appendChild(copyBtn);
+
+    // Delete button (only for loaded history messages)
+    if (messageIndex !== null) {
+        const deleteMsgBtn = document.createElement('button');
+        deleteMsgBtn.className = 'msg-delete-btn';
+        deleteMsgBtn.title = '删除此条消息';
+        deleteMsgBtn.innerHTML = '<span class="material-symbols-rounded">delete</span>';
+        deleteMsgBtn.onclick = async (e) => {
+            e.stopPropagation();
+            const { deleteMessageAPI } = await import('./api.js');
+            const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
+            if (ok) {
+                msgDiv.remove();
+            }
+        };
+        contentDiv.appendChild(deleteMsgBtn);
+    }
     
     msgDiv.appendChild(contentDiv);
     elements.chatContainer.appendChild(msgDiv);

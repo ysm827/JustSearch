@@ -103,6 +103,25 @@ export async function clearHistoryAPI() {
     }
 }
 
+export async function deleteMessageAPI(sessionId, messageIndex) {
+    try {
+        const res = await fetch('/api/chat/message', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, message_index: messageIndex })
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("Failed to delete message", e);
+        return false;
+    }
+}
+    } catch (e) {
+        console.error("Failed to clear history", e);
+        return false;
+    }
+}
+
 export async function clearCacheAPI() {
     try {
         const res = await fetch('/api/clear-cache', {

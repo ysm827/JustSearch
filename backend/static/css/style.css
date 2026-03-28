@@ -497,7 +497,7 @@ textarea:focus-visible {
     background: var(--glass-bg);
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
-    border-bottom: 1px solid var(--border-light);
+    /* border-bottom removed — clean look */
     min-height: 48px;
 }
 
@@ -1024,6 +1024,37 @@ textarea:focus-visible {
 }
 
 .regenerate-btn span {
+    font-size: 16px;
+}
+
+.msg-delete-btn {
+    position: absolute;
+    top: 8px;
+    right: 76px;
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    z-index: 10;
+    box-shadow: var(--shadow-sm);
+}
+
+.message-content:hover .msg-delete-btn {
+    display: flex;
+}
+
+.msg-delete-btn:hover {
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+.msg-delete-btn span {
     font-size: 16px;
 }
 
