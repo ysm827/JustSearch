@@ -25,6 +25,9 @@ Rules:
 - Prefer official sources (e.g. .gov, .edu, official blogs, documentation) over forum posts or Q&A pages, unless the forum thread is highly specific to the query.
 - Avoid selecting pages that are clearly unrelated shopping links, advertisements, or generic listicles.
 - If the query asks for factual/technical information, prefer authoritative sources.
+- If the query is in Chinese, Chinese-language sources may be more relevant.
+- For queries about recent events, prefer newer sources over older ones.
+- A diverse set of sources is better than multiple sources from the same site.
 
 Return a JSON object: {{"relevant_ids": [id1, id2, ...]}}
 Be selective. Only choose the most promising 2-4 results unless more are necessary.

@@ -2,6 +2,18 @@
    JustSearch — Modern UI Theme System
    ======================================== */
 
+/* --- Focus Styles (Accessibility) --- */
+:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
 /* --- Design Tokens --- */
 :root {
     /* Primary */
