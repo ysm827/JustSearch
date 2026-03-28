@@ -431,7 +431,7 @@ export function createDynamicLogContainer() {
     logContainer.appendChild(logSummary);
     logContainer.appendChild(logDetails);
     
-    return { logContainer, logDetails, spinner, statusText };
+    return { logContainer, logDetails, spinner, statusText, expandIcon };
 }
 
 export function extractSources(text) {

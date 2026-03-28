@@ -75,7 +75,7 @@ export function setupChatHandler(elements, renderHistory) {
         progressBar.appendChild(progressFill);
         msgDiv.appendChild(progressBar);
 
-        const { logContainer, logDetails, spinner, statusText } = createDynamicLogContainer();
+        const { logContainer, logDetails, spinner, statusText, expandIcon } = createDynamicLogContainer();
         msgDiv.appendChild(logContainer);
 
         const answerDiv = document.createElement('div');
@@ -219,6 +219,9 @@ export function setupChatHandler(elements, renderHistory) {
             } else {
                 statusText.textContent = '已完成';
             }
+            // 搜索完成，自动折叠过程日志
+            logDetails.classList.remove('open');
+            if (expandIcon) expandIcon.classList.remove('expanded');
             // 完成进度条
             progressBar.classList.add('done');
             setTimeout(() => { progressBar.style.display = 'none'; }, 1500);
