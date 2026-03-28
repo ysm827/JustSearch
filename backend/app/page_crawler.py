@@ -470,6 +470,23 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             if result is not None:
                 return result
 
+        # Special handling for Wikipedia — extract main article content only
+        if "wikipedia.org/wiki/" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const article = document.querySelector('#mw-content-text .mw-parser-output');
+                    if (!article) return null;
+                    const clone = article.cloneNode(true);
+                    clone.querySelectorAll('.reference, .noprint, .mw-editsection, .sidebar, .navbox, .infobox, table, .toc').forEach(el => el.remove());
+                    return clone.innerText;
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: Wikipedia 内容提取成功")
+                    return content
+            except Exception:
+                pass  # Fall through to default extraction
+
         try:
             if log_func:
                 log_func(f"浏览器: 正在加载页面...")
