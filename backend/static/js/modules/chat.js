@@ -116,6 +116,13 @@ export function setupChatHandler(elements, renderHistory) {
         let hasReceivedChunk = false;
         let logCount = 0;
         let searchStats = null;
+        let userScrolled = false;
+
+        // 检测用户主动上滚 — 搜索过程中不强制拉回底部
+        elements.chatContainer.addEventListener('scroll', () => {
+            const { scrollTop, scrollHeight, clientHeight } = elements.chatContainer;
+            userScrolled = (scrollHeight - scrollTop - clientHeight) > 100;
+        });
 
         // Progress tracker
         function updateProgress() {
@@ -181,7 +188,7 @@ export function setupChatHandler(elements, renderHistory) {
                     }
                     currentAnswerBuffer += chunk;
                     contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
-                    scrollToBottom();
+                    if (!userScrolled) scrollToBottom();
                 },
                 onAnswer: (finalAnswer, sessionId) => {
                     currentAnswerBuffer = finalAnswer;
