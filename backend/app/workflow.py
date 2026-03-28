@@ -164,6 +164,7 @@ class SearchWorkflow:
             return [], source_id_counter
 
         progress_callback(f"找到 {len(search_results)} 个结果。正在评估相关性...")
+        progress_callback("正在调用 AI 评估搜索结果的相关性...")
         
         # [04] Relevance Assessment
         relevant_ids = await self.llm.assess_relevance(user_input, search_results)
@@ -204,9 +205,10 @@ class SearchWorkflow:
                                    progress_callback: Callable[[str], None],
                                    user_input: str, source_id_counter: int) -> tuple:
         """批量爬取页面并收集结果，返回 (new_sources, source_id_counter)。"""
-        progress_callback(f"正在爬取 {len(to_crawl)} 个新页面...")
+        progress_callback(f"正在并行爬取 {len(to_crawl)} 个页面...")
         for item in to_crawl:
             logger.info("[Workflow] 爬取: %s", item.get('url', '?')[:100])
+            progress_callback(f"  → {item.get('title', item.get('url', '?'))[:60]}")
         tasks = [self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id) for item in to_crawl]
         contents = await asyncio.gather(*tasks)
         
@@ -294,6 +296,7 @@ class SearchWorkflow:
 
                 # [09] Generation & Evaluation
                 progress_callback(f"阶段 III: 使用累计 {len(accumulated_sources)} 个来源生成答案...")
+                progress_callback("正在调用 AI 模型生成回答...")
                 
                 if source_callback:
                     source_callback(accumulated_sources)

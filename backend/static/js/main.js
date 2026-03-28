@@ -351,8 +351,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             completeBtn.textContent = '完成验证，继续执行';
 
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const tokenParam = state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : '';
-            const wsUrl = `${protocol}//${window.location.host}/ws/browser/${sessionId}${tokenParam}`;
+            const wsUrl = `${protocol}//${window.location.host}/ws/browser/${sessionId}`;
 
             if (ws) ws.close();
             ws = new WebSocket(wsUrl);

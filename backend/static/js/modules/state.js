@@ -3,7 +3,6 @@ export const state = {
     settings: {},
     isProcessing: false,
     abortController: null,
-    authToken: null,
     openBrowserModal: null
 };
 

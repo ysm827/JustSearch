@@ -2,42 +2,17 @@ import asyncio
 import json
 import logging
 import os
-import secrets
 import aiofiles
 
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'settings.json')
-AUTH_TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.auth_token')
 
 logger = logging.getLogger(__name__)
-
-def get_or_create_auth_token() -> str:
-    """Load existing auth token or create a new one and save it."""
-    if os.path.exists(AUTH_TOKEN_FILE):
-        try:
-            with open(AUTH_TOKEN_FILE, 'r') as f:
-                token = f.read().strip()
-                if token:
-                    return token
-        except OSError as e:
-            logger.warning("Failed to read auth token file: %s", e)
-
-    # Generate new token
-    token = secrets.token_urlsafe(32)
-    try:
-        # 使用 os.open 确保文件创建时就只有 owner 可读写 (0o600)
-        fd = os.open(AUTH_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            f.write(token)
-    except OSError as e:
-        logger.error("Failed to save auth token: %s", e)
-
-    return token
 
 DEFAULT_SETTINGS = {
     "theme": "light",
     "api_key": "",
     "base_url": "https://integrate.api.nvidia.com/v1",
-    "model_id": "deepseek-ai/deepseek-v3.2",
+    "model_id": "z-ai/glm5,nvidia/nemotron-3-nano-30b-a3b,qwen/qwen3.5-397b-a17b",
     "search_engine": "duckduckgo",
     "max_results": 8,
     "max_iterations": 5,

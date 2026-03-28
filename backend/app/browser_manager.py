@@ -76,7 +76,11 @@ class BrowserManager:
                 _LAST_REQUEST_TIME = time.time()
 
                 try:
+                    if log_func:
+                        log_func(f"浏览器: 正在加载搜索页面...")
                     await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                    if log_func:
+                        log_func(f"浏览器: 搜索页面已加载，模拟用户行为...")
                     try:
                         await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
                         await asyncio.sleep(random.uniform(0.5, 1.5))

@@ -886,8 +886,24 @@ textarea:focus-visible {
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
     box-sizing: border-box;
+    gap: 8px;
+}
+
+#input-area::after {
+    content: 'Enter ↵ · ⇧Enter 换行 · ⌃N 新对话';
+    color: var(--text-muted);
+    font-size: 11.5px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+#input-area:focus-within::after,
+#input-area:hover::after {
+    opacity: 0.7;
 }
 
 .input-box {
@@ -1976,91 +1992,9 @@ textarea:focus-visible {
     line-height: 1.4;
 }
 
-.input-hint {
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 12px;
-    margin-top: 4px;
-    opacity: 0;
-    transition: opacity var(--transition-fast);
-}
-
 .input-box:focus-within ~ .input-hint,
 .input-hint:hover {
     opacity: 1;
 }
-
-/* ========================================
-   Auth Modal
-   ======================================== */
-.auth-modal-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 3000;
-    background-color: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(8px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.auth-modal {
-    background-color: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 28px;
-    width: 380px;
-    max-width: 90vw;
-    box-shadow: var(--shadow-xl);
-    animation: modalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.auth-modal h3 {
-    margin: 0 0 8px;
-    font-size: 18px;
-    font-weight: 700;
-}
-
-.auth-modal p {
-    margin: 0 0 16px;
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.5;
-}
-
-.auth-modal input {
-    width: 100%;
-    padding: 10px 12px;
-    border-radius: var(--radius-sm);
-    border: 1.5px solid var(--border);
-    background-color: var(--bg-input);
-    color: var(--text-primary);
-    box-sizing: border-box;
-    font-size: 14px;
-    margin-bottom: 16px;
-    transition: all var(--transition-fast);
-}
-
-.auth-modal input:focus {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px var(--primary-light);
-    outline: none;
-}
-
-.auth-modal-submit {
-    width: 100%;
-    padding: 10px;
-    border-radius: var(--radius-sm);
-    background-color: var(--primary);
-    color: var(--text-inverse);
-    border: none;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.auth-modal-submit:hover {
-    background-color: var(--primary-hover);
 }
 

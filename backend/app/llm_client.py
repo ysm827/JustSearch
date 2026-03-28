@@ -285,6 +285,10 @@ class LLMClient:
                         # Streaming answer
                         if status == "sufficient" and stream_callback:
                             stream_callback(content)
+                
+                # Also handle empty delta (role/tool_calls) to avoid blocking
+                elif chunk.choices and chunk.choices[0].finish_reason:
+                    break
 
             # Post-processing to extract clean answer from full_content
             final_answer = full_content

@@ -6,44 +6,25 @@ import httpx
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, Request
+from fastapi import FastAPI, HTTPException, Body, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from .workflow import SearchWorkflow
 from .chat_manager import list_chats, load_chat_history, save_chat_history, delete_chat, get_chat_path, delete_all_chats
-from .settings_manager import load_settings, save_settings, DEFAULT_SETTINGS, get_next_api_key, mask_api_key, get_or_create_auth_token, SETTINGS_FILE
+from .settings_manager import load_settings, save_settings, DEFAULT_SETTINGS, get_next_api_key, mask_api_key, SETTINGS_FILE
 from .browser_manager import init_global_browser, shutdown_global_browser, get_interaction_session, mark_interaction_completed
 from .browser_context import _GLOBAL_CONTEXT
 import base64
 
 logger = logging.getLogger(__name__)
 
-# Authentication - token is injected into the HTML page automatically
-AUTH_TOKEN = None
-_bearer_scheme = HTTPBearer(auto_error=False)
-
-def _get_auth_token():
-    """Lazy-load auth token."""
-    global AUTH_TOKEN
-    if AUTH_TOKEN is None:
-        AUTH_TOKEN = get_or_create_auth_token()
-    return AUTH_TOKEN
-
-async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme)) -> None:
-    """Verify Bearer token for API endpoints."""
-    token = _get_auth_token()
-    if credentials is None or credentials.credentials != token:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _httpx_client
     # Startup
-    token = get_or_create_auth_token()
     # 配置全局日志格式
     logging.basicConfig(
         level=logging.INFO,
@@ -51,8 +32,6 @@ async def lifespan(app: FastAPI):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     logger.info("Startup: Loaded app from %s", __file__)
-    logger.info("Auth token: %s...", token[:6])
-    logger.info("Access the app with Authorization: Bearer %s...", token[:6])
     # 复用 httpx client
     _httpx_client = httpx.AsyncClient()
     await init_global_browser()
@@ -133,7 +112,7 @@ github_stats_cache = {
 _httpx_client: httpx.AsyncClient | None = None
 
 @app.get("/api/stats/github")
-async def get_github_stats(_auth: None = Depends(verify_token)):
+async def get_github_stats():
     now = datetime.now()
     # Cache for 10 minutes
     if github_stats_cache["last_updated"] and (now - github_stats_cache["last_updated"]).total_seconds() < 600:
@@ -165,11 +144,11 @@ async def get_github_stats(_auth: None = Depends(verify_token)):
         return {"stars": github_stats_cache["stars"], "error": str(e)}
 
 @app.get("/api/history")
-async def get_history_endpoint(_auth: None = Depends(verify_token)):
+async def get_history_endpoint():
     return await list_chats()
 
 @app.get("/api/history/{session_id}")
-async def get_chat_endpoint(session_id: str, _auth: None = Depends(verify_token)):
+async def get_chat_endpoint(session_id: str):
     path = get_chat_path(session_id)
     if not os.path.exists(path):
          raise HTTPException(status_code=404, detail="Chat not found")
@@ -180,12 +159,12 @@ async def get_chat_endpoint(session_id: str, _auth: None = Depends(verify_token)
     return history
 
 @app.delete("/api/history/{session_id}")
-async def delete_chat_endpoint(session_id: str, _auth: None = Depends(verify_token)):
+async def delete_chat_endpoint(session_id: str):
     await delete_chat(session_id)
     return {"status": "ok"}
 
 @app.patch("/api/history/{session_id}")
-async def rename_chat_endpoint(session_id: str, body: dict = Body(...), _auth: None = Depends(verify_token)):
+async def rename_chat_endpoint(session_id: str, body: dict = Body(...)):
     new_title = body.get("title", "").strip()
     if not new_title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
@@ -199,12 +178,12 @@ async def rename_chat_endpoint(session_id: str, body: dict = Body(...), _auth: N
     return {"status": "ok", "title": new_title}
 
 @app.delete("/api/history")
-async def delete_all_chats_endpoint(_auth: None = Depends(verify_token)):
+async def delete_all_chats_endpoint():
     await delete_all_chats()
     return {"status": "ok"}
 
 @app.post("/api/clear-cache")
-async def clear_cache_endpoint(_auth: None = Depends(verify_token)):
+async def clear_cache_endpoint():
     """清除所有缓存：聊天记录 + 浏览器数据 + 重置设置。"""
     import shutil
     import glob as glob_mod
@@ -227,7 +206,7 @@ async def clear_cache_endpoint(_auth: None = Depends(verify_token)):
     return {"status": "ok"}
 
 @app.get("/api/settings")
-async def get_settings_endpoint(_auth: None = Depends(verify_token)):
+async def get_settings_endpoint():
     settings = await load_settings()
     # Mask sensitive fields before sending to frontend
     for field in _SENSITIVE_FIELDS:
@@ -236,7 +215,7 @@ async def get_settings_endpoint(_auth: None = Depends(verify_token)):
     return settings
 
 @app.get("/api/settings/default")
-def get_default_settings_endpoint(_auth: None = Depends(verify_token)):
+def get_default_settings_endpoint():
     settings = DEFAULT_SETTINGS.copy()
     for field in _SENSITIVE_FIELDS:
         if field in settings and settings[field]:
@@ -244,7 +223,7 @@ def get_default_settings_endpoint(_auth: None = Depends(verify_token)):
     return settings
 
 @app.post("/api/settings")
-async def update_settings_endpoint(settings: SettingsModel, _auth: None = Depends(verify_token)):
+async def update_settings_endpoint(settings: SettingsModel):
     # Convert pydantic model to dict, excluding None values if needed,
     # but here we want to overwrite so we use model_dump
     current = await load_settings()
@@ -276,12 +255,6 @@ async def update_settings_endpoint(settings: SettingsModel, _auth: None = Depend
 
 @app.websocket("/ws/browser/{session_id}")
 async def browser_control_endpoint(websocket: WebSocket, session_id: str):
-    # Verify token from query parameter
-    token = websocket.query_params.get("token")
-    if not token or token != _get_auth_token():
-        await websocket.close(code=4001, reason="Unauthorized")
-        return
-
     await websocket.accept()
     
     session = get_interaction_session(session_id)
@@ -383,7 +356,7 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
             pass
 
 @app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token)):
+async def chat_endpoint(request: ChatRequest):
     defaults = await load_settings()
     api_key = defaults.get("api_key", "")
 
@@ -458,9 +431,21 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
         try:
             while not task.done():
                 try:
-                    item = await asyncio.wait_for(queue.get(), timeout=0.3)
+                    # Use a shorter timeout for faster SSE delivery
+                    item = await asyncio.wait_for(queue.get(), timeout=0.1)
                     yield f"data: {json.dumps(item)}\n\n"
+                    
+                    # Flush any additional items immediately (batch send)
+                    while not queue.empty():
+                        try:
+                            extra = queue.get_nowait()
+                            yield f"data: {json.dumps(extra)}\n\n"
+                        except asyncio.QueueEmpty:
+                            break
                 except asyncio.TimeoutError:
+                    # Send a lightweight keepalive to ensure the connection stays alive
+                    # and the frontend knows the backend is still working
+                    yield f": keepalive\n\n"
                     continue
                     
             # Check for exception in task
@@ -468,11 +453,14 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
                  yield f"data: {json.dumps({'type': 'error', 'content': str(task.exception())})}\n\n"
                  return
 
-            # Flush remaining logs
+            # Flush remaining items in queue
             while not queue.empty():
-                item = queue.get_nowait()
-                yield f"data: {json.dumps(item)}\n\n"
-                
+                try:
+                    item = queue.get_nowait()
+                    yield f"data: {json.dumps(item)}\n\n"
+                except asyncio.QueueEmpty:
+                    break
+                    
             result = task.result()
             
             # Save History
@@ -514,17 +502,9 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
 
 @app.get("/")
 async def read_index():
-    # Inject auth token into the HTML so the frontend can use it automatically
     html_path = os.path.join(STATIC_DIR, "index.html")
     with open(html_path, "r", encoding="utf-8") as f:
         html = f.read()
-    token = _get_auth_token()
-    # Insert a meta tag with the token right after <head>
-    html = html.replace(
-        "<head>",
-        f'<head>\n<meta name="auth-token" content="{token}">',
-        1
-    )
     return HTMLResponse(content=html)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

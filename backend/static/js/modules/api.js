@@ -1,83 +1,9 @@
 import { state, setSettings } from './state.js';
 import { applyTheme } from './utils.js';
 
-function getAuthHeaders() {
-    const headers = {};
-    if (state.authToken) {
-        headers['Authorization'] = `Bearer ${state.authToken}`;
-    }
-    return headers;
-}
-
-function showAuthPrompt() {
-    // 如果已经存在认证弹窗则不重复创建
-    if (document.querySelector('.auth-modal-overlay')) return;
-
-    const overlay = document.createElement('div');
-    overlay.className = 'auth-modal-overlay';
-    overlay.innerHTML = `
-        <div class="auth-modal">
-            <h3>🔑 身份验证</h3>
-            <p>请输入访问令牌。令牌在服务端启动时打印到控制台。</p>
-            <input type="text" id="auth-token-input" placeholder="输入令牌..." autofocus>
-            <button class="auth-modal-submit" id="auth-submit-btn">确认</button>
-        </div>
-    `;
-    document.body.appendChild(overlay);
-
-    const input = document.getElementById('auth-token-input');
-    const submitBtn = document.getElementById('auth-submit-btn');
-
-    function submit() {
-        const token = input.value.trim();
-        if (token) {
-            state.authToken = token;
-            localStorage.setItem('auth_token', token);
-            overlay.remove();
-            window.location.reload();
-        }
-    }
-
-    submitBtn.addEventListener('click', submit);
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') submit();
-    });
-    input.focus();
-}
-
-// Restore token from localStorage, or read from meta tag injected by server
-const savedToken = localStorage.getItem('auth_token');
-const metaToken = document.querySelector('meta[name="auth-token"]');
-if (savedToken) {
-    state.authToken = savedToken;
-} else if (metaToken) {
-    state.authToken = metaToken.getAttribute('content');
-    localStorage.setItem('auth_token', state.authToken);
-}
-
-/**
- * Wrapper for fetch that handles 401 responses globally.
- * On first 401, prompts for new token and reloads.
- */
-async function authedFetch(url, options = {}) {
-    const headers = getAuthHeaders();
-    if (options.headers) {
-        Object.assign(headers, options.headers);
-    }
-    options.headers = headers;
-
-    const res = await fetch(url, options);
-    if (res.status === 401) {
-        // Token may have changed (e.g. server restart)
-        showAuthPrompt();
-        throw new Error('Unauthorized');
-    }
-    return res;
-}
-
 export async function fetchSettings() {
     try {
-        const res = await authedFetch('/api/settings');
+        const res = await fetch('/api/settings');
         if (res.ok) {
             const settings = await res.json();
             setSettings(settings);
@@ -92,7 +18,7 @@ export async function fetchSettings() {
 
 export async function saveSettingsAPI(newSettings) {
     try {
-        const res = await authedFetch('/api/settings', {
+        const res = await fetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newSettings)
@@ -117,7 +43,7 @@ export async function saveSettingsAPI(newSettings) {
 
 export async function restoreDefaultSettingsAPI() {
     try {
-        const res = await authedFetch('/api/settings/default');
+        const res = await fetch('/api/settings/default');
         if (res.ok) {
             return await res.json();
         }
@@ -129,7 +55,7 @@ export async function restoreDefaultSettingsAPI() {
 
 export async function fetchHistory() {
     try {
-        const res = await authedFetch('/api/history');
+        const res = await fetch('/api/history');
         if (res.ok) {
             return await res.json();
         }
@@ -141,7 +67,7 @@ export async function fetchHistory() {
 
 export async function deleteChatAPI(sessionId) {
     try {
-        const res = await authedFetch(`/api/history/${sessionId}`, {
+        const res = await fetch(`/api/history/${sessionId}`, {
             method: 'DELETE'
         });
         return res.ok;
@@ -153,7 +79,7 @@ export async function deleteChatAPI(sessionId) {
 
 export async function renameChatAPI(sessionId, newTitle) {
     try {
-        const res = await authedFetch(`/api/history/${sessionId}`, {
+        const res = await fetch(`/api/history/${sessionId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: newTitle })
@@ -167,7 +93,7 @@ export async function renameChatAPI(sessionId, newTitle) {
 
 export async function clearHistoryAPI() {
     try {
-        const res = await authedFetch('/api/history', {
+        const res = await fetch('/api/history', {
             method: 'DELETE'
         });
         return res.ok;
@@ -179,7 +105,7 @@ export async function clearHistoryAPI() {
 
 export async function clearCacheAPI() {
     try {
-        const res = await authedFetch('/api/clear-cache', {
+        const res = await fetch('/api/clear-cache', {
             method: 'POST'
         });
         return res.ok;
@@ -191,7 +117,7 @@ export async function clearCacheAPI() {
 
 export async function fetchChat(sessionId) {
     try {
-        const res = await authedFetch(`/api/history/${sessionId}`);
+        const res = await fetch(`/api/history/${sessionId}`);
         if (res.ok) {
             return await res.json();
         }
@@ -214,7 +140,7 @@ export async function fetchGitHubStats() {
     }
 
     try {
-        const res = await authedFetch('/api/stats/github');
+        const res = await fetch('/api/stats/github');
         if (res.ok) {
             const data = await res.json();
             _githubStarsCache = data;
@@ -235,7 +161,7 @@ export async function streamChat(query, callbacks) {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const response = await authedFetch('/api/chat', {
+            const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

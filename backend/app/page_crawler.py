@@ -387,6 +387,8 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                 return result
 
         try:
+            if log_func:
+                log_func(f"浏览器: 正在加载页面...")
             await page.goto(final_url, wait_until="domcontentloaded", timeout=20000)
         except Exception as e:
             err_msg = str(e)
@@ -403,6 +405,8 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Wait for content to stabilize
         prepend_text = ""
         try:
+            if log_func:
+                log_func(f"浏览器: 等待页面内容渲染...")
             await page.wait_for_load_state("networkidle", timeout=5000)
             if "github.com" in final_url and "tab=repositories" in final_url:
                 prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
@@ -417,6 +421,8 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                 if log_func:
                     log_func(f"浏览器: 交互模式执行出错: {e}")
 
+        if log_func:
+            log_func(f"浏览器: 正在提取页面内容...")
         content = await extract_page_content(page, url)
 
         if prepend_text:

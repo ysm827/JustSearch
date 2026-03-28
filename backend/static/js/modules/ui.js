@@ -346,7 +346,6 @@ export function createLogContainer(logs) {
 export function createDynamicLogContainer() {
     const logContainer = document.createElement('div');
     logContainer.className = 'log-container';
-    logContainer.style.display = 'none';
     
     const logSummary = document.createElement('div');
     logSummary.className = 'log-summary';
@@ -360,7 +359,7 @@ export function createDynamicLogContainer() {
     
     const statusText = document.createElement('span');
     statusText.className = 'log-status-text';
-    statusText.textContent = '正在思考...';
+    statusText.textContent = '正在搜索...';
     
     statusLeft.appendChild(spinner);
     statusLeft.appendChild(statusText);

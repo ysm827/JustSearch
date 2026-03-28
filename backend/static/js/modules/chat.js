@@ -133,7 +133,6 @@ export function setupChatHandler(elements, renderHistory) {
                         }
                         msg = "需要人工验证。请在弹出的窗口中解决验证码。";
                     }
-                    logContainer.classList.add('visible');
                     statusText.textContent = msg;
                     updateProgress();
 
