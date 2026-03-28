@@ -2374,6 +2374,12 @@ textarea:focus-visible {
     background-color: var(--primary-light);
     transform: translateY(-1px);
 }
+/* Dark mode progress bar */
+[data-theme="dark"] .search-progress-bar .progress-fill {
+    background: linear-gradient(90deg, #60a5fa, #a78bfa, #60a5fa);
+    background-size: 200% 100%;
+}
+
 /* Force dark mode code copy button visibility fix */
 [data-theme="dark"] .code-copy-btn {
     color: var(--text-muted);
