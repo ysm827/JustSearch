@@ -308,6 +308,19 @@ export function setupChatHandler(elements, renderHistory) {
             elements.userInput.style.overflowY = 'hidden';
         }
         updateSendButtonState();
+
+        // Update character count
+        const charCount = document.getElementById('char-count');
+        if (charCount) {
+            const len = elements.userInput.value.length;
+            if (len > 0) {
+                charCount.style.display = 'block';
+                charCount.textContent = `${len}`;
+                charCount.style.color = len > 2000 ? 'var(--error)' : 'var(--text-muted)';
+            } else {
+                charCount.style.display = 'none';
+            }
+        }
     }
 
     // 绑定事件

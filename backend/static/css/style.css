@@ -2330,6 +2330,19 @@ textarea:focus-visible {
     gap: 4px;
 }
 
+.char-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    position: absolute;
+    bottom: 6px;
+    right: 60px;
+    pointer-events: none;
+}
+
+.input-box:focus-within .char-count {
+    display: block !important;
+}
+
 .hint-item kbd {
     display: inline-block;
     padding: 1px 5px;
