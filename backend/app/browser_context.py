@@ -8,7 +8,9 @@ from playwright.async_api import Page
 
 logger = logging.getLogger(__name__)
 
-# Global browser state
+# =============================================
+# 全局浏览器状态（测试时可通过 reset_state() 重置）
+# =============================================
 _GLOBAL_PLAYWRIGHT = None
 _GLOBAL_CONTEXT = None
 _CURRENT_HEADLESS_MODE = True
@@ -23,12 +25,12 @@ _MAX_BROWSER_RESTART_RETRIES = 3  # 浏览器重启最大重试次数
 
 # List of modern Chrome User Agents for macOS/Windows to rotate
 CHROME_USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.6613.120 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
 ]
 
 
@@ -204,3 +206,15 @@ async def release_page(page: Page):
         logger.warning("关闭页面时出错: %s", e)
     finally:
         _PAGE_SEMAPHORE.release()
+
+
+def reset_state():
+    """重置所有全局状态，仅用于测试。"""
+    global _GLOBAL_PLAYWRIGHT, _GLOBAL_CONTEXT, _CURRENT_HEADLESS_MODE
+    global _SEARCH_LOCK, _LAST_REQUEST_TIME, _PAGE_SEMAPHORE
+    _GLOBAL_PLAYWRIGHT = None
+    _GLOBAL_CONTEXT = None
+    _CURRENT_HEADLESS_MODE = True
+    _SEARCH_LOCK = asyncio.Lock()
+    _LAST_REQUEST_TIME = 0
+    _PAGE_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)

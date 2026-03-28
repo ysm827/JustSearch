@@ -15,8 +15,9 @@ from pydantic import BaseModel
 
 from .workflow import SearchWorkflow
 from .chat_manager import list_chats, load_chat_history, save_chat_history, delete_chat, get_chat_path, delete_all_chats
-from .settings_manager import load_settings, save_settings, DEFAULT_SETTINGS, get_next_api_key, mask_api_key, get_or_create_auth_token
+from .settings_manager import load_settings, save_settings, DEFAULT_SETTINGS, get_next_api_key, mask_api_key, get_or_create_auth_token, SETTINGS_FILE
 from .browser_manager import init_global_browser, shutdown_global_browser, get_interaction_session, mark_interaction_completed
+from .browser_context import _GLOBAL_CONTEXT
 import base64
 
 logger = logging.getLogger(__name__)
@@ -40,11 +41,20 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(_bear
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _httpx_client
     # Startup
     token = get_or_create_auth_token()
+    # 配置全局日志格式
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     logger.info("Startup: Loaded app from %s", __file__)
-    logger.info("Auth token: %s", token)
-    logger.info("Access the app with Authorization: Bearer %s", token)
+    logger.info("Auth token: %s...", token[:6])
+    logger.info("Access the app with Authorization: Bearer %s...", token[:6])
+    # 复用 httpx client
+    _httpx_client = httpx.AsyncClient()
     await init_global_browser()
     logger.debug("Registered routes:")
     for route in app.routes:
@@ -54,9 +64,17 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
+    if _httpx_client:
+        await _httpx_client.aclose()
+        _httpx_client = None
     await shutdown_global_browser()
 
 app = FastAPI(title="JustSearch", lifespan=lifespan)
+
+@app.get("/api/health")
+async def health_check():
+    """Lightweight health check (no auth required)."""
+    return {"status": "ok", "browser": _GLOBAL_CONTEXT is not None}
 
 # CORS - configurable via CORS_ORIGINS env var (comma-separated), defaults to localhost only
 _cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
@@ -111,6 +129,9 @@ github_stats_cache = {
     "last_updated": None
 }
 
+# 复用的 httpx 客户端，在 lifespan 中创建和关闭
+_httpx_client: httpx.AsyncClient | None = None
+
 @app.get("/api/stats/github")
 async def get_github_stats(_auth: None = Depends(verify_token)):
     now = datetime.now()
@@ -119,8 +140,8 @@ async def get_github_stats(_auth: None = Depends(verify_token)):
         return {"stars": github_stats_cache["stars"]}
     
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get("https://api.github.com/repos/yeahhe365/JustSearch")
+        if _httpx_client:
+            response = await _httpx_client.get("https://api.github.com/repos/yeahhe365/JustSearch")
             if response.status_code == 200:
                 data = response.json()
                 stars = data.get("stargazers_count", 0)
@@ -129,6 +150,17 @@ async def get_github_stats(_auth: None = Depends(verify_token)):
                 return {"stars": stars}
             else:
                 return {"stars": github_stats_cache["stars"], "error": "Failed to fetch from GitHub"}
+        else:
+            async with httpx.AsyncClient() as client:
+                response = await client.get("https://api.github.com/repos/yeahhe365/JustSearch")
+                if response.status_code == 200:
+                    data = response.json()
+                    stars = data.get("stargazers_count", 0)
+                    github_stats_cache["stars"] = stars
+                    github_stats_cache["last_updated"] = now
+                    return {"stars": stars}
+                else:
+                    return {"stars": github_stats_cache["stars"], "error": "Failed to fetch from GitHub"}
     except Exception as e:
         return {"stars": github_stats_cache["stars"], "error": str(e)}
 
@@ -152,9 +184,46 @@ async def delete_chat_endpoint(session_id: str, _auth: None = Depends(verify_tok
     await delete_chat(session_id)
     return {"status": "ok"}
 
+@app.patch("/api/history/{session_id}")
+async def rename_chat_endpoint(session_id: str, body: dict = Body(...), _auth: None = Depends(verify_token)):
+    new_title = body.get("title", "").strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    path = get_chat_path(session_id)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Chat not found")
+    history_data = await load_chat_history(path)
+    if not history_data:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    await save_chat_history(session_id, history_data.get("messages", []), title=new_title)
+    return {"status": "ok", "title": new_title}
+
 @app.delete("/api/history")
 async def delete_all_chats_endpoint(_auth: None = Depends(verify_token)):
     await delete_all_chats()
+    return {"status": "ok"}
+
+@app.post("/api/clear-cache")
+async def clear_cache_endpoint(_auth: None = Depends(verify_token)):
+    """清除所有缓存：聊天记录 + 浏览器数据 + 重置设置。"""
+    import shutil
+    import glob as glob_mod
+
+    # 1. 删除所有聊天记录
+    await delete_all_chats()
+
+    # 2. 删除浏览器持久化数据 (cookies, 配置等)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(current_dir))
+    user_data_dir = os.path.join(project_root, "user_data")
+    if os.path.exists(user_data_dir):
+        shutil.rmtree(user_data_dir, ignore_errors=True)
+        os.makedirs(user_data_dir, exist_ok=True)
+
+    # 3. 重置设置为默认值
+    if os.path.exists(SETTINGS_FILE):
+        os.remove(SETTINGS_FILE)
+
     return {"status": "ok"}
 
 @app.get("/api/settings")
@@ -179,15 +248,23 @@ async def update_settings_endpoint(settings: SettingsModel, _auth: None = Depend
     # Convert pydantic model to dict, excluding None values if needed,
     # but here we want to overwrite so we use model_dump
     current = await load_settings()
-    new_settings = settings.model_dump()
+    new_settings = settings.model_dump(exclude_none=True)
 
-    # If api_key is masked (starts with same prefix + ****), keep the existing one
+    # Skip empty string values (Pydantic defaults) so partial updates don't wipe existing data.
+    # Only api_key has special handling: masked values (****) preserve the real key.
+    update = {}
+    for k, v in new_settings.items():
+        if v == "":
+            continue
+        update[k] = v
+
+    # Handle masked api_key (starts with prefix + ****)
     incoming_key = new_settings.get("api_key", "")
     if incoming_key and "****" in incoming_key:
-        new_settings["api_key"] = current.get("api_key", "")
+        update["api_key"] = current.get("api_key", "")
 
     # Merge with current to preserve keys not in model if any
-    current.update(new_settings)
+    current.update(update)
 
     if await save_settings(current):
         # Return masked settings
@@ -381,7 +458,7 @@ async def chat_endpoint(request: ChatRequest, _auth: None = Depends(verify_token
         try:
             while not task.done():
                 try:
-                    item = await asyncio.wait_for(queue.get(), timeout=0.1)
+                    item = await asyncio.wait_for(queue.get(), timeout=0.3)
                     yield f"data: {json.dumps(item)}\n\n"
                 except asyncio.TimeoutError:
                     continue

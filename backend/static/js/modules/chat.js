@@ -6,11 +6,11 @@ import * as API from './api.js';
 
 /**
  * 设置聊天处理器：发送消息、加载/删除对话、输入框自动调整等。
- * @param {Object} elements - UI 元素引用
- * @param {Function} renderHistory - 刷新侧边栏历史的函数
- * @returns {Object} 暴露 loadChat / deleteChat 供外部调用
  */
 export function setupChatHandler(elements, renderHistory) {
+    // 记录最后一条用户消息，用于重新生成
+    let lastUserMessage = '';
+
     async function loadChat(sessionId) {
         setCurrentSessionId(sessionId);
         updateActiveHistoryItem(sessionId);
@@ -33,7 +33,7 @@ export function setupChatHandler(elements, renderHistory) {
         }
     }
 
-    async function handleSendMessage() {
+    async function handleSendMessage(overrideText) {
         if (state.isProcessing) {
             if (state.abortController) {
                 state.abortController.abort();
@@ -42,20 +42,23 @@ export function setupChatHandler(elements, renderHistory) {
             return;
         }
 
-        const text = elements.userInput.value.trim();
+        const text = overrideText || elements.userInput.value.trim();
         if (!text) return;
+
+        lastUserMessage = text;
 
         const selectedModel = document.getElementById('model-select').value;
 
         elements.userInput.value = '';
-        elements.userInput.style.height = '40px';
-        elements.userInput.style.overflowY = 'hidden';
+        resetInputHeight();
         setIsProcessing(true);
         updateSendButtonState();
         elements.heroSection.style.display = 'none';
 
         const sendBtnIcon = elements.sendBtn.querySelector('.material-symbols-rounded');
         sendBtnIcon.textContent = 'stop_circle';
+        elements.sendBtn.classList.remove('inactive', 'active');
+        elements.sendBtn.classList.add('processing');
 
         appendMessage('user', text);
         scrollToBottom();
@@ -64,13 +67,21 @@ export function setupChatHandler(elements, renderHistory) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message assistant';
 
+        // Progress bar
+        const progressBar = document.createElement('div');
+        progressBar.className = 'search-progress-bar';
+        const progressFill = document.createElement('div');
+        progressFill.className = 'progress-fill';
+        progressBar.appendChild(progressFill);
+        msgDiv.appendChild(progressBar);
+
         const { logContainer, logDetails, spinner, statusText } = createDynamicLogContainer();
         msgDiv.appendChild(logContainer);
 
         const answerDiv = document.createElement('div');
         answerDiv.className = 'message-content markdown-body';
         const contentWrapper = document.createElement('div');
-        contentWrapper.innerHTML = '<span class="blinking-cursor">...</span>';
+        contentWrapper.innerHTML = '<span class="blinking-cursor"></span>';
         answerDiv.appendChild(contentWrapper);
         msgDiv.appendChild(answerDiv);
         elements.chatContainer.appendChild(msgDiv);
@@ -83,8 +94,30 @@ export function setupChatHandler(elements, renderHistory) {
         const copyBtn = createCopyButton(() => currentAnswerBuffer);
         answerDiv.appendChild(copyBtn);
 
+        // 重新生成按钮
+        const regenBtn = document.createElement('button');
+        regenBtn.className = 'regenerate-btn';
+        regenBtn.title = '重新生成';
+        regenBtn.innerHTML = '<span class="material-symbols-rounded">refresh</span>';
+        regenBtn.onclick = async (e) => {
+            e.stopPropagation();
+            // 移除当前助手消息
+            msgDiv.remove();
+            // 重新发送
+            await handleSendMessage(lastUserMessage);
+        };
+        answerDiv.appendChild(regenBtn);
+
         let currentSources = [];
         let hasReceivedChunk = false;
+        let logCount = 0;
+
+        // Progress tracker
+        function updateProgress() {
+            logCount++;
+            const pct = Math.min(90, 10 + logCount * 6);
+            progressFill.style.width = pct + '%';
+        }
 
         try {
             await API.streamChat(text, {
@@ -100,10 +133,22 @@ export function setupChatHandler(elements, renderHistory) {
                         }
                         msg = "需要人工验证。请在弹出的窗口中解决验证码。";
                     }
-                    logContainer.style.display = 'block';
+                    logContainer.classList.add('visible');
                     statusText.textContent = msg;
+                    updateProgress();
+
                     const entry = document.createElement('div');
-                    entry.className = 'log-entry';
+                    if (/search|搜索|query/i.test(msg)) {
+                        entry.className = 'log-entry log-search';
+                    } else if (/crawl|爬取|fetch|reading/i.test(msg)) {
+                        entry.className = 'log-entry log-crawl';
+                    } else if (/analyz|分析|assess|评估/i.test(msg)) {
+                        entry.className = 'log-entry log-analysis';
+                    } else if (/error|失败|fail/i.test(msg)) {
+                        entry.className = 'log-entry log-error';
+                    } else {
+                        entry.className = 'log-entry';
+                    }
                     const tsSpan = document.createElement('span');
                     tsSpan.className = 'log-timestamp';
                     tsSpan.textContent = new Date().toLocaleTimeString();
@@ -121,6 +166,7 @@ export function setupChatHandler(elements, renderHistory) {
                     if (!hasReceivedChunk) {
                         hasReceivedChunk = true;
                         contentWrapper.innerHTML = '';
+                        progressFill.style.width = '95%';
                     }
                     currentAnswerBuffer += chunk;
                     contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
@@ -133,7 +179,10 @@ export function setupChatHandler(elements, renderHistory) {
                     API.fetchHistory().then(h => renderHistory(h, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat }));
                 },
                 onError: (err) => {
-                    contentWrapper.innerHTML = `<div style="color:red">Error: ${err}</div>`;
+                    const errDiv = document.createElement('div');
+                    errDiv.className = 'error-box';
+                    errDiv.textContent = `Error: ${err}`;
+                    contentWrapper.appendChild(errDiv);
                 },
                 onDone: () => {}
             });
@@ -142,39 +191,53 @@ export function setupChatHandler(elements, renderHistory) {
                 contentWrapper.innerHTML = '';
             }
             if (e.name === 'AbortError') {
-                contentWrapper.innerHTML += `<div style="color:orange; margin-top: 10px;">[已由用户停止]</div>`;
+                const warnDiv = document.createElement('div');
+                warnDiv.className = 'warning-box';
+                warnDiv.textContent = '[已由用户停止]';
+                contentWrapper.appendChild(warnDiv);
             } else {
                 console.error(e);
-                contentWrapper.innerHTML += `<div style="color:red">网络错误: ${e.message}</div>`;
+                const errDiv = document.createElement('div');
+                errDiv.className = 'error-box';
+                errDiv.textContent = `网络错误: ${e.message}`;
+                contentWrapper.appendChild(errDiv);
             }
         } finally {
             setIsProcessing(false);
             setAbortController(null);
             sendBtnIcon.textContent = 'send';
+            elements.sendBtn.classList.remove('processing');
             updateSendButtonState();
             spinner.classList.remove('rotating');
             spinner.textContent = 'check_circle';
+            spinner.classList.add('completed');
             statusText.textContent = '已完成';
+            // 完成进度条
+            progressBar.classList.add('done');
+            setTimeout(() => { progressBar.style.display = 'none'; }, 1500);
         }
     }
 
     function updateSendButtonState() {
         const hasText = elements.userInput.value.trim().length > 0;
-        elements.sendBtn.disabled = !hasText && !state.isProcessing;
-        elements.sendBtn.style.opacity = (hasText || state.isProcessing) ? '1' : '0.4';
-        elements.sendBtn.style.cursor = (hasText || state.isProcessing) ? 'pointer' : 'default';
+        const isActive = hasText || state.isProcessing;
+        elements.sendBtn.disabled = !isActive;
+        elements.sendBtn.classList.remove('inactive', 'active', 'processing');
+        if (state.isProcessing) {
+            elements.sendBtn.classList.add('processing');
+        } else if (hasText) {
+            elements.sendBtn.classList.add('active');
+        } else {
+            elements.sendBtn.classList.add('inactive');
+        }
     }
 
-    // 绑定事件
-    elements.sendBtn.addEventListener('click', handleSendMessage);
-    elements.userInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleSendMessage();
-        }
-    });
+    function resetInputHeight() {
+        elements.userInput.style.height = '40px';
+        elements.userInput.style.overflowY = 'hidden';
+    }
 
-    elements.userInput.addEventListener('input', () => {
+    function autoResizeInput() {
         const scrollHeight = elements.userInput.scrollHeight;
         const maxHeight = 200;
         elements.userInput.style.height = '40px';
@@ -186,10 +249,30 @@ export function setupChatHandler(elements, renderHistory) {
             elements.userInput.style.overflowY = 'hidden';
         }
         updateSendButtonState();
+    }
+
+    // 绑定事件
+    elements.sendBtn.addEventListener('click', () => handleSendMessage());
+    elements.userInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSendMessage();
+        }
     });
+
+    elements.userInput.addEventListener('input', autoResizeInput);
 
     // 初始化按钮状态
     updateSendButtonState();
+
+    // 模型切换提示
+    const modelSelect = document.getElementById('model-select');
+    if (modelSelect) {
+        modelSelect.addEventListener('change', () => {
+            const shortName = modelSelect.value.includes('/') ? modelSelect.value.split('/').pop() : modelSelect.value;
+            showToast(`已切换至 ${shortName}`, 'info');
+        });
+    }
 
     return { loadChat, deleteChat };
 }

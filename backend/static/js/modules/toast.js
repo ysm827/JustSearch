@@ -1,17 +1,15 @@
-
 export function showToast(message, type = 'info', duration = 3000) {
-    const container = document.getElementById('toast-container');
+    let container = document.getElementById('toast-container');
     if (!container) {
-        const div = document.createElement('div');
-        div.id = 'toast-container';
-        document.body.appendChild(div);
-        return showToast(message, type, duration);
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        document.body.appendChild(container);
     }
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     
-    // Icon based on type
+    // 根据 type 选图标
     let icon = 'info';
     if (type === 'success') icon = 'check_circle';
     if (type === 'error') icon = 'error';
@@ -25,14 +23,16 @@ export function showToast(message, type = 'info', duration = 3000) {
 
     container.appendChild(toast);
 
-    // Trigger reflow for animation
+    // 触发回流以启动动画
     toast.offsetHeight;
     toast.classList.add('show');
 
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => {
-            container.removeChild(toast);
-        }, 300); // Wait for transition
+            if (toast.parentNode) {
+                container.removeChild(toast);
+            }
+        }, 300);
     }, duration);
 }

@@ -18,16 +18,10 @@ from .interaction import (
     _INTERACTION_SESSIONS, get_interaction_session,
     mark_interaction_completed, register_interaction_session, remove_interaction_session
 )
+from .llm_client import _truncate_for_log
 from .page_crawler import crawl_page
 
 logger = logging.getLogger(__name__)
-
-
-def _truncate_for_log(text: str, max_len: int = 50) -> str:
-    """截断搜索词用于日志输出，避免泄露完整查询。"""
-    if not text or len(text) <= max_len:
-        return text
-    return text[:max_len] + "..."
 
 
 class BrowserManager:
@@ -262,12 +256,15 @@ class BrowserManager:
             items = await page.evaluate(r"""(maxResults) => {
                 const results = [];
                 const anchors = document.querySelectorAll('a[href^="http"]');
+                // 搜索引擎自身域名，用于过滤
+                const engineDomains = ['google.com', 'bing.com', 'duckduckgo.com'];
                 let count = 0;
                 for (const a of anchors) {
                     if (count >= maxResults) break;
                     const href = a.href;
-                    // 跳过搜索引擎自身的导航链接
+                    // 跳过搜索引擎自身的导航链接和域名
                     if (href.includes('search?') || href.includes('/l/')) continue;
+                    if (engineDomains.some(d => href.includes(d))) continue;
                     const title = (a.innerText || a.textContent || '').trim();
                     if (title.length < 5 || title.length > 200) continue;
                     // 获取附近的文本作为摘要

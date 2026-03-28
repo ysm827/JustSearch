@@ -128,6 +128,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupSettingsModal();
         setupPasswordToggle();
         setupBrowserModal();
+        setupHistorySearch();
+    }
+
+    function setupHistorySearch() {
+        const searchInput = document.getElementById('history-search-input');
+        if (!searchInput) return;
+
+        let searchTimeout;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                // 重新获取历史并渲染（renderHistory 内部会读取搜索框值进行过滤）
+                API.fetchHistory().then(history => {
+                    renderHistory(history, state.currentSessionId, {
+                        onSelect: loadChat,
+                        onDelete: deleteChat
+                    });
+                });
+            }, 200);
+        });
     }
 
     function setupPasswordToggle() {
@@ -253,6 +273,26 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast('清除历史记录失败', 'error');
             }
         });
+
+        const clearCacheBtn = document.getElementById('clear-cache-btn');
+        if (clearCacheBtn) {
+            clearCacheBtn.addEventListener('click', async () => {
+                if (!confirm('此操作将清除所有聊天记录、浏览器缓存（Cookies 等）并重置设置为默认值。确定要继续吗？此操作不可撤销。')) return;
+                if (await API.clearCacheAPI()) {
+                    setCurrentSessionId(null);
+                    elements.historyList.innerHTML = '';
+                    elements.chatContainer.innerHTML = '';
+                    elements.heroSection.style.display = 'block';
+                    elements.chatContainer.appendChild(elements.heroSection);
+                    updateActiveHistoryItem(null);
+                    elements.settingsModal.style.display = 'none';
+                    showToast('全部缓存已清除，页面即将刷新', 'success');
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    showToast('清除缓存失败', 'error');
+                }
+            });
+        }
     }
 
     function setupBrowserModal() {
@@ -354,4 +394,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             };
         };
     }
+
+    // --- Suggestion Chips ---
+    document.querySelectorAll('.suggestion-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            const query = chip.dataset.query;
+            if (!query) return;
+            elements.userInput.value = query;
+            elements.userInput.dispatchEvent(new Event('input', { bubbles: true }));
+            elements.sendBtn.click();
+        });
+    });
+
+    // --- Keyboard Shortcuts ---
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const activeModal = document.querySelector('.modal[style*="flex"]');
+            if (activeModal) {
+                activeModal.style.display = 'none';
+            }
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+            e.preventDefault();
+            elements.newChatBtn.click();
+        }
+    });
 });

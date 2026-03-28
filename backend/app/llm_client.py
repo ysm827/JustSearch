@@ -13,8 +13,7 @@ logger = logging.getLogger(__name__)
 # 默认上下文轮数，可通过 settings 覆盖
 _DEFAULT_CONTEXT_TURNS = 6
 
-# LLM 调用最大重试次数和超时
-_LLM_MAX_RETRIES = 3
+# LLM 调用超时
 _LLM_TIMEOUT = 120  # 秒
 
 
@@ -24,7 +23,7 @@ class LLMClient:
         self.client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
-            max_retries=_LLM_MAX_RETRIES,
+            max_retries=0,  # 禁用自动重试，由上层统一处理
             timeout=_LLM_TIMEOUT,
         )
         self.model = model
@@ -111,6 +110,7 @@ class LLMClient:
         messages.append({"role": "user", "content": user_input})
 
         try:
+            logger.info("[Task Analysis] 输入: %s", _truncate_for_log(user_input, 80))
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages
@@ -119,9 +119,11 @@ class LLMClient:
 
             data = self._extract_json(content)
             if data:
+                logger.info("[Task Analysis] 结果: %s", json.dumps(data, ensure_ascii=False)[:200])
                 return data
 
             # Fallback
+            logger.warning("[Task Analysis] JSON 解析失败，使用 fallback")
             return {"type": "search", "queries": [user_input]}
 
         except Exception as e:
@@ -143,6 +145,7 @@ class LLMClient:
             user_message += f"ID [{item['id']}]: Title: {item['title']}\n{date_info}Snippet: {item['snippet']}\n\n"
 
         try:
+            logger.info("[Relevance Assessment] 评估 %d 个搜索结果", len(snippets))
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -154,8 +157,11 @@ class LLMClient:
 
             data = self._extract_json(content)
             if data:
-                return data.get("relevant_ids", [])
+                ids = data.get("relevant_ids", [])
+                logger.info("[Relevance Assessment] 选定 ID: %s", ids)
+                return ids
 
+            logger.warning("[Relevance Assessment] JSON 解析失败，返回前 3 个")
             return [s['id'] for s in snippets[:3]]
         except Exception as e:
             logger.error("Error in assess_relevance: %s", e)
@@ -180,6 +186,7 @@ class LLMClient:
             user_message += f"ID [{el['id']}]: [{el['tag']}] {el['text'][:100]}\n"
 
         try:
+            logger.info("[Click Decision] 评估 %d 个可点击元素", len(elements))
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -191,13 +198,16 @@ class LLMClient:
 
             data = self._extract_json(content)
             if data:
-                return data.get("clicked_ids", [])
+                clicked = data.get("clicked_ids", [])
+                logger.info("[Click Decision] 决定点击: %s", clicked)
+                return clicked
+            logger.info("[Click Decision] 不点击任何元素")
             return []
         except Exception as e:
             logger.error("Error in decide_click_elements: %s", e)
             return []
 
-    async def generate_answer(self, query: str, sources: List[Dict], history: Optional[List[Dict[str, str]]] = None, stream_callback: Optional[Callable[[str], None]] = None) -> Dict[str, any]:
+    async def generate_answer(self, query: str, sources: List[Dict], history: Optional[List[Dict[str, str]]] = None, stream_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
         """
         [09] AI Model: Generation & Evaluation
         Input: Query and full content of selected sources.
@@ -226,6 +236,7 @@ class LLMClient:
         messages.append({"role": "user", "content": user_message})
 
         try:
+            logger.info("[Generate Answer] 使用 %d 个来源生成答案 (stream=%s)", len(sources), "yes" if stream_callback else "no")
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -233,7 +244,7 @@ class LLMClient:
             )
 
             full_content = ""
-            status = "sufficient"  # Default assumption
+            status = "sufficient"
             parsing_header = True
             header_buffer = ""
             answer_started = False

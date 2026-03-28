@@ -16,6 +16,55 @@ from .interaction import register_interaction_session, remove_interaction_sessio
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# DOM-density content extraction script (runs in browser context)
+# Replaces raw document.body.innerText with a smarter extractor that:
+#   1. Removes noise (nav, footer, sidebar, ads, comments, etc.)
+#   2. Finds the highest text-density container (article/main/.content/...)
+#   3. Falls back to cleaned body if no good candidate found
+# ---------------------------------------------------------------------------
+_JS_EXTRACT_CONTENT = """() => {
+    const NOISE = [
+        'nav','footer','aside','header',
+        '[role="navigation"]','[role="banner"]','[role="contentinfo"]',
+        '.sidebar','.nav-bar','.footer','.site-header',
+        '.ad','.ads','.advertisement','.sponsor','.promoted',
+        '.cookie-banner','.cookie-notice','.popup','.modal-overlay',
+        '.social-share','.share-buttons','.related-posts','.related-articles',
+        '.comments','#comments','.comment-section',
+        '.breadcrumb','.pagination','.pager',
+        'iframe','script','style','noscript','svg'
+    ];
+
+    const clone = document.body.cloneNode(true);
+    NOISE.forEach(sel => {
+        try { clone.querySelectorAll(sel).forEach(el => el.remove()); } catch(e) {}
+    });
+
+    function textLen(el) { return (el.innerText || '').replace(/\\s+/g,'').length; }
+    function tagCount(el) { return el.getElementsByTagName('*').length; }
+    function density(el) { return textLen(el) / (tagCount(el) + 1); }
+
+    const candidates = clone.querySelectorAll(
+        'article, main, [role="main"], .content, .post-content, .entry-content, ' +
+        '.article-content, .post-body, #content, #main, .main-content, .page-content'
+    );
+
+    let best = clone, bestD = density(clone);
+    candidates.forEach(el => {
+        const d = density(el);
+        if (d > bestD) { bestD = d; best = el; }
+    });
+
+    let text = (best.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim();
+
+    // Minimum content threshold — fall back to cleaned body
+    if (text.replace(/\\s+/g,'').length < 200) {
+        text = (clone.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim();
+    }
+    return text;
+}"""
+
 # Private network ranges to block
 _PRIVATE_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
@@ -41,14 +90,29 @@ def is_private_url(url: str) -> bool:
         if hostname in ("localhost", "localhost.localdomain"):
             return True
 
+        # Block IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1)
+        if hostname.startswith("::ffff:"):
+            mapped_ipv4 = hostname[7:]
+            try:
+                ip = ipaddress.ip_address(mapped_ipv4)
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                    return True
+            except ValueError:
+                pass
+
         # Try to resolve hostname and check if IP is private
         addrinfo = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         for family, _, _, _, sockaddr in addrinfo:
             ip = ipaddress.ip_address(sockaddr[0])
+            # 跳过代理/VPN 虚拟 IP 段 (198.18.0.0/15)
+            # 本地代理工具（Surge/Clash等）会劫持 DNS 将域名解析到此段
+            if ip in ipaddress.ip_network("198.18.0.0/15"):
+                continue
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return True
     except (socket.gaierror, ValueError, OSError):
-        pass  # If we can't resolve, let it through (DNS may resolve later)
+        # DNS 解析失败时拒绝，因为无法确定目标是否安全
+        return True
 
     return False
 
@@ -184,6 +248,7 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
     if log_func:
         log_func("浏览器: 交互模式已开启，正在提取可点击元素...")
 
+    # Extract elements and store their positions (no DOM mutation)
     elements = await page.evaluate("""() => {
         const items = [];
         let idCounter = 0;
@@ -202,15 +267,17 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
             const text = el.innerText.trim();
             if (text.length < 2 || text.length > 50) continue;
 
-            if (/^(home|login|sign in|sign up|menu|privacy|terms)$/i.test(text)) continue;
+            if (/^(home|login|sign in|sign up|menu|privacy|terms|登录|注册|分享|首页|关闭|关闭|评论)$/i.test(text)) continue;
 
+            const rect = el.getBoundingClientRect();
             const tempId = "js-interact-" + idCounter++;
-            el.setAttribute("data-js-interact-id", tempId);
 
             items.push({
                 id: tempId,
                 text: text,
-                tag: el.tagName.toLowerCase()
+                tag: el.tagName.toLowerCase(),
+                x: rect.x + rect.width / 2,
+                y: rect.y + rect.height / 2
             });
 
             if (items.length >= 50) break;
@@ -228,20 +295,40 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
             if log_func:
                 log_func(f"浏览器: AI 决定点击元素 ID: {clicked_ids}")
 
-            for cid in clicked_ids:
-                try:
-                    await page.click(f'[data-js-interact-id="{cid}"]', timeout=2000)
-                    if log_func:
-                        log_func(f"浏览器: 已点击元素 {cid}")
-                    await asyncio.sleep(1.0)
-                except Exception as e:
-                    if log_func:
-                        log_func(f"浏览器: 点击元素 {cid} 失败: {e}")
+            # Build position lookup
+            pos_map = {}
+            for el in elements:
+                pos_map[el['id']] = (el['x'], el['y'])
 
-            try:
-                await page.wait_for_load_state("networkidle", timeout=3000)
-            except Exception:
-                await asyncio.sleep(2.0)
+            for cid in clicked_ids:
+                if cid not in pos_map:
+                    continue
+                x, y = pos_map[cid]
+                clicked = False
+                # Retry up to 3 times with increasing timeout
+                for attempt in range(3):
+                    try:
+                        await page.mouse.click(x, y, timeout=5000)
+                        if log_func:
+                            log_func(f"浏览器: 已点击元素 {cid}")
+                        clicked = True
+                        await asyncio.sleep(1.0)
+                        break
+                    except Exception as e:
+                        if attempt < 2:
+                            if log_func:
+                                log_func(f"浏览器: 点击 {cid} 失败 (重试 {attempt+1}/3): {e}")
+                            await asyncio.sleep(0.5 * (attempt + 1))
+                        else:
+                            if log_func:
+                                log_func(f"浏览器: 点击元素 {cid} 最终失败: {e}")
+
+                if clicked:
+                    # Wait for any dynamic content to load after click
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=3000)
+                    except Exception:
+                        await asyncio.sleep(1.0)
         else:
             if log_func:
                 log_func("浏览器: AI 决定不点击任何元素。")
@@ -251,10 +338,10 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
 
 
 async def extract_page_content(page: Page, url: str) -> str:
-    """Extract text content from a page with retry logic for context issues."""
+    """Extract main content from a page using DOM-density algorithm with retry logic."""
     for attempt in range(3):
         try:
-            return await page.evaluate("() => document.body ? document.body.innerText : ''")
+            return await page.evaluate(_JS_EXTRACT_CONTENT)
         except Exception as e:
             if "Execution context was destroyed" in str(e) or "Cannot find context" in str(e):
                 if attempt < 2:

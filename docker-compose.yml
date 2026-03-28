@@ -5,7 +5,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app/backend
       - ./backend/settings.json:/app/backend/settings.json
       - ./backend/chats:/app/backend/chats
       - ./user_data:/app/user_data

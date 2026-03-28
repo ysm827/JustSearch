@@ -1,4 +1,4 @@
-// Initialize markdown-it
+// 初始化 markdown-it
 const mdInstance = window.markdownit({
     html: false,
     linkify: true,
@@ -8,11 +8,35 @@ const mdInstance = window.markdownit({
 export const md = {
     render: (text) => {
         const rawHtml = mdInstance.render(text);
-        return window.DOMPurify.sanitize(rawHtml, {
-            ADD_ATTR: ['target'] // Allow target="_blank" for links
+        const sanitized = window.DOMPurify.sanitize(rawHtml, {
+            ADD_ATTR: ['target']
+        });
+        // 为代码块添加包装器（不含 onclick，用事件委托处理复制）
+        return sanitized.replace(/<pre><code([^>]*)>/g, (match, attrs) => {
+            return `<pre class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${extractLangFromAttrs(attrs)}</span><button class="code-copy-btn" data-action="copy-code" title="复制代码"><span class="material-symbols-rounded">content_copy</span></button></div><code${attrs}>`;
         });
     }
 };
+
+function extractLangFromAttrs(attrs) {
+    const m = attrs.match(/class="language-(\w+)"/);
+    return m ? m[1] : '';
+}
+
+// 全局事件委托：处理代码块复制按钮
+document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action="copy-code"]');
+    if (!btn) return;
+    const pre = btn.closest('pre');
+    const code = pre ? pre.querySelector('code') : null;
+    if (!code) return;
+    try {
+        await navigator.clipboard.writeText(code.textContent);
+        const icon = btn.querySelector('span');
+        icon.textContent = 'check';
+        setTimeout(() => { icon.textContent = 'content_copy'; }, 2000);
+    } catch (err) { console.error('Copy failed:', err); }
+});
 
 export function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);

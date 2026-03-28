@@ -6,7 +6,9 @@ logger = logging.getLogger(__name__)
 
 
 def load_selectors(engine: str = "duckduckgo") -> dict:
-    """Load search engine CSS selectors from config file."""
+    """Load search engine CSS selectors from config file.
+    返回完整的引擎配置 dict，调用方按 engine 名取子项。
+    """
     try:
         config_path = os.path.join(os.path.dirname(__file__), 'search_selectors.json')
         if os.path.exists(config_path):
@@ -14,7 +16,8 @@ def load_selectors(engine: str = "duckduckgo") -> dict:
                 config = json.load(f)
                 if engine in config:
                     return config
-                return {engine: config}
+                # 引擎不在配置中，返回完整 config（调用方会 fallback 到 duckduckgo）
+                return config
     except OSError as e:
         logger.error("Error loading search selectors: %s", e)
 

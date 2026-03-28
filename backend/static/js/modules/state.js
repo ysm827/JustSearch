@@ -3,7 +3,8 @@ export const state = {
     settings: {},
     isProcessing: false,
     abortController: null,
-    authToken: null
+    authToken: null,
+    openBrowserModal: null
 };
 
 export function setCurrentSessionId(id) {

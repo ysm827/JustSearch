@@ -24,10 +24,10 @@ def get_or_create_auth_token() -> str:
     # Generate new token
     token = secrets.token_urlsafe(32)
     try:
-        with open(AUTH_TOKEN_FILE, 'w') as f:
+        # 使用 os.open 确保文件创建时就只有 owner 可读写 (0o600)
+        fd = os.open(AUTH_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
             f.write(token)
-        # Restrict file permissions to owner only
-        os.chmod(AUTH_TOKEN_FILE, 0o600)
     except OSError as e:
         logger.error("Failed to save auth token: %s", e)
 
@@ -36,8 +36,8 @@ def get_or_create_auth_token() -> str:
 DEFAULT_SETTINGS = {
     "theme": "light",
     "api_key": "",
-    "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
-    "model_id": "glm-5.1",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "model_id": "deepseek-ai/deepseek-v3.2",
     "search_engine": "duckduckgo",
     "max_results": 8,
     "max_iterations": 5,

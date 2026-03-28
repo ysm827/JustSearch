@@ -10,12 +10,39 @@ function getAuthHeaders() {
 }
 
 function showAuthPrompt() {
-    const token = prompt('请输入访问令牌 (Authorization Token)：\n令牌在服务端启动时打印到控制台');
-    if (token) {
-        state.authToken = token.trim();
-        localStorage.setItem('auth_token', token.trim());
-        window.location.reload();
+    // 如果已经存在认证弹窗则不重复创建
+    if (document.querySelector('.auth-modal-overlay')) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'auth-modal-overlay';
+    overlay.innerHTML = `
+        <div class="auth-modal">
+            <h3>🔑 身份验证</h3>
+            <p>请输入访问令牌。令牌在服务端启动时打印到控制台。</p>
+            <input type="text" id="auth-token-input" placeholder="输入令牌..." autofocus>
+            <button class="auth-modal-submit" id="auth-submit-btn">确认</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const input = document.getElementById('auth-token-input');
+    const submitBtn = document.getElementById('auth-submit-btn');
+
+    function submit() {
+        const token = input.value.trim();
+        if (token) {
+            state.authToken = token;
+            localStorage.setItem('auth_token', token);
+            overlay.remove();
+            window.location.reload();
+        }
     }
+
+    submitBtn.addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submit();
+    });
+    input.focus();
 }
 
 // Restore token from localStorage, or read from meta tag injected by server
@@ -124,6 +151,20 @@ export async function deleteChatAPI(sessionId) {
     }
 }
 
+export async function renameChatAPI(sessionId, newTitle) {
+    try {
+        const res = await authedFetch(`/api/history/${sessionId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle })
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("Failed to rename chat", e);
+        return false;
+    }
+}
+
 export async function clearHistoryAPI() {
     try {
         const res = await authedFetch('/api/history', {
@@ -132,6 +173,18 @@ export async function clearHistoryAPI() {
         return res.ok;
     } catch (e) {
         console.error("Failed to clear history", e);
+        return false;
+    }
+}
+
+export async function clearCacheAPI() {
+    try {
+        const res = await authedFetch('/api/clear-cache', {
+            method: 'POST'
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("Failed to clear cache", e);
         return false;
     }
 }
@@ -212,7 +265,6 @@ export async function streamChat(query, callbacks) {
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
-            let lastEventOffset = 0; // 记录已处理的位置，用于重连时跳过已处理内容
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -223,7 +275,6 @@ export async function streamChat(query, callbacks) {
                 buffer = lines.pop();
 
                 for (const line of lines) {
-                    lastEventOffset += line.length + 2; // +2 for \n\n
                     if (line.startsWith('data: ')) {
                         const dataStr = line.slice(6);
                         if (dataStr === '[DONE]') {

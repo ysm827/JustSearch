@@ -1,4 +1,6 @@
 import { md, createCopyButton } from './utils.js';
+import { renameChatAPI } from './api.js';
+import { showToast } from './toast.js';
 
 export const elements = {
     chatContainer: null,
@@ -13,8 +15,12 @@ export const elements = {
     collapseSidebarBtn: null,
     closeSidebarBtn: null,
     mobileOverlay: null,
-    scrollToBottomBtn: null
+    scrollToBottomBtn: null,
+    historySearchInput: null
 };
+
+// 缓存完整历史数据，用于搜索过滤
+let _fullHistory = [];
 
 export function initUI() {
     elements.chatContainer = document.getElementById('chat-container');
@@ -30,6 +36,7 @@ export function initUI() {
     elements.closeSidebarBtn = document.getElementById('close-sidebar-btn');
     elements.mobileOverlay = document.getElementById('mobile-overlay');
     elements.scrollToBottomBtn = document.getElementById('scroll-to-bottom-btn');
+    elements.historySearchInput = document.getElementById('history-search-input');
 
     initScrollBehavior();
 }
@@ -41,7 +48,6 @@ function initScrollBehavior() {
         const { scrollTop, scrollHeight, clientHeight } = chatContainer;
         const scrollBottom = scrollHeight - scrollTop - clientHeight;
         
-        // Show button if we are scrolled up more than 100px
         if (scrollBottom > 100) {
             scrollToBottomBtn.classList.add('visible');
         } else {
@@ -55,14 +61,12 @@ function initScrollBehavior() {
 }
 
 /**
- * Group chats by date for sidebar display.
- * Groups: "今天", "昨天", "本周", "更早"
+ * 按日期分组对话
  */
 function groupChatsByDate(history) {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const yesterday = new Date(today.getTime() - 86400000);
-    // Start of this week (Monday)
     const weekStart = new Date(today);
     weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
 
@@ -95,12 +99,34 @@ function groupChatsByDate(history) {
 }
 
 export function renderHistory(history, currentSessionId, callbacks) {
+    // 缓存完整历史
+    _fullHistory = history || [];
+    
     const { onSelect, onDelete } = callbacks;
+    const searchTerm = elements.historySearchInput ? elements.historySearchInput.value.trim().toLowerCase() : '';
+    
     elements.historyList.innerHTML = '';
     
-    if (!history || history.length === 0) return;
+    if (!history || history.length === 0) {
+        if (searchTerm) {
+            elements.historyList.innerHTML = '<div class="history-no-results">未找到匹配的对话</div>';
+        }
+        return;
+    }
 
-    const groups = groupChatsByDate(history);
+    // 搜索过滤
+    let filtered = history;
+    if (searchTerm) {
+        filtered = history.filter(chat => 
+            (chat.title || '新对话').toLowerCase().includes(searchTerm)
+        );
+        if (filtered.length === 0) {
+            elements.historyList.innerHTML = '<div class="history-no-results">未找到匹配的对话</div>';
+            return;
+        }
+    }
+
+    const groups = groupChatsByDate(filtered);
     const groupOrder = ['今天', '昨天', '本周', '更早'];
 
     groupOrder.forEach(groupName => {
@@ -125,9 +151,16 @@ export function renderHistory(history, currentSessionId, callbacks) {
             titleSpan.textContent = chat.title || '新对话';
             item.appendChild(titleSpan);
 
+            // 双击重命名
+            titleSpan.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                startRename(titleSpan, chat.id, callbacks);
+            });
+
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'delete-history-btn';
             deleteBtn.title = '删除对话';
+            deleteBtn.setAttribute('aria-label', '删除对话');
             deleteBtn.innerHTML = '<span class="material-symbols-rounded">delete</span>';
             deleteBtn.onclick = (e) => {
                 e.stopPropagation();
@@ -144,18 +177,63 @@ export function renderHistory(history, currentSessionId, callbacks) {
     });
 }
 
+/**
+ * 启动历史记录重命名
+ */
+function startRename(titleSpan, chatId, callbacks) {
+    const currentTitle = titleSpan.textContent;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'history-title-edit';
+    input.value = currentTitle;
+    
+    titleSpan.replaceWith(input);
+    input.focus();
+    input.select();
+
+    async function save() {
+        const newTitle = input.value.trim() || currentTitle;
+        // 恢复 span
+        const newSpan = document.createElement('span');
+        newSpan.className = 'history-title';
+        newSpan.textContent = newTitle;
+        newSpan.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            startRename(newSpan, chatId, callbacks);
+        });
+        input.replaceWith(newSpan);
+
+        if (newTitle !== currentTitle) {
+            const ok = await renameChatAPI(chatId, newTitle);
+            if (ok) {
+                showToast('已重命名', 'success');
+            } else {
+                // 优雅降级：恢复原标题
+                newSpan.textContent = currentTitle;
+                showToast('重命名失败，服务端可能不支持', 'warning');
+            }
+        }
+    }
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+        } else if (e.key === 'Escape') {
+            input.value = currentTitle;
+            input.blur();
+        }
+    });
+    input.addEventListener('blur', save);
+}
+
 export function updateActiveHistoryItem(sessionId) {
     document.querySelectorAll('.history-item').forEach(item => {
-        if (item.dataset.id === sessionId) {
-            item.classList.add('active');
-        } else {
-            item.classList.remove('active');
-        }
+        item.classList.toggle('active', item.dataset.id === sessionId);
     });
 }
 
 export function renderMessages(messages) {
-    // Always clear everything first to avoid duplicate hero
     elements.chatContainer.innerHTML = '';
     
     if (!messages || messages.length === 0) {
@@ -186,14 +264,12 @@ export function appendMessage(role, content, logs = null, sources = null) {
     
     if (role === 'assistant') {
         contentDiv.classList.add('markdown-body');
-        // Prefer stored sources from history, fallback to extracting from text
         const resolvedSources = (sources && sources.length > 0) ? sources : extractSources(content);
         contentDiv.innerHTML = renderWithCitations(content, resolvedSources);
     } else {
         contentDiv.textContent = content;
     }
     
-    // Add Copy Button
     const copyBtn = createCopyButton(content);
     contentDiv.appendChild(copyBtn);
     
@@ -220,9 +296,8 @@ export function createLogContainer(logs) {
     statusLeft.className = 'log-status-left';
     
     const spinner = document.createElement('span');
-    spinner.className = 'material-symbols-rounded log-spinner';
-    // If we are creating from history, it's done
-    spinner.textContent = 'check_circle'; 
+    spinner.className = 'material-symbols-rounded log-spinner completed';
+    spinner.textContent = 'check_circle';
     
     const statusText = document.createElement('span');
     statusText.className = 'log-status-text';
@@ -254,8 +329,7 @@ export function createLogContainer(logs) {
     
     logSummary.onclick = () => {
         logDetails.classList.toggle('open');
-        const isOpen = logDetails.classList.contains('open');
-        expandIcon.style.transform = isOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+        expandIcon.classList.toggle('expanded');
     };
     
     logContainer.appendChild(logSummary);
@@ -264,11 +338,10 @@ export function createLogContainer(logs) {
     return logContainer;
 }
 
-// Helper for dynamic log creation during streaming
 export function createDynamicLogContainer() {
     const logContainer = document.createElement('div');
     logContainer.className = 'log-container';
-    logContainer.style.display = 'none'; // Hidden initially
+    logContainer.style.display = 'none';
     
     const logSummary = document.createElement('div');
     logSummary.className = 'log-summary';
@@ -299,8 +372,7 @@ export function createDynamicLogContainer() {
     
     logSummary.onclick = () => {
         logDetails.classList.toggle('open');
-        const isOpen = logDetails.classList.contains('open');
-        expandIcon.style.transform = isOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+        expandIcon.classList.toggle('expanded');
     };
     
     logContainer.appendChild(logSummary);
@@ -311,7 +383,6 @@ export function createDynamicLogContainer() {
 
 export function extractSources(text) {
     const sources = [];
-    // Improved regex: handle URLs with parentheses by matching up to the last ) before ] or end
     const regex = /\[(\d+)\] \[([^\]]*)\]\(([^)]+)\)/g;
     let match;
     while ((match = regex.exec(text)) !== null) {
@@ -364,8 +435,8 @@ export function renderWithCitations(text, sources) {
                     a.target = '_blank';
                     a.className = 'citation-link';
                     a.textContent = `[${id}]`;
-                    a.title = source.title || source.url;
-                    // Use CSS variable instead of hardcoded color
+                    // 确保 title 包含 URL 以便 hover 时显示
+                    a.title = source.url;
                     fragment.appendChild(a);
                 } else {
                     fragment.appendChild(document.createTextNode(part));

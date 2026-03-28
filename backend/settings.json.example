@@ -1,7 +1,12 @@
 {
     "theme": "light",
     "api_key": "YOUR_API_KEY_HERE",
-    "base_url": "https://api-proxy.de/nvidia/v1",
+    "base_url": "https://integrate.api.nvidia.com/v1",
     "model_id": "deepseek-ai/deepseek-v3.2",
-    "search_engine": "duckduckgo"
+    "search_engine": "duckduckgo",
+    "max_results": 8,
+    "max_iterations": 5,
+    "interactive_search": true,
+    "max_concurrent_pages": 10,
+    "max_context_turns": 6
 }
