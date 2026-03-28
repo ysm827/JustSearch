@@ -250,7 +250,14 @@ export function setupChatHandler(elements, renderHistory) {
             spinner.textContent = 'check_circle';
             spinner.classList.add('completed');
             if (searchStats && searchStats.sites_searched > 0) {
-                statusText.textContent = `已完成 · 搜索过 ${searchStats.sites_searched} 个网页`;
+                let statsText = `已完成 · 搜索过 ${searchStats.sites_searched} 个网页`;
+                if (searchStats.prompt_tokens || searchStats.completion_tokens) {
+                    const totalTokens = (searchStats.prompt_tokens || 0) + (searchStats.completion_tokens || 0);
+                    if (totalTokens > 0) {
+                        statsText += ` · ${totalTokens.toLocaleString()} tokens`;
+                    }
+                }
+                statusText.textContent = statsText;
             } else {
                 statusText.textContent = '已完成';
             }

@@ -28,16 +28,20 @@ class LLMClient:
         )
         self.model = model
         self.max_context_turns = max_context_turns
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
 
     async def _call_with_retry(self, messages: list, retries: int = 2) -> Any:
         """带重试的 LLM 调用。处理 429/500 等可重试错误。"""
         import httpx
         for attempt in range(retries + 1):
             try:
-                return await self.client.chat.completions.create(
+                response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                 )
+                self._track_usage(response)
+                return response
             except Exception as e:
                 err_str = str(e)
                 status_code = getattr(e, 'status_code', 0)
@@ -48,6 +52,12 @@ class LLMClient:
                     await asyncio.sleep(wait)
                     continue
                 raise
+
+    def _track_usage(self, response):
+        """Track token usage from response."""
+        if hasattr(response, 'usage') and response.usage:
+            self.total_prompt_tokens += getattr(response.usage, 'prompt_tokens', 0) or 0
+            self.total_completion_tokens += getattr(response.usage, 'completion_tokens', 0) or 0
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """
