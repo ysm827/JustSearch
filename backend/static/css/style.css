@@ -452,11 +452,6 @@ textarea:focus-visible {
 }
 
 /* --- Sidebar Footer --- */
-.sidebar-footer {
-    padding-top: 10px;
-    margin-top: auto;
-}
-
 .icon-btn {
     background: none;
     border: none;
