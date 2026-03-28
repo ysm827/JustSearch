@@ -209,7 +209,7 @@ class BrowserManager:
                             }
 
                             if (!date && snippet) {
-                                const dateMatch = snippet.match(/^([a-zA-Z]{3} \d{1,2}, \d{4}|\d{1,2} [a-zA-Z]{3} \d{4}|\d{4}年\d{1,2}月\d{1,2}日|\d{1,2} hours? ago|\d{1,2} days? ago)/);
+                                const dateMatch = snippet.match(/^([a-zA-Z]{3} \d{1,2}, \d{4}|\d{1,2} [a-zA-Z]{3} \d{4}|\d{4}年\d{1,2}月\d{1,2}日|\d{1,2} hours? ago|\d{1,2} days? ago|\d+分钟前|\d+小时前|\d+天前|昨天|今天|\d{4}-\d{1,2}-\d{1,2})/);
                                 if (dateMatch) {
                                     date = dateMatch[0];
                                 }

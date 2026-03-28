@@ -8,6 +8,11 @@ services:
       - ./data:/app/data
       - ./user_data:/app/user_data
     environment:
-      - HEADLESS=true
+      - HEADLESS=${HEADLESS:-true}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - MAX_CONCURRENT_PAGES=${MAX_CONCURRENT_PAGES:-10}
+    env_file:
+      - path: .env
+        required: false
     command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped

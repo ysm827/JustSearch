@@ -102,7 +102,13 @@ async def init_db():
 
     os.makedirs(_DATA_DIR, exist_ok=True)
 
-    _engine = create_async_engine(_DATABASE_URL, echo=False)
+    _engine = create_async_engine(
+        _DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+    )
     _async_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
     async with _engine.begin() as conn:
