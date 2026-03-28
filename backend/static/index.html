@@ -76,6 +76,12 @@
                     <span class="hint-item"><kbd>Ctrl+N</kbd> 新对话</span>
                     <span class="hint-item"><kbd>Esc</kbd> 关闭弹窗</span>
                 </div>
+                <div class="suggestions" style="margin-top:20px; display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+                    <button class="suggestion-chip" data-query="Python 和 Rust 哪个更适合系统编程？">Python vs Rust</button>
+                    <button class="suggestion-chip" data-query="2026年最值得学习的 AI 框架有哪些？">2026 AI 框架</button>
+                    <button class="suggestion-chip" data-query="Mac mini M4 值得买吗？性能对比评测">Mac mini M4 评测</button>
+                    <button class="suggestion-chip" data-query="FastAPI 和 Django 性能对比如何？">FastAPI vs Django</button>
+                </div>
 
             </div>
         </div>
@@ -86,7 +92,7 @@
 
         <div id="input-area">
             <div class="input-box">
-                <textarea id="user-input" placeholder="提出问题..." rows="1" aria-label="消息输入" enterkeyhint="send"></textarea>
+                <textarea id="user-input" placeholder="提出问题..." rows="1" aria-label="消息输入" enterkeyhint="send" autofocus></textarea>
                 <button id="send-btn" aria-label="发送消息">
                     <span class="material-symbols-rounded">send</span>
                 </button>

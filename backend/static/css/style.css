@@ -2311,6 +2311,25 @@ textarea:focus-visible {
     box-shadow: 0 1px 0 var(--border);
     line-height: 1.4;
 }
+
+.suggestion-chip {
+    padding: 6px 14px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+
+.suggestion-chip:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    background-color: var(--primary-light);
+    transform: translateY(-1px);
+}
 /* Force dark mode code copy button visibility fix */
 [data-theme="dark"] .code-copy-btn {
     color: var(--text-muted);

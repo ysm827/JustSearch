@@ -432,6 +432,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
+    // --- Suggestion Chips ---
+    document.querySelectorAll('.suggestion-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            const query = chip.dataset.query;
+            if (query) {
+                elements.userInput.value = query;
+                elements.userInput.dispatchEvent(new Event('input'));
+                // Auto-send
+                const sendBtn = document.getElementById('send-btn');
+                if (sendBtn) sendBtn.click();
+            }
+        });
+    });
+
     // --- Keyboard Shortcuts ---
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
