@@ -2,6 +2,54 @@ import { md, createCopyButton } from './utils.js';
 import { renameChatAPI } from './api.js';
 import { showToast } from './toast.js';
 
+/**
+ * 自定义确认弹窗（替代浏览器原生 confirm）。
+ * @param {string} message - 提示信息
+ * @param {string} [title='确认'] - 弹窗标题
+ * @returns {Promise<boolean>}
+ */
+export function showConfirm(message, title = '确认') {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('confirm-modal');
+        const titleEl = document.getElementById('confirm-title');
+        const messageEl = document.getElementById('confirm-message');
+        const okBtn = document.getElementById('confirm-ok-btn');
+        const cancelBtn = document.getElementById('confirm-cancel-btn');
+        const closeBtn = document.getElementById('confirm-close-btn');
+
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        modal.classList.add('active');
+
+        function cleanup(result) {
+            modal.classList.remove('active');
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            closeBtn.removeEventListener('click', onCancel);
+            resolve(result);
+        }
+
+        function onOk() { cleanup(true); }
+        function onCancel() { cleanup(false); }
+
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        closeBtn.addEventListener('click', onCancel);
+    });
+}
+
+/**
+ * 从 URL 提取 favicon URL（使用 Google favicon 服务）。
+ */
+function getFaviconUrl(url) {
+    try {
+        const u = new URL(url);
+        return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=32`;
+    } catch {
+        return null;
+    }
+}
+
 export const elements = {
     chatContainer: null,
     historyList: null,
@@ -256,7 +304,8 @@ export function appendMessage(role, content, logs = null, sources = null) {
     msgDiv.className = `message ${role}`;
     
     if (role === 'assistant' && logs && logs.length > 0) {
-         msgDiv.appendChild(createLogContainer(logs));
+         const srcCount = (sources && sources.length) ? sources.length : 0;
+         msgDiv.appendChild(createLogContainer(logs, srcCount));
     }
 
     const contentDiv = document.createElement('div');
@@ -285,7 +334,7 @@ export function scrollToBottom() {
     });
 }
 
-export function createLogContainer(logs) {
+export function createLogContainer(logs, sourceCount = 0) {
     const logContainer = document.createElement('div');
     logContainer.className = 'log-container';
     
@@ -301,7 +350,7 @@ export function createLogContainer(logs) {
     
     const statusText = document.createElement('span');
     statusText.className = 'log-status-text';
-    statusText.textContent = '思考过程';
+    statusText.textContent = sourceCount > 0 ? `已完成 · 搜索过 ${sourceCount} 个网页` : '思考过程';
     
     statusLeft.appendChild(spinner);
     statusLeft.appendChild(statusText);
@@ -402,6 +451,7 @@ export function renderWithCitations(text, sources) {
     const div = document.createElement('div');
     div.innerHTML = html;
     
+    // Process text nodes to inject citations, avoiding code/links
     const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, {
         acceptNode: function(node) {
             let parent = node.parentNode;
@@ -418,40 +468,113 @@ export function renderWithCitations(text, sources) {
     const nodesToReplace = [];
     while(walker.nextNode()) {
         const node = walker.currentNode;
-        if (/\[\d+\]/.test(node.textContent)) {
+        if (/\[\d+(?:,\s*\d+)*\]/.test(node.textContent)) {
             nodesToReplace.push(node);
         }
     }
     
     nodesToReplace.forEach(node => {
         const content = node.textContent;
-        const fragment = document.createElement('span');
+        const fragment = document.createDocumentFragment();
         
-        const parts = content.split(/(\[\d+\])/);
-        parts.forEach(part => {
-            const match = /^\[(\d+)\]$/.exec(part);
-            if (match) {
-                const id = match[1];
-                const source = sources.find(s => s.id == id);
-                if (source) {
-                    const a = document.createElement('a');
-                    a.href = source.url;
-                    a.target = '_blank';
-                    a.className = 'citation-link';
-                    a.textContent = `[${id}]`;
-                    // 确保 title 包含 URL 以便 hover 时显示
-                    a.title = source.url;
-                    fragment.appendChild(a);
-                } else {
-                    fragment.appendChild(document.createTextNode(part));
-                }
-            } else {
-                fragment.appendChild(document.createTextNode(part));
+        const regex = /\[(\d+(?:,\s*\d+)*)\]/g;
+        let lastIndex = 0;
+        let match;
+        
+        while ((match = regex.exec(content)) !== null) {
+            if (match.index > lastIndex) {
+                fragment.appendChild(document.createTextNode(content.substring(lastIndex, match.index)));
             }
+            
+            const ids = match[1].split(',').map(id => id.trim());
+            const linkSpan = document.createElement('span');
+            linkSpan.className = 'citation-group';
+            
+            ids.forEach((id, idx) => {
+                const sourceIndex = parseInt(id) - 1;
+                if (sourceIndex >= 0 && sourceIndex < sources.length) {
+                    const a = document.createElement('a');
+                    a.href = sources[sourceIndex].url;
+                    a.className = 'citation-link';
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    a.title = sources[sourceIndex].title || sources[sourceIndex].url;
+                    
+                    const faviconUrl = getFaviconUrl(sources[sourceIndex].url);
+                    if (faviconUrl) {
+                        const img = document.createElement('img');
+                        img.src = faviconUrl;
+                        img.className = 'citation-favicon';
+                        img.alt = '';
+                        img.loading = 'lazy';
+                        img.onerror = () => img.remove();
+                        a.appendChild(img);
+                    }
+                    
+                    const textNode = document.createTextNode(id);
+                    a.appendChild(textNode);
+                    linkSpan.appendChild(a);
+                    
+                    if (idx < ids.length - 1) {
+                        const comma = document.createElement('span');
+                        comma.textContent = ',';
+                        comma.style.color = 'var(--text-muted)';
+                        comma.style.marginRight = '2px';
+                        linkSpan.appendChild(comma);
+                    }
+                } else {
+                    linkSpan.appendChild(document.createTextNode(`[${id}]`));
+                }
+            });
+            
+            fragment.appendChild(linkSpan);
+            lastIndex = regex.lastIndex;
+        }
+        
+        if (lastIndex < content.length) {
+            fragment.appendChild(document.createTextNode(content.substring(lastIndex)));
+        }
+        
+        if (fragment.childNodes.length > 0) {
+            node.parentNode.replaceChild(fragment, node);
+        }
+    });
+    
+    // Add references list block at bottom if citations were found
+    const hasCitations = html.match(/\[\d+(?:,\s*\d+)*\]/);
+    if (hasCitations && sources.length > 0) {
+        const refsBlock = document.createElement('div');
+        refsBlock.className = 'references-block';
+        
+        const ol = document.createElement('ol');
+        sources.forEach((source, idx) => {
+            const li = document.createElement('li');
+            li.id = `ref-${idx + 1}`;
+            
+            const faviconUrl = getFaviconUrl(source.url);
+            if (faviconUrl) {
+                const img = document.createElement('img');
+                img.src = faviconUrl;
+                img.className = 'ref-favicon';
+                img.alt = '';
+                img.loading = 'lazy';
+                img.onerror = () => img.remove();
+                li.appendChild(img);
+            }
+            
+            const a = document.createElement('a');
+            a.href = source.url;
+            a.textContent = source.title || source.url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            
+            li.appendChild(a);
+            ol.appendChild(li);
         });
         
-        node.parentNode.replaceChild(fragment, node);
-    });
+        refsBlock.appendChild(ol);
+        div.appendChild(refsBlock);
+    }
     
     return div.innerHTML;
 }

@@ -13,14 +13,14 @@ export const md = {
         });
         // 为代码块添加包装器（不含 onclick，用事件委托处理复制）
         return sanitized.replace(/<pre><code([^>]*)>/g, (match, attrs) => {
-            return `<pre class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${extractLangFromAttrs(attrs)}</span><button class="code-copy-btn" data-action="copy-code" title="复制代码"><span class="material-symbols-rounded">content_copy</span></button></div><code${attrs}>`;
+            return `<pre class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${extractLangFromAttrs(attrs)}</span><button class="code-copy-btn" data-action="copy-code" title="复制代码"><span class="material-symbols-rounded">content_copy</span><span>复制</span></button></div><code${attrs}>`;
         });
     }
 };
 
 function extractLangFromAttrs(attrs) {
     const m = attrs.match(/class="language-(\w+)"/);
-    return m ? m[1] : '';
+    return m ? m[1] : 'TEXT';
 }
 
 // 全局事件委托：处理代码块复制按钮
@@ -32,9 +32,17 @@ document.addEventListener('click', async (e) => {
     if (!code) return;
     try {
         await navigator.clipboard.writeText(code.textContent);
-        const icon = btn.querySelector('span');
+        const icon = btn.querySelector('.material-symbols-rounded');
+        const textSpan = btn.querySelector('span:not(.material-symbols-rounded)');
         icon.textContent = 'check';
-        setTimeout(() => { icon.textContent = 'content_copy'; }, 2000);
+        if(textSpan) textSpan.textContent = '已复制';
+        btn.style.color = 'var(--success)';
+        
+        setTimeout(() => { 
+            icon.textContent = 'content_copy'; 
+            if(textSpan) textSpan.textContent = '复制';
+            btn.style.color = '';
+        }, 2000);
     } catch (err) { console.error('Copy failed:', err); }
 });
 
@@ -44,42 +52,29 @@ export function applyTheme(theme) {
 
 /**
  * Strip markdown formatting to get plain text.
- * Handles: headings, bold, italic, links, images, code blocks, lists, blockquotes, horizontal rules.
  */
 export function stripMarkdown(mdText) {
     if (!mdText) return '';
     let text = mdText;
-    // Remove code blocks (fenced)
     text = text.replace(/```[\s\S]*?```/g, (match) => {
         const lines = match.split('\n');
-        // Remove first line (language hint) and last ```
         return lines.slice(1, lines.length - 1).join('\n');
     });
-    // Remove inline code
     text = text.replace(/`([^`]+)`/g, '$1');
-    // Remove images
     text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
-    // Remove links, keep text
     text = text.replace(/\[([^\]]*)\]\([^)]+\)/g, '$1');
-    // Remove headings markers
     text = text.replace(/^#{1,6}\s+/gm, '');
-    // Remove bold/italic markers
     text = text.replace(/\*\*\*(.+?)\*\*\*/g, '$1');
     text = text.replace(/\*\*(.+?)\*\*/g, '$1');
     text = text.replace(/\*(.+?)\*/g, '$1');
     text = text.replace(/___(.+?)___/g, '$1');
     text = text.replace(/__(.+?)__/g, '$1');
     text = text.replace(/_(.+?)_/g, '$1');
-    // Remove strikethrough
     text = text.replace(/~~(.+?)~~/g, '$1');
-    // Remove blockquotes
     text = text.replace(/^>\s?/gm, '');
-    // Remove horizontal rules
     text = text.replace(/^[-*_]{3,}\s*$/gm, '');
-    // Remove list markers
     text = text.replace(/^\s*[-*+]\s+/gm, '');
     text = text.replace(/^\s*\d+\.\s+/gm, '');
-    // Clean up excessive newlines
     text = text.replace(/\n{3,}/g, '\n\n');
     return text.trim();
 }
@@ -95,7 +90,6 @@ export function createCopyButton(contentGetter) {
         const raw = typeof contentGetter === 'function' ? contentGetter() : contentGetter;
         if (!raw) return;
         
-        // Extract plain text from markdown
         const text = stripMarkdown(raw);
         
         try {

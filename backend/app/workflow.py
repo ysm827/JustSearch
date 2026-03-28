@@ -79,20 +79,6 @@ class SearchWorkflow:
                                   progress_callback: Callable[[str], None],
                                   user_input: str, source_id_counter: int) -> tuple:
         """处理直接 URL 访问，返回 (new_sources, source_id_counter)。"""
-        # Heuristic Optimization for GitHub User Profiles
-        # If the task is about counting stars or repos, and the URL is a user profile,
-        # automatically redirect to the repositories tab sorted by stargazers.
-        if "github.com" in url and "tab=" not in url:
-            # Check if it looks like a user profile (e.g. github.com/username)
-            # Remove protocol
-            clean_url = url.replace("https://", "").replace("http://", "").rstrip('/')
-            parts = clean_url.split('/')
-            
-            if len(parts) == 2 and parts[1] not in ["login", "search", "explore", "topics", "about", "pricing"]:
-                # It might be a user or org profile
-                progress_callback("检测到 GitHub 用户主页，正在优化 URL 以获取仓库列表...")
-                url = f"{url}?tab=repositories&q=&type=&language=&sort=stargazers"
-
         progress_callback(f"目标 URL: {url}")
         
         new_sources = []
@@ -119,7 +105,7 @@ class SearchWorkflow:
                               visited_urls: set, iteration: int,
                               progress_callback: Callable[[str], None],
                               user_input: str, source_id_counter: int) -> tuple:
-        """处理搜索引擎查询，返回 (new_sources, source_id_counter)。"""
+        """处理搜索引擎查询，返回 (new_sources, source_id_counter, search_results_count)。"""
         # Deduplicate and check against history
         valid_queries = []
         for q in search_queries:
@@ -161,7 +147,7 @@ class SearchWorkflow:
 
         if not search_results:
             progress_callback("未找到搜索结果。")
-            return [], source_id_counter
+            return [], source_id_counter, 0
 
         progress_callback(f"找到 {len(search_results)} 个结果。正在评估相关性...")
         progress_callback("正在调用 AI 评估搜索结果的相关性...")
@@ -196,10 +182,11 @@ class SearchWorkflow:
         # [06] Deep Crawling
         if not to_crawl:
             progress_callback("未找到新的相关页面进行爬取 (可能已访问过)。")
-            return [], source_id_counter
+            return [], source_id_counter, len(search_results)
 
-        return await self._crawl_and_collect(to_crawl, visited_urls, progress_callback,
+        sources, counter = await self._crawl_and_collect(to_crawl, visited_urls, progress_callback,
                                               user_input, source_id_counter)
+        return sources, counter, len(search_results)
 
     async def _crawl_and_collect(self, to_crawl: list, visited_urls: set,
                                    progress_callback: Callable[[str], None],
@@ -235,7 +222,7 @@ class SearchWorkflow:
         
         return new_sources, source_id_counter
 
-    async def run(self, user_input: str, progress_callback: Callable[[str], None], stream_callback: Optional[Callable[[str], None]] = None, history: Optional[List[Dict[str, str]]] = None, source_callback: Optional[Callable[[List[Dict]], None]] = None) -> str:
+    async def run(self, user_input: str, progress_callback: Callable[[str], None], stream_callback: Optional[Callable[[str], None]] = None, history: Optional[List[Dict[str, str]]] = None, source_callback: Optional[Callable[[List[Dict]], None]] = None, stats_callback: Optional[Callable[[Dict], None]] = None) -> str:
         """
         Executes the JustSearch Workflow with iterative refinement.
         """
@@ -246,10 +233,14 @@ class SearchWorkflow:
             search_history = []
             last_feedback = "" 
             source_id_counter = 0
+            total_search_results = 0
             
             while iteration < self.max_iterations:
                 iteration += 1
-                progress_callback(f"阶段 I: 分析任务 (第 {iteration} 次迭代)...")
+                if iteration == 1:
+                    progress_callback(f"🔍 第 1 轮搜索开始...")
+                else:
+                    progress_callback(f"🔄 第 {iteration}/{self.max_iterations} 轮搜索开始...")
                 logger.info("[Workflow] === 迭代 %d/%d 开始 ===", iteration, self.max_iterations)
                 logger.info("[Workflow] 用户输入: %s", user_input[:100])
                 
@@ -282,10 +273,11 @@ class SearchWorkflow:
                     if not search_queries and analysis.get("query"):
                         search_queries = [analysis.get("query")]
                     
-                    new_sources, source_id_counter = await self._handle_search(
+                    new_sources, source_id_counter, search_count = await self._handle_search(
                         search_queries, search_history, visited_urls, iteration,
                         progress_callback, user_input, source_id_counter
                     )
+                    total_search_results += search_count
                 
                 accumulated_sources.extend(new_sources)
                 
@@ -307,14 +299,21 @@ class SearchWorkflow:
                     progress_callback("答案状态: 充分")
                     final_answer = result.get("answer")
                     formatted_result = self._format_references(final_answer, accumulated_sources)
+                    if stats_callback:
+                        stats_callback({"sites_searched": total_search_results, "iterations": iteration})
                     return formatted_result
                 else:
                     last_feedback = result.get("answer")
-                    progress_callback(f"答案状态: 不充分 (迭代 {iteration}/{self.max_iterations})")
-                    progress_callback(f"原因/缺失信息: {last_feedback}")
+                    if iteration < self.max_iterations:
+                        progress_callback(f"⚠️ 已有信息不足以完整回答，正在进行第 {iteration + 1} 轮深度搜索...")
+                        progress_callback(f"缺失信息: {last_feedback[:100]}")
+                    else:
+                        progress_callback(f"已达到最大迭代次数 ({self.max_iterations})，正在整理现有结果...")
                     
                     if iteration >= self.max_iterations:
                          final_answer = f"经过 {iteration} 次尝试后，我无法找到完全充分的答案。以下是基于现有信息的结果：\n\n{result.get('answer')}"
+                         if stats_callback:
+                             stats_callback({"sites_searched": total_search_results, "iterations": iteration})
                          return self._format_references(final_answer, accumulated_sources)
             
             return "多次尝试后未能生成有效答案。"

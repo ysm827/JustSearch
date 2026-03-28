@@ -111,6 +111,7 @@ export function setupChatHandler(elements, renderHistory) {
         let currentSources = [];
         let hasReceivedChunk = false;
         let logCount = 0;
+        let searchStats = null;
 
         // Progress tracker
         function updateProgress() {
@@ -161,6 +162,9 @@ export function setupChatHandler(elements, renderHistory) {
                 onSources: (sources) => {
                     currentSources = sources;
                 },
+                onStats: (stats) => {
+                    searchStats = stats;
+                },
                 onAnswerChunk: (chunk) => {
                     if (!hasReceivedChunk) {
                         hasReceivedChunk = true;
@@ -210,7 +214,11 @@ export function setupChatHandler(elements, renderHistory) {
             spinner.classList.remove('rotating');
             spinner.textContent = 'check_circle';
             spinner.classList.add('completed');
-            statusText.textContent = '已完成';
+            if (searchStats && searchStats.sites_searched > 0) {
+                statusText.textContent = `已完成 · 搜索过 ${searchStats.sites_searched} 个网页`;
+            } else {
+                statusText.textContent = '已完成';
+            }
             // 完成进度条
             progressBar.classList.add('done');
             setTimeout(() => { progressBar.style.display = 'none'; }, 1500);

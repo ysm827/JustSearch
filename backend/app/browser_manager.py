@@ -10,8 +10,9 @@ from playwright_stealth import Stealth
 from typing import List, Dict
 
 from .browser_context import (
-    _GLOBAL_CONTEXT, _SEARCH_LOCK, _LAST_REQUEST_TIME, _MIN_SEARCH_INTERVAL,
-    init_global_browser, shutdown_global_browser, get_new_page, release_page
+    _SEARCH_LOCK, _LAST_REQUEST_TIME, _MIN_SEARCH_INTERVAL,
+    init_global_browser, shutdown_global_browser, get_new_page, release_page,
+    get_context_pool_status,
 )
 from .search_engine import load_selectors
 from .interaction import (
@@ -32,7 +33,8 @@ class BrowserManager:
         self.engine_config = load_selectors(engine)
 
     async def start(self):
-        if not _GLOBAL_CONTEXT:
+        pool = get_context_pool_status()
+        if pool["active_contexts"] == 0:
             await init_global_browser()
 
     async def stop(self):
@@ -42,7 +44,8 @@ class BrowserManager:
         """
         Concurrent Web Search - scrapes search results for the query.
         """
-        if not _GLOBAL_CONTEXT:
+        pool = get_context_pool_status()
+        if pool["active_contexts"] == 0:
             await self.start()
 
         config = self.engine_config.get(self.engine, self.engine_config["duckduckgo"])

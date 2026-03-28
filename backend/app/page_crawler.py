@@ -11,7 +11,7 @@ import urllib.parse
 from playwright.async_api import Page
 from playwright_stealth import Stealth
 
-from .browser_context import get_new_page, release_page, _GLOBAL_CONTEXT
+from .browser_context import get_new_page, release_page, get_context_pool_status
 from .interaction import register_interaction_session, remove_interaction_session
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,39 @@ _JS_EXTRACT_CONTENT = """() => {
     if (text.replace(/\\s+/g,'').length < 200) {
         text = (clone.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim();
     }
+
+    // Collect downloadable links (dmg, exe, zip, pkg, etc.)
+    // and links whose visible text suggests a download
+    const downloadExts = ['.dmg', '.exe', '.zip', '.pkg', '.deb', '.rpm', '.apk', '.msix', '.tar.gz', '.tar.xz', '.7z', '.iso', '.appx'];
+    const downloadKeywords = /download|下载|安装包|installer|离线/i;
+    const collectedLinks = [];
+    const seenUrls = new Set();
+
+    best.querySelectorAll('a[href]').forEach(a => {
+        const href = a.getAttribute('href');
+        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+        const linkText = (a.innerText || '').trim();
+
+        const isDownloadUrl = downloadExts.some(ext => href.toLowerCase().includes(ext));
+        const isDownloadText = downloadKeywords.test(linkText);
+
+        if (isDownloadUrl || isDownloadText) {
+            if (!seenUrls.has(href)) {
+                seenUrls.add(href);
+                const label = linkText || href;
+                collectedLinks.push({ text: label.substring(0, 80), url: href });
+            }
+        }
+    });
+
+    // Append collected download links if found
+    if (collectedLinks.length > 0) {
+        text += '\\n\\n--- 页面中的下载链接 ---';
+        for (const link of collectedLinks) {
+            text += '\\n[' + link.text + '](' + link.url + ')';
+        }
+    }
+
     return text;
 }"""
 
@@ -355,13 +388,28 @@ async def extract_page_content(page: Page, url: str) -> str:
     return ""
 
 
+# Resource types to block during content crawling (speeds up page load significantly)
+_BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet"}
+
+
+async def _install_resource_blocker(page: Page):
+    """Abort requests for non-essential resources (images, fonts, media, CSS)."""
+    await page.route(
+        "**/*",
+        lambda route: route.abort()
+        if route.request.resource_type in _BLOCKED_RESOURCE_TYPES
+        else route.continue_(),
+    )
+
+
 async def crawl_page(url: str, stealth: Stealth, log_func=None,
                      interactive_mode: bool = False, query: str = None,
                      llm_client=None, session_id: str = None) -> str:
     """
     Headless Browser Deep Crawling - resolves redirects, loads page, extracts content.
     """
-    if not _GLOBAL_CONTEXT:
+    pool = get_context_pool_status()
+    if pool["active_contexts"] == 0:
         from .browser_context import init_global_browser
         await init_global_browser()
 
@@ -375,6 +423,8 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
 
     page = await get_new_page()
     await stealth.apply_stealth_async(page)
+    # Block non-essential resources to speed up crawling
+    await _install_resource_blocker(page)
 
     try:
         if log_func:

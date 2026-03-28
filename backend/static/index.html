@@ -64,7 +64,6 @@
             <!-- Messages will be injected here -->
             <div id="hero-section" class="hero-container">
                 <div class="hero-header">
-                    <div class="hero-logo"><span class="material-symbols-rounded">search</span></div>
                     <div class="hero-title">JustSearch</div>
                 </div>
                 <div class="hero-subtitle">
@@ -141,7 +140,7 @@
                 <div class="form-group">
                     <label>
                         OpenAI API 密钥
-                        <a href="https://build.nvidia.com/models" target="_blank" style="font-size: 0.8em; float: right; color: var(--primary-color); text-decoration: none;">获取 NVIDIA NIM API 密钥 ↗</a>
+                        <a href="https://build.nvidia.com/" target="_blank" style="font-size: 0.8em; float: right; color: var(--primary-color); text-decoration: none;">获取 NVIDIA NIM API 密钥 ↗</a>
                     </label>
                     <div class="password-input-wrapper">
                         <input type="password" id="api-key-input" placeholder="sk-..., sk-... (支持多个，用逗号分隔)">
@@ -174,6 +173,23 @@
                 <button id="clear-history-btn" class="danger-btn" title="仅清除聊天记录">清除历史</button>
                 <button id="reset-settings-btn" class="secondary-btn">恢复默认</button>
                 <button id="save-settings-btn" class="save-btn">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Modal -->
+    <div id="confirm-modal" class="modal">
+        <div class="modal-content" style="width: 360px;">
+            <div class="modal-header">
+                <h2 id="confirm-title">确认</h2>
+                <span class="close-btn" id="confirm-close-btn">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message" style="margin: 0; color: var(--text-secondary); line-height: 1.6;"></p>
+            </div>
+            <div class="modal-actions">
+                <button id="confirm-cancel-btn" class="secondary-btn">取消</button>
+                <button id="confirm-ok-btn" class="save-btn">确定</button>
             </div>
         </div>
     </div>

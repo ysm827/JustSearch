@@ -154,7 +154,7 @@ export async function fetchGitHubStats() {
 }
 
 export async function streamChat(query, callbacks) {
-    const { onLog, onAnswerChunk, onAnswer, onSources, onError, onDone, onMeta, signal, model } = callbacks;
+    const { onLog, onAnswerChunk, onAnswer, onSources, onStats, onError, onDone, onMeta, signal, model } = callbacks;
 
     const MAX_RETRIES = 2;
     const RETRY_DELAY = 3000; // 3 秒
@@ -219,6 +219,9 @@ export async function streamChat(query, callbacks) {
                             }
                             else if (event.type === 'sources' && onSources) {
                                 onSources(event.content);
+                            }
+                            else if (event.type === 'stats' && onStats) {
+                                onStats(event.content);
                             }
                             else if (event.type === 'answer_chunk' && onAnswerChunk) {
                                 onAnswerChunk(event.content);

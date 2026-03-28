@@ -51,6 +51,12 @@ venv.bak/
 # User Data (Browser data, logs, etc.)
 user_data/
 backend/user_data/
+
+# Database
+data/
+
+# Patch files
+*.patch
 *.log
 crawled_debug.txt
 

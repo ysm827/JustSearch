@@ -1,6 +1,6 @@
 import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './modules/state.js';
 import { createCopyButton } from './modules/utils.js';
-import { initUI, elements, renderHistory, renderMessages, appendMessage, scrollToBottom, updateActiveHistoryItem } from './modules/ui.js';
+import { initUI, elements, renderHistory, renderMessages, appendMessage, scrollToBottom, updateActiveHistoryItem, showConfirm } from './modules/ui.js';
 import { showToast } from './modules/toast.js';
 import { setupChatHandler } from './modules/chat.js';
 import * as API from './modules/api.js';
@@ -239,7 +239,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         resetSettingsBtn.addEventListener('click', async () => {
-            if (!confirm('您确定要恢复默认设置吗？')) return;
+            if (!(await showConfirm('您确定要恢复默认设置吗？', '恢复默认设置'))) return;
             const defaults = await API.restoreDefaultSettingsAPI();
             if (defaults) {
                 document.getElementById('theme-select').value = defaults.theme || 'light';
@@ -259,7 +259,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         clearHistoryBtn.addEventListener('click', async () => {
-            if (!confirm('确定要清除所有对话历史吗？此操作不可撤销。')) return;
+            if (!(await showConfirm('确定要清除所有对话历史吗？此操作不可撤销。', '清除历史记录'))) return;
             if (await API.clearHistoryAPI()) {
                  setCurrentSessionId(null);
                  elements.historyList.innerHTML = '';
@@ -277,7 +277,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const clearCacheBtn = document.getElementById('clear-cache-btn');
         if (clearCacheBtn) {
             clearCacheBtn.addEventListener('click', async () => {
-                if (!confirm('此操作将清除所有聊天记录、浏览器缓存（Cookies 等）并重置设置为默认值。确定要继续吗？此操作不可撤销。')) return;
+                if (!(await showConfirm('此操作将清除所有聊天记录、浏览器缓存（Cookies 等）并重置设置为默认值。确定要继续吗？此操作不可撤销。', '清除全部缓存'))) return;
                 if (await API.clearCacheAPI()) {
                     setCurrentSessionId(null);
                     elements.historyList.innerHTML = '';
