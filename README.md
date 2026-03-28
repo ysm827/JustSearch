@@ -253,6 +253,17 @@ python benchmark_freshqa.py
 
 ---
 
+## ⚙️ 环境变量配置
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `HEADLESS` | `true` | 浏览器无头模式 |
+| `CORS_ORIGINS` | `*` | CORS 允许的源（逗号分隔） |
+| `MAX_CONCURRENT_PAGES` | `10` | 最大并发页面数 |
+| `OPENAI_API_KEY` | — | 备用 API Key |
+
+---
+
 ## 📄 开源协议
 
 本项目采用 [MIT License](LICENSE) 协议。
