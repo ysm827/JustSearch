@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from ..browser_context import get_context_pool_status
+from ..version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ async def health_check():
     from ..engine_health import engine_health
     return {
         "status": "ok",
+        "version": __version__,
         "browser": pool_status["active_contexts"] > 0,
         "pool": pool_status,
         "engines": engine_health.get_stats(),

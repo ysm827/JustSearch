@@ -17,6 +17,7 @@ from .routers import chat as chat_router
 from .routers import history as history_router
 from .routers import settings as settings_router
 from .routers import stats as stats_router
+from .version import __version__
 
 # Background cleanup task
 _cleanup_task = None
