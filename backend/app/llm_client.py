@@ -376,8 +376,13 @@ def _smart_truncate(text: str, max_chars: int = 8000) -> str:
     if last_newline > max_chars * 0.5:
         return truncated[:last_newline].rstrip() + "\n[... 内容已截取]"
 
-    # 最后手段：句号/问号/叹号
-    last_sentence = max(truncated.rfind('。'), truncated.rfind('.'), truncated.rfind('!'), truncated.rfind('?'))
+    # 最后手段：句号/问号/叹号（含中文标点）
+    last_sentence = max(
+        truncated.rfind('。'), truncated.rfind('.'),
+        truncated.rfind('！'), truncated.rfind('!'),
+        truncated.rfind('？'), truncated.rfind('?'),
+        truncated.rfind('；'), truncated.rfind(';'),
+    )
     if last_sentence > max_chars * 0.5:
         return truncated[:last_sentence + 1] + "[... 内容已截取]"
 

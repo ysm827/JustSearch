@@ -352,7 +352,7 @@ class SearchWorkflow:
                              })
                          return final_answer
             
-            return "多次尝试后未能生成有效答案。"
+            return "多次尝试后未能生成有效答案。建议您尝试：\n1. 换用不同的关键词重新提问\n2. 简化问题，分步骤提问\n3. 切换搜索引擎后重试"
             
         finally:
             pass
