@@ -106,4 +106,13 @@ async def read_index():
     return HTMLResponse(content=html)
 
 
+@app.get("/c/{session_id}")
+async def read_chat_session(session_id: str):
+    """Serve the same SPA index for any chat URL — client-side routing handles the rest."""
+    html_path = os.path.join(STATIC_DIR, "index.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    return HTMLResponse(content=html)
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

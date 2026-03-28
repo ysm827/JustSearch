@@ -20,6 +20,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         onDelete: deleteChat
     });
 
+    // --- URL 路由：从地址栏恢复对话 ---
+    const pathMatch = window.location.pathname.match(/^\/c\/([a-zA-Z0-9_-]+)/);
+    if (pathMatch) {
+        const urlSessionId = pathMatch[1];
+        // 确保该会话存在于历史中
+        const exists = history.some(h => h.id === urlSessionId);
+        if (exists) {
+            loadChat(urlSessionId);
+        } else {
+            // 会话不存在，回到首页
+            history.replaceState(null, '', '/');
+        }
+    }
+
+    // 浏览器前进/后退时恢复对应对话
+    window.addEventListener('popstate', (e) => {
+        if (e.state && e.state.sessionId) {
+            loadChat(e.state.sessionId);
+        } else {
+            // 回到首页状态
+            setCurrentSessionId(null);
+            elements.chatContainer.innerHTML = '';
+            elements.heroSection.style.display = 'block';
+            elements.chatContainer.appendChild(elements.heroSection);
+            updateActiveHistoryItem(null);
+        }
+    });
+
     function updateModelSelector(modelString) {
         const select = document.getElementById('model-select');
         if (!select) return;
@@ -123,6 +151,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             elements.userInput.style.height = '40px';
             elements.userInput.style.overflowY = 'hidden';
             elements.userInput.focus();
+            // 回到首页 URL
+            if (window.location.pathname !== '/') {
+                history.pushState(null, '', '/');
+            }
         });
 
         setupSettingsModal();

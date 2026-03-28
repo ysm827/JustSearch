@@ -14,6 +14,10 @@ export function setupChatHandler(elements, renderHistory) {
     async function loadChat(sessionId) {
         setCurrentSessionId(sessionId);
         updateActiveHistoryItem(sessionId);
+        // 更新浏览器地址栏
+        if (window.location.pathname !== `/c/${sessionId}`) {
+            history.pushState({ sessionId }, '', `/c/${sessionId}`);
+        }
         const data = await API.fetchChat(sessionId);
         if (data) {
             renderMessages(data.messages);
@@ -126,6 +130,10 @@ export function setupChatHandler(elements, renderHistory) {
                 signal: controller.signal,
                 onMeta: (sessionId) => {
                     setCurrentSessionId(sessionId);
+                    // 新对话首次拿到 sessionId，更新 URL
+                    if (window.location.pathname !== `/c/${sessionId}`) {
+                        history.replaceState({ sessionId }, '', `/c/${sessionId}`);
+                    }
                 },
                 onLog: (msg) => {
                     if (msg.includes('ACTION_REQUIRED: CAPTCHA_DETECTED')) {
