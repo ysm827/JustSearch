@@ -393,18 +393,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             };
         };
     }
-
-    // --- Suggestion Chips ---
-    document.querySelectorAll('.suggestion-chip').forEach(chip => {
-        chip.addEventListener('click', () => {
-            const query = chip.dataset.query;
-            if (!query) return;
-            elements.userInput.value = query;
-            elements.userInput.dispatchEvent(new Event('input', { bubbles: true }));
-            elements.sendBtn.click();
-        });
-    });
-
     // --- Keyboard Shortcuts ---
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {

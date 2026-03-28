@@ -1925,44 +1925,6 @@ textarea:focus-visible {
 }
 
 /* ========================================
-   Suggestion Chips (Hero Section)
-   ======================================== */
-.suggestion-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-    margin-top: 24px;
-    max-width: 600px;
-}
-
-.suggestion-chip {
-    background-color: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-full);
-    padding: 8px 16px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    white-space: nowrap;
-}
-
-.suggestion-chip:hover {
-    border-color: var(--primary);
-    color: var(--primary);
-    background-color: var(--primary-light);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-sm);
-}
-
-.suggestion-chip .material-symbols-rounded {
-    font-size: 14px;
-    vertical-align: middle;
-    margin-right: 4px;
-}
-
-/* ========================================
    Keyboard Shortcut Hints
    ======================================== */
 .kbd {
@@ -2066,22 +2028,6 @@ textarea:focus-visible {
 
 [data-theme="dark"] .input-box {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.suggestion-chip {
-    transition: transform var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
-}
-
-.suggestion-chip:hover {
-    transform: translateY(-2px);
-    background-color: var(--primary-light);
-    border-color: var(--primary);
-    color: var(--primary);
-}
-
-/* Markdown tables polish */
-.markdown-body table {
-    box-shadow: 0 0 0 1px var(--border);
 }
 
 .markdown-body th {
