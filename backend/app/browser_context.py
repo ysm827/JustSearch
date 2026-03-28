@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Pool configuration
 # ---------------------------------------------------------------------------
-_POOL_SIZE = 2
+_MAX_CONCURRENT_PAGES = int(os.getenv("MAX_CONCURRENT_PAGES", "10"))
+_POOL_SIZE = max(2, _MAX_CONCURRENT_PAGES // 4)
 _MAX_REQUESTS_PER_CONTEXT = 50
 _MAX_CONTEXT_AGE_SECONDS = 3600  # 1 hour
 _ROTATION_CHECK_INTERVAL = 60  # seconds between background checks
-_MAX_CONCURRENT_PAGES = int(os.getenv("MAX_CONCURRENT_PAGES", "10"))
 _MAX_BROWSER_RESTART_RETRIES = 3
 
 
