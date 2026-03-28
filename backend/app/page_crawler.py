@@ -427,6 +427,12 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             log_func(f"浏览器: 拒绝访问内网地址 {final_url}")
         return "错误: 不允许访问内网地址"
 
+    # PDF detection: skip browser crawling, return metadata
+    if _PDF_PATTERN.search(final_url):
+        if log_func:
+            log_func(f"浏览器: 检测到 PDF 文件，跳过深度爬取")
+        return f"[PDF 文档] {final_url}\n注意: PDF 文件无法直接提取内容，请访问链接查看原文。"
+
     page = await get_new_page()
     await stealth.apply_stealth_async(page)
     # Block non-essential resources to speed up crawling
