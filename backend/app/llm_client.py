@@ -29,6 +29,26 @@ class LLMClient:
         self.model = model
         self.max_context_turns = max_context_turns
 
+    async def _call_with_retry(self, messages: list, retries: int = 2) -> Any:
+        """带重试的 LLM 调用。处理 429/500 等可重试错误。"""
+        import httpx
+        for attempt in range(retries + 1):
+            try:
+                return await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                )
+            except Exception as e:
+                err_str = str(e)
+                status_code = getattr(e, 'status_code', 0)
+                # 可重试的状态码
+                if status_code in (429, 500, 502, 503) and attempt < retries:
+                    wait = 2 ** attempt * 1.5
+                    logger.warning("[LLM] 请求失败 (%d), %.1f 秒后重试 (%d/%d)...", status_code, wait, attempt + 1, retries)
+                    await asyncio.sleep(wait)
+                    continue
+                raise
+
     def _extract_json(self, text: str) -> Optional[Dict]:
         """
         健壮地从 LLM 响应中提取 JSON。
@@ -133,10 +153,7 @@ class LLMClient:
 
         try:
             logger.info("[Task Analysis] 输入: %s", _truncate_for_log(user_input, 80))
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages
-            )
+            response = await self._call_with_retry(messages)
             content = response.choices[0].message.content
 
             data = self._extract_json(content)
@@ -168,13 +185,10 @@ class LLMClient:
 
         try:
             logger.info("[Relevance Assessment] 评估 %d 个搜索结果", len(snippets))
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ]
-            )
+            response = await self._call_with_retry([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ])
             content = response.choices[0].message.content
 
             data = self._extract_json(content)
@@ -209,13 +223,10 @@ class LLMClient:
 
         try:
             logger.info("[Click Decision] 评估 %d 个可点击元素", len(elements))
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ]
-            )
+            response = await self._call_with_retry([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ])
             content = response.choices[0].message.content
 
             data = self._extract_json(content)

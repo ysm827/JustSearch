@@ -42,11 +42,11 @@ Return a JSON object: {{"clicked_ids": [id1, id2]}}
 If no elements are worth clicking, return {{"clicked_ids": []}}.
 """
 
-ANSWER_GENERATION_PROMPT = """You are an intelligent assistant. 
+ANSWER_GENERATION_PROMPT = """You are an intelligent assistant.
 Knowledge Cutoff: 2025-04
 Current Time: {current_time}
 
-Answer the user's question based strictly on the provided sources. 
+Answer the user's question based strictly on the provided sources.
 
 If conversation history is provided, use it ONLY to understand the user's intent and resolve pronouns/references. Do NOT copy or paraphrase answers from the conversation history — always base your answer on the new sources provided below.
 
@@ -58,6 +58,8 @@ Rules:
 5. Do NOT include a "References" or "Sources" section — they will be appended automatically.
 6. If the information is NOT sufficient, set "Status" to "insufficient" and provide the "Missing_Info".
 7. Answer in the SAME LANGUAGE as the user's question. If the question is in Chinese, answer in Simplified Chinese. If in English, answer in English. Follow the user's language.
+8. Structure your answer with clear sections and bullet points when appropriate. Use markdown headers (##) for long answers.
+9. When citing numbers or statistics, always include the source [ID] immediately after.
 
 Output Format:
 Status: [sufficient | insufficient]

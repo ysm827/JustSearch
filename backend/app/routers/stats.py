@@ -66,4 +66,9 @@ async def get_github_stats():
 @router.get("/api/health")
 async def health_check():
     pool_status = get_context_pool_status()
-    return {"status": "ok", "browser": pool_status["active_contexts"] > 0}
+    return {
+        "status": "ok",
+        "browser": pool_status["active_contexts"] > 0,
+        "pool": pool_status,
+        "timestamp": datetime.now().isoformat(),
+    }

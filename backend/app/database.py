@@ -124,6 +124,28 @@ async def init_db():
     # One-time migration from legacy JSON files
     await _migrate_legacy_data()
 
+    # Auto-cleanup: remove sessions older than 90 days with no messages
+    await _cleanup_old_sessions()
+
+
+async def _cleanup_old_sessions(max_age_days: int = 90):
+    """Remove sessions older than max_age_days that have been inactive."""
+    try:
+        cutoff = datetime.now() - __import__('datetime').timedelta(days=max_age_days)
+        async with await get_session() as session:
+            # Find old sessions
+            old_sessions = (await session.execute(
+                select(ChatSession.id).where(ChatSession.updated_at < cutoff)
+            )).scalars().all()
+            if old_sessions:
+                for sid in old_sessions:
+                    await session.execute(delete(ChatMessage).where(ChatMessage.session_id == sid))
+                await session.execute(delete(ChatSession).where(ChatSession.updated_at < cutoff))
+                await session.commit()
+                logger.info("Cleaned up %d sessions older than %d days", len(old_sessions), max_age_days)
+    except Exception as e:
+        logger.warning("Session cleanup failed: %s", e)
+
 
 async def _migrate_legacy_data():
     """If chats/ or settings.json exist, import them into SQLite and remove."""

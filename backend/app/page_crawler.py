@@ -47,7 +47,10 @@ _JS_EXTRACT_CONTENT = """() => {
 
     const candidates = clone.querySelectorAll(
         'article, main, [role="main"], .content, .post-content, .entry-content, ' +
-        '.article-content, .post-body, #content, #main, .main-content, .page-content'
+        '.article-content, .post-body, #content, #main, .main-content, .page-content, ' +
+        '.text-content, .detail-content, .news-content, .article-body, .post-text, ' +
+        '#article-content, .article_detail, .content-body, .RichText, .rich_media_content, ' +
+        '#js_content, .topic-richtext, .Post-RichTextContainer'
     );
 
     let best = clone, bestD = density(clone);
@@ -458,8 +461,12 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             if log_func:
                 log_func(f"浏览器: 等待页面内容渲染...")
             await page.wait_for_load_state("networkidle", timeout=5000)
-            if "github.com" in final_url and "tab=repositories" in final_url:
-                prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
+            if "github.com" in final_url:
+                if "tab=repositories" in final_url:
+                    prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
+                elif "/stars" in final_url:
+                    # GitHub stars page optimization
+                    prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
         except Exception:
             pass
 

@@ -217,6 +217,17 @@ export function renderHistory(history, currentSessionId, callbacks) {
             };
             item.appendChild(deleteBtn);
 
+            const exportBtn = document.createElement('button');
+            exportBtn.className = 'delete-history-btn';
+            exportBtn.title = '导出对话';
+            exportBtn.setAttribute('aria-label', '导出对话');
+            exportBtn.innerHTML = '<span class="material-symbols-rounded">download</span>';
+            exportBtn.onclick = (e) => {
+                e.stopPropagation();
+                window.open(`/api/history/${chat.id}/export`, '_blank');
+            };
+            item.appendChild(exportBtn);
+
             item.dataset.id = chat.id;
             item.onclick = () => onSelect(chat.id);
             group.appendChild(item);
