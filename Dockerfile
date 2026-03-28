@@ -18,12 +18,12 @@ WORKDIR /app
 # Copy pre-installed Python packages
 COPY --from=builder /install /usr/local
 
-# Install minimal system deps for Playwright Chromium
+# Install minimal system deps for Playwright Chromium in one layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
     libcups2 libdrm2 libxcomposite1 libxdamage1 libxfixes3 \
     libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
-    libatspi2.0-0 libxshmfence1 curl \
+    libatspi2.0-0 libxshmfence1 libxkbcommon0 curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Playwright Chromium (no full deps, we handled that above)
@@ -35,7 +35,7 @@ COPY tools/ /app/tools/
 COPY run.sh /app/run.sh
 
 # Create directories for persistent data
-RUN mkdir -p /app/backend/chats /app/user_data
+RUN mkdir -p /app/data /app/user_data
 
 EXPOSE 8000
 

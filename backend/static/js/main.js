@@ -425,6 +425,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             };
         };
     }
+    // --- Listen for system theme changes (when set to 'auto') ---
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if ((state.settings.theme || 'light') === 'auto') {
+            import('./modules/utils.js').then(m => m.applyTheme('auto'));
+        }
+    });
+
     // --- Keyboard Shortcuts ---
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {

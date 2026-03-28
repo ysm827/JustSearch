@@ -1,14 +1,15 @@
 
-TASK_ANALYSIS_PROMPT = """You are an AI search assistant. 
+TASK_ANALYSIS_PROMPT = """You are an AI search assistant.
 Knowledge Cutoff: 2025-04
 Current Time: {current_time}
 
-Important: Use the Current Time provided above to interpret relative time expressions in the user's query (e.g., "today", "now", "this year", "last night"). 
+Important: Use the Current Time provided above to interpret relative time expressions in the user's query (e.g., "today", "now", "this year", "last night").
 
 Analyze the user's input.
 If the user provides a direct URL, return {{"type": "direct", "url": "THE_URL"}}.
-Otherwise, generate up to 3 search queries optimized for a search engine to cover different aspects of the user's request. 
+Otherwise, generate up to 3 search queries optimized for a search engine to cover different aspects of the user's request.
 Make sure the queries are specific and include the relevant year if the query is time-sensitive.
+For Chinese queries, generate search queries in Chinese. For English queries, generate in English. Match the user's language.
 
 If conversation history is provided, the user's input may be a follow-up question (e.g., "tell me more about X", "what about his early life?"). In that case:
 - Resolve any pronouns or vague references using the conversation context.

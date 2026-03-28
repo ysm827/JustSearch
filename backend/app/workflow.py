@@ -1,5 +1,4 @@
 import asyncio
-import asyncio
 import base64
 import json
 import logging
@@ -18,6 +17,8 @@ class SearchWorkflow:
         self.history = []
         self.interactive_search = interactive_search
         self.session_id = session_id
+        # Content cache: url -> content (avoid re-crawling same URL across iterations)
+        self._content_cache: Dict[str, str] = {}
 
     def _normalize_url(self, url: str) -> str:
         """规范化 URL 用于去重。处理 Bing redirect URL 等特殊格式。"""
@@ -191,19 +192,41 @@ class SearchWorkflow:
     async def _crawl_and_collect(self, to_crawl: list, visited_urls: set,
                                    progress_callback: Callable[[str], None],
                                    user_input: str, source_id_counter: int) -> tuple:
-        """批量爬取页面并收集结果，返回 (new_sources, source_id_counter)。"""
+        """批量爬取页面并收集结果，返回 (new_sources, source_id_counter)。支持内容缓存。"""
         progress_callback(f"正在并行爬取 {len(to_crawl)} 个页面...")
         for item in to_crawl:
             logger.info("[Workflow] 爬取: %s", item.get('url', '?')[:100])
             progress_callback(f"  → {item.get('title', item.get('url', '?'))[:60]}")
-        tasks = [self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id) for item in to_crawl]
-        contents = await asyncio.gather(*tasks)
-        
+
+        # Separate cached vs uncached
+        uncached_items = []
+        uncached_indices = []
+        cached_contents = {}
+
+        for i, item in enumerate(to_crawl):
+            cached = self._content_cache.get(item['url'])
+            if cached:
+                cached_contents[i] = cached
+                progress_callback(f"  ✓ 使用缓存: {item.get('title', '?')[:50]}")
+            else:
+                uncached_items.append(item)
+                uncached_indices.append(i)
+
+        # Crawl only uncached pages
+        if uncached_items:
+            tasks = [self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id) for item in uncached_items]
+            contents = await asyncio.gather(*tasks)
+            # Cache results
+            for idx, content in zip(uncached_indices, contents):
+                cached_contents[idx] = content
+                if content and content != "[CRAWL_TIMEOUT]":
+                    self._content_cache[uncached_items[uncached_indices.index(idx)]['url']] = content
+
         new_sources = []
         for i, item in enumerate(to_crawl):
             visited_urls.add(item['url'])
             source_id_counter += 1
-            content = contents[i]
+            content = cached_contents.get(i, "")
             content_len = len(content) if content else 0
             # 过滤超时/空内容
             if content == "[CRAWL_TIMEOUT]" or not content:
@@ -213,13 +236,13 @@ class SearchWorkflow:
             logger.info("[Workflow] 爬取成功: %s (len=%d)", item['url'][:80], content_len)
             # [07] Structure Data
             new_sources.append({
-                "id": source_id_counter, 
+                "id": source_id_counter,
                 "title": item['title'],
                 "url": item['url'],
                 "date": item.get('date', ''),
                 "content": content
             })
-        
+
         return new_sources, source_id_counter
 
     async def run(self, user_input: str, progress_callback: Callable[[str], None], stream_callback: Optional[Callable[[str], None]] = None, history: Optional[List[Dict[str, str]]] = None, source_callback: Optional[Callable[[List[Dict]], None]] = None, stats_callback: Optional[Callable[[Dict], None]] = None) -> str:

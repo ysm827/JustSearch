@@ -9,8 +9,6 @@ from .database import (  # noqa: F401
     DEFAULT_SETTINGS,
     get_next_api_key,
     mask_api_key,
-    SETTINGS_FILE,
 )
 
-# SETTINGS_FILE is no longer a real file, but we keep the name for compat.
-# In database.py, SETTINGS_FILE is defined for migration detection only.
+# NOTE: SETTINGS_FILE was removed – settings now live in SQLite.

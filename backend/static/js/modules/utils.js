@@ -49,7 +49,13 @@ document.addEventListener('click', async (e) => {
 });
 
 export function applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
+    if (!theme || theme === 'auto') {
+        // Auto-detect system preference
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+    } else {
+        document.documentElement.setAttribute('data-theme', theme);
+    }
 }
 
 /**

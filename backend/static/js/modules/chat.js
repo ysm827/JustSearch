@@ -197,9 +197,27 @@ export function setupChatHandler(elements, renderHistory) {
                     API.fetchHistory().then(h => renderHistory(h, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat }));
                 },
                 onError: (err) => {
+                    if (!hasReceivedChunk) {
+                        contentWrapper.innerHTML = '';
+                    }
                     const errDiv = document.createElement('div');
                     errDiv.className = 'error-box';
-                    errDiv.textContent = `Error: ${err}`;
+                    // 友好的错误消息映射
+                    let errMsg = err;
+                    if (typeof err === 'string') {
+                        if (err.includes('请先在设置中配置 API 密钥')) {
+                            errMsg = '请先在设置中配置 API 密钥。点击左上角 ⚙️ 设置按钮，填入 API Key 后保存。';
+                        } else if (err.includes('请求失败 (429)') || err.includes('rate limit')) {
+                            errMsg = 'API 请求过于频繁，请稍后重试。';
+                        } else if (err.includes('请求失败 (401)') || err.includes('Unauthorized')) {
+                            errMsg = 'API 密钥无效或已过期，请检查设置中的 API Key。';
+                        } else if (err.includes('请求失败 (402)')) {
+                            errMsg = 'API 额度已用完，请检查账户余额。';
+                        } else if (err.includes('请求失败 (500)') || err.includes('502') || err.includes('503')) {
+                            errMsg = 'API 服务暂时不可用，请稍后重试。';
+                        }
+                    }
+                    errDiv.textContent = `错误: ${errMsg}`;
                     contentWrapper.appendChild(errDiv);
                 },
                 onDone: () => {}
@@ -280,6 +298,13 @@ export function setupChatHandler(elements, renderHistory) {
     elements.sendBtn.addEventListener('click', () => handleSendMessage());
     elements.userInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSendMessage();
+        }
+    });
+    // Ctrl+Enter also sends (alternative shortcut)
+    elements.userInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.ctrlKey) {
             e.preventDefault();
             handleSendMessage();
         }

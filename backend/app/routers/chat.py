@@ -176,7 +176,7 @@ async def chat_endpoint(request: ChatRequest):
         if not api_key:
             raise HTTPException(
                 status_code=400,
-                detail="请先在设置中配置 API 密钥（API Key）。",
+                detail="请先在设置中配置 API 密钥。点击左上角 ⚙️ 设置按钮，填入 API Key 后保存。",
             )
 
     session_id = request.session_id

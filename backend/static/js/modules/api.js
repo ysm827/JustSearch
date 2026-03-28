@@ -171,7 +171,7 @@ export async function streamChat(query, callbacks) {
     const { onLog, onAnswerChunk, onAnswer, onSources, onStats, onError, onDone, onMeta, signal, model } = callbacks;
 
     const MAX_RETRIES = 2;
-    const RETRY_DELAY = 3000; // 3 秒
+    const RETRY_DELAYS = [2000, 5000]; // 渐进式重试延迟
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
@@ -264,11 +264,12 @@ export async function streamChat(query, callbacks) {
 
             // 网络错误等可重试
             if (attempt < MAX_RETRIES) {
-                console.warn(`SSE 连接断开 (尝试 ${attempt + 1}/${MAX_RETRIES + 1})，${RETRY_DELAY / 1000} 秒后重连...`, e);
+                const delay = RETRY_DELAYS[attempt] || 5000;
+                console.warn(`SSE 连接断开 (尝试 ${attempt + 1}/${MAX_RETRIES + 1})，${delay / 1000} 秒后重连...`, e);
                 if (onLog) {
                     onLog(`网络连接中断，正在重连 (${attempt + 1}/${MAX_RETRIES + 1})...`);
                 }
-                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                await new Promise(resolve => setTimeout(resolve, delay));
             } else {
                 console.error('SSE 连接重试耗尽:', e);
                 throw e;

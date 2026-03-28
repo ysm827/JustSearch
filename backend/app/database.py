@@ -6,6 +6,7 @@ Replaces JSON file-based chat and settings storage.
 import json
 import logging
 import os
+import re
 import shutil
 import asyncio
 from datetime import datetime
@@ -291,7 +292,7 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
         if sess is None:
             if not title:
                 first_content = messages[0].get("content", "") if messages else ""
-                title = first_content[:30] + "…" if len(first_content) > 30 else (first_content or "新对话")
+                title = _extract_title(first_content)
             sess = ChatSession(id=session_id, title=title, created_at=now, updated_at=now)
             session.add(sess)
             # New session – insert all messages
@@ -430,6 +431,25 @@ async def get_next_api_key(api_keys_str: str) -> str:
         current_key = keys[_api_key_index % len(keys)]
         _api_key_index = (_api_key_index + 1) % len(keys)
     return current_key
+
+
+def _extract_title(content: str) -> str:
+    """Extract a smart title from the user's first message."""
+    if not content:
+        return "新对话"
+    # Strip common question prefixes
+    cleaned = re.sub(r'^(请问|你好|请问一下|我想问|帮我|请|能不能|可以|how\s+to|what\s+is|who\s+is|where\s+is|why\s+is|can\s+you|please\s+)\s*', '', content.strip(), flags=re.IGNORECASE)
+    # Take the first sentence (up to sentence-ending punctuation)
+    m = re.search(r'^(.+?[。？！\.!?])', cleaned)
+    if m:
+        sentence = m.group(1).strip()
+    else:
+        # Take up to first newline or comma separator
+        sentence = re.split(r'[\n,，;；]', cleaned)[0].strip()
+    # Limit to 50 chars
+    if len(sentence) > 50:
+        sentence = sentence[:50] + "…"
+    return sentence or "新对话"
 
 
 def _parse_setting_value(raw: str):

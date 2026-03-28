@@ -95,7 +95,20 @@ class LLMClient:
             role = msg.get("role", "user")
             content = msg.get("content", "")
             if role == "assistant" and len(content) > 500:
-                content = content[:400] + "...(答案已截断)"
+                truncated = content[:400]
+                # Try to find a sentence boundary for cleaner truncation
+                last_stop = max(
+                    truncated.rfind('。'),
+                    truncated.rfind('.'),
+                    truncated.rfind('？'),
+                    truncated.rfind('?'),
+                    truncated.rfind('！'),
+                    truncated.rfind('!'),
+                )
+                if last_stop > len(truncated) * 0.5:
+                    content = content[:last_stop + 1] + "...(答案已截断)"
+                else:
+                    content = truncated + "...(答案已截断)"
             result.append({"role": role, "content": content})
         return result
 

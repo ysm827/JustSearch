@@ -1434,21 +1434,25 @@ textarea:focus-visible {
     cursor: pointer;
     margin: 0 1px;
     font-weight: 600;
-    font-size: 0.85em;
-    padding: 1px 4px;
-    border-radius: 4px;
+    font-size: 11px;
+    padding: 0 4px;
+    border-radius: 6px;
     background-color: var(--primary-light);
     transition: all var(--transition-fast);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    vertical-align: baseline;
+    vertical-align: super;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    gap: 2px;
 }
 
 .citation-link:hover {
     text-decoration: none;
     background-color: var(--primary);
     color: var(--text-inverse);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
 }
 
 .reference-item {
@@ -1933,10 +1937,16 @@ textarea:focus-visible {
 .search-progress-bar .progress-fill {
     height: 100%;
     width: 0%;
-    background: linear-gradient(90deg, var(--primary), #8b5cf6);
+    background: linear-gradient(90deg, var(--primary), #8b5cf6, var(--primary));
+    background-size: 200% 100%;
     border-radius: 2px;
     transition: width 0.5s ease;
-    animation: progressPulse 2s ease-in-out infinite;
+    animation: progressPulse 2s ease-in-out infinite, progressShimmer 1.5s linear infinite;
+}
+
+@keyframes progressShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
 }
 
 @keyframes progressPulse {
@@ -1966,13 +1976,9 @@ textarea:focus-visible {
     line-height: 1.4;
 }
 
-.input-box:focus-within ~ .input-hint,
-.input-hint:hover {
-    opacity: 1;
-}
-}
-
-/* UI Polishing overrides */
+/* ========================================
+   UI Polishing overrides
+   ======================================== */
 .message-content {
     line-height: 1.75;
     font-size: 15.5px;
@@ -2126,20 +2132,7 @@ textarea:focus-visible {
     100% { transform: translateX(100%); }
 }
 
-/* Citation links Polish */
-.citation-link {
-    font-size: 11px;
-    vertical-align: super;
-    padding: 0 4px;
-    border-radius: 6px;
-    background-color: var(--primary-light);
-    color: var(--primary);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-}
-
+/* Citation favicon */
 .citation-favicon {
     width: 12px;
     height: 12px;
@@ -2147,14 +2140,6 @@ textarea:focus-visible {
     vertical-align: middle;
     flex-shrink: 0;
     object-fit: contain;
-}
-
-.citation-link:hover {
-    background-color: var(--primary);
-    color: var(--text-inverse);
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
-    text-decoration: none;
 }
 
 /* Assistant Message padding fix for Markdown */
@@ -2231,12 +2216,6 @@ textarea:focus-visible {
     transform: translateX(2px);
 }
 
-.history-item.active {
-    background-color: var(--primary-light);
-    color: var(--primary);
-    border-left-color: var(--primary);
-}
-
 /* Button Pulse/Shadow on Active */
 .primary-btn {
     transition: all var(--transition-smooth);
@@ -2291,6 +2270,30 @@ textarea:focus-visible {
 .hero-subtitle {
     letter-spacing: -0.2px;
     line-height: 1.6;
+}
+
+.hero-hints {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.hint-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.hint-item kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-size: 11px;
+    font-family: 'Inter', sans-serif;
+    color: var(--text-secondary);
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 1px 0 var(--border);
+    line-height: 1.4;
 }
 /* Force dark mode code copy button visibility fix */
 [data-theme="dark"] .code-copy-btn {

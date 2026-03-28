@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     # Initialise database (creates tables, runs legacy migration)
     await init_db()
 
-    _httpx_client = httpx.AsyncClient()
+    _httpx_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
     stats_router.set_httpx_client(_httpx_client)
 
     await init_global_browser()

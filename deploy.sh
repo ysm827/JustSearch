@@ -10,7 +10,7 @@ fi
 
 # Create directories if not exists
 mkdir -p user_data
-mkdir -p backend/chats
+mkdir -p data
 
 # Function to run with docker
 run_docker() {

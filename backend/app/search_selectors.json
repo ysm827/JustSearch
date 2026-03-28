@@ -2,13 +2,13 @@
     "google": {
         "base_url": "https://www.google.com/search?q={query}&num={num}",
         "selectors": {
-            "result_container": ["div.g", "#rso > div"],
+            "result_container": ["div.g", "#rso > div", "[data-sokoban-container]"],
             "title": "h3",
-            "link": "a",
-            "snippet": "div[style*='-webkit-line-clamp']",
+            "link": "a[href]:not([href^=\"#\"]):not([href^=\"/search\"])",
+            "snippet": "div[style*='-webkit-line-clamp'], div.IsZvec, .VwiC3b",
             "date": ".LEwnzc, span.f, span.dna-a"
         },
-        "captcha_check": ["#captcha-form", "异常流量"],
+        "captcha_check": ["#captcha-form", "异常流量", "sorry/index"],
         "wait_selector": "#rso"
     },
     "bing": {
@@ -34,5 +34,17 @@
         },
         "captcha_check": [],
         "wait_selector": "#react-layout, .react-results--main"
+    },
+    "sogou": {
+        "base_url": "https://www.sogou.com/web?query={query}",
+        "selectors": {
+            "result_container": ["div.vrwrap", "div.rb"],
+            "title": "h3 a",
+            "link": "h3 a",
+            "snippet": ".str-text-info, .str_info",
+            "date": ".fb"
+        },
+        "captcha_check": ["用户输入参数有误", "antispider"],
+        "wait_selector": "#main, .results"
     }
 }

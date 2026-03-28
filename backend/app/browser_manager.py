@@ -264,7 +264,7 @@ class BrowserManager:
                 const results = [];
                 const anchors = document.querySelectorAll('a[href^="http"]');
                 // 搜索引擎自身域名，用于过滤
-                const engineDomains = ['google.com', 'bing.com', 'duckduckgo.com'];
+                const engineDomains = ['google.com', 'bing.com', 'duckduckgo.com', 'sogou.com'];
                 let count = 0;
                 for (const a of anchors) {
                     if (count >= maxResults) break;

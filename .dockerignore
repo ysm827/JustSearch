@@ -19,8 +19,12 @@ htmlcov
 .dockerignore
 backend/settings.json
 backend/chats/
+data/
 user_data/
 node_modules/
 .env
 *.log
 crawled_debug.txt
+*.patch
+benchmark_results/
+.trae/
