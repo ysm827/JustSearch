@@ -365,11 +365,6 @@ export function createLogContainer(logs, sourceCount = 0) {
     const logDetails = document.createElement('div');
     logDetails.className = 'log-details';
     
-    if (logs && Array.isArray(logs) && logs.length > 0) {
-        logDetails.classList.add('open');
-        expandIcon.classList.add('expanded');
-    }
-    
     if (logs && Array.isArray(logs)) {
         logs.forEach(log => {
             const entry = document.createElement('div');

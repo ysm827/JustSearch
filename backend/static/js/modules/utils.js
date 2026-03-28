@@ -11,8 +11,10 @@ export const md = {
         const sanitized = window.DOMPurify.sanitize(rawHtml, {
             ADD_ATTR: ['target']
         });
+        // 为所有链接添加 target="_blank"，在新标签页打开
+        const withTarget = sanitized.replace(/<a /g, '<a target="_blank" rel="noopener noreferrer" ');
         // 为代码块添加包装器（不含 onclick，用事件委托处理复制）
-        return sanitized.replace(/<pre><code([^>]*)>/g, (match, attrs) => {
+        return withTarget.replace(/<pre><code([^>]*)>/g, (match, attrs) => {
             return `<pre class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${extractLangFromAttrs(attrs)}</span><button class="code-copy-btn" data-action="copy-code" title="复制代码"><span class="material-symbols-rounded">content_copy</span><span>复制</span></button></div><code${attrs}>`;
         });
     }

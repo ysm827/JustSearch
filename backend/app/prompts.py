@@ -10,6 +10,11 @@ If the user provides a direct URL, return {{"type": "direct", "url": "THE_URL"}}
 Otherwise, generate up to 3 search queries optimized for a search engine to cover different aspects of the user's request. 
 Make sure the queries are specific and include the relevant year if the query is time-sensitive.
 
+If conversation history is provided, the user's input may be a follow-up question (e.g., "tell me more about X", "what about his early life?"). In that case:
+- Resolve any pronouns or vague references using the conversation context.
+- Generate search queries that are self-contained and specific — do NOT reuse queries from previous turns.
+- If the follow-up asks for deeper information on a previously discussed topic, generate targeted queries for that sub-topic.
+
 Return {{"type": "search", "queries": ["QUERY_1", "QUERY_2", ...]}}.
 Output strictly in JSON format."""
 
@@ -41,6 +46,8 @@ Knowledge Cutoff: 2025-04
 Current Time: {current_time}
 
 Answer the user's question based strictly on the provided sources. 
+
+If conversation history is provided, use it ONLY to understand the user's intent and resolve pronouns/references. Do NOT copy or paraphrase answers from the conversation history — always base your answer on the new sources provided below.
 
 Rules:
 1. Use the Current Time provided above to interpret relative time expressions like "this year".

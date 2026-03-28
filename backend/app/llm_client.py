@@ -85,10 +85,19 @@ class LLMClient:
         return None
 
     def _build_context_messages(self, history: Optional[List[Dict[str, str]]], max_turns: int) -> List[Dict[str, str]]:
-        """从历史记录中构建上下文消息，限制轮数。"""
+        """从历史记录中构建上下文消息，限制轮数。对 assistant 消息做摘要截断以节省 token。"""
         if not history:
             return []
-        return history[-max_turns:]
+        
+        recent = history[-max_turns:]
+        result = []
+        for msg in recent:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "assistant" and len(content) > 500:
+                content = content[:400] + "...(答案已截断)"
+            result.append({"role": role, "content": content})
+        return result
 
     async def analyze_task(self, user_input: str, history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """

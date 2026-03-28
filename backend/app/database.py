@@ -107,6 +107,17 @@ async def init_db():
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # Ensure missing columns are added (create_all only creates new tables)
+    async with _engine.begin() as conn:
+        from sqlalchemy import text as sa_text
+        result = await conn.execute(sa_text("PRAGMA table_info('chat_messages')"))
+        existing_cols = {row[1] for row in result}
+        if "stats" not in existing_cols:
+            await conn.execute(sa_text(
+                "ALTER TABLE chat_messages ADD COLUMN stats JSON DEFAULT '{}'"
+            ))
+            logger.info("Added missing 'stats' column to chat_messages")
+
     logger.info("Database initialised at %s", _DB_PATH)
 
     # One-time migration from legacy JSON files
