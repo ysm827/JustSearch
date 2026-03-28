@@ -135,11 +135,13 @@ export function setupChatHandler(elements, renderHistory) {
             await API.streamChat(text, {
                 model: selectedModel,
                 signal: controller.signal,
-                onMeta: (sessionId) => {
-                    setCurrentSessionId(sessionId);
-                    // 新对话首次拿到 sessionId，更新 URL
-                    if (window.location.pathname !== `/c/${sessionId}`) {
-                        history.replaceState({ sessionId }, '', `/c/${sessionId}`);
+                onMeta: (meta) => {
+                    const sessionId = typeof meta === 'string' ? meta : meta.session_id;
+                    if (sessionId) {
+                        setCurrentSessionId(sessionId);
+                        if (window.location.pathname !== `/c/${sessionId}`) {
+                            history.replaceState({ sessionId }, '', `/c/${sessionId}`);
+                        }
                     }
                 },
                 onLog: (msg) => {

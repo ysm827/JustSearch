@@ -1,0 +1,16 @@
+{
+    "name": "JustSearch",
+    "short_name": "JustSearch",
+    "description": "智能 AI 深度搜索助手",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#3b82f6",
+    "icons": [
+        {
+            "src": "/static/favicon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml"
+        }
+    ]
+}

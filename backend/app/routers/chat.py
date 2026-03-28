@@ -197,7 +197,7 @@ async def chat_endpoint(request: ChatRequest):
     context_messages = chat_history_data.get("messages", []) if chat_history_data else []
 
     async def event_generator():
-        yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id})}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'model': model})}\n\n"
 
         queue = asyncio.Queue()
         logs = []
@@ -271,7 +271,9 @@ async def chat_endpoint(request: ChatRequest):
                 yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id})}\n\n"
 
             except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'content': f'Failed to save history: {e}'})}\n\n"
+                logger.error("Failed to save chat history for %s: %s", session_id, e)
+                # Still yield the answer even if saving fails
+                yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id})}\n\n"
 
             yield "data: [DONE]\n\n"
 

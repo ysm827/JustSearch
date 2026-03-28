@@ -226,7 +226,7 @@ export async function streamChat(query, callbacks) {
                             const event = JSON.parse(dataStr);
 
                             if (event.type === 'meta' && onMeta) {
-                                onMeta(event.session_id);
+                                onMeta(event);
                             }
                             else if (event.type === 'log' && onLog) {
                                 onLog(event.content);
