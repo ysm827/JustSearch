@@ -64,6 +64,21 @@ async def update_settings_endpoint(settings: SettingsModel):
             continue
         update[k] = v
 
+    # Validate numeric ranges
+    if "max_results" in update:
+        update["max_results"] = max(1, min(20, int(update["max_results"])))
+    if "max_iterations" in update:
+        update["max_iterations"] = max(1, min(10, int(update["max_iterations"])))
+    if "max_concurrent_pages" in update:
+        update["max_concurrent_pages"] = max(1, min(20, int(update["max_concurrent_pages"])))
+    if "max_context_turns" in update:
+        update["max_context_turns"] = max(1, min(20, int(update["max_context_turns"])))
+
+    # Validate search engine
+    valid_engines = {"duckduckgo", "google", "bing", "sogou"}
+    if "search_engine" in update and update["search_engine"] not in valid_engines:
+        raise HTTPException(status_code=400, detail=f"不支持的搜索引擎。可选: {', '.join(valid_engines)}")
+
     incoming_key = new_settings.get("api_key", "")
     if incoming_key and "****" in incoming_key:
         update["api_key"] = current.get("api_key", "")
