@@ -116,11 +116,6 @@ export async function deleteMessageAPI(sessionId, messageIndex) {
         return false;
     }
 }
-    } catch (e) {
-        console.error("Failed to clear history", e);
-        return false;
-    }
-}
 
 export async function clearCacheAPI() {
     try {
