@@ -199,6 +199,28 @@ async def resolve_redirect_url(url: str, log_func=None) -> str:
     return final_url
 
 
+async def _extract_og_metadata(page: Page) -> dict:
+    """Extract OpenGraph metadata from page for better source previews."""
+    try:
+        return await page.evaluate(r"""() => {
+            const getMeta = (name) => {
+                const el = document.querySelector(`meta[property="${name}"]`) ||
+                           document.querySelector(`meta[name="${name}"]`);
+                return el ? el.content : '';
+            };
+            return {
+                og_title: getMeta('og:title'),
+                og_description: getMeta('og:description'),
+                og_image: getMeta('og:image'),
+                og_site_name: getMeta('og:site_name'),
+                author: getMeta('author'),
+                published_time: getMeta('article:published_time'),
+            };
+        }""")
+    except Exception:
+        return {}
+
+
 async def crawl_github_api(page: Page, url: str, log_func=None) -> str | None:
     """Handle GitHub API URLs - parse JSON and return a summary."""
     if log_func:
@@ -490,6 +512,19 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         if log_func:
             log_func(f"浏览器: 正在提取页面内容...")
         content = await extract_page_content(page, url)
+
+        # Extract OpenGraph metadata for better context
+        og = await _extract_og_metadata(page)
+        if og and any(og.values()):
+            meta_lines = []
+            if og.get('og_description'):
+                meta_lines.append(f"页面描述: {og['og_description']}")
+            if og.get('author'):
+                meta_lines.append(f"作者: {og['author']}")
+            if og.get('published_time'):
+                meta_lines.append(f"发布时间: {og['published_time']}")
+            if meta_lines:
+                content = "[元信息] " + " | ".join(meta_lines) + "\n\n" + content
 
         if prepend_text:
             content = prepend_text + content
