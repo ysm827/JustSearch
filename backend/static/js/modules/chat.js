@@ -80,6 +80,7 @@ export function setupChatHandler(elements, renderHistory) {
         msgDiv.appendChild(progressBar);
 
         const { logContainer, logDetails, spinner, statusText, expandIcon } = createDynamicLogContainer();
+        const seenLogs = new Set(); // 去重
         msgDiv.appendChild(logContainer);
 
         const answerDiv = document.createElement('div');
@@ -171,6 +172,12 @@ export function setupChatHandler(elements, renderHistory) {
                     tsSpan.textContent = new Date().toLocaleTimeString();
                     const msgSpan = document.createElement('span');
                     msgSpan.textContent = msg;
+
+                    // 去重检查
+                    const logKey = msg.trim().substring(0, 80);
+                    if (seenLogs.has(logKey)) return;
+                    seenLogs.add(logKey);
+
                     entry.appendChild(tsSpan);
                     entry.appendChild(msgSpan);
                     logDetails.appendChild(entry);
