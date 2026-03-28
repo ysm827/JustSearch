@@ -352,6 +352,16 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
     }
     
     msgDiv.appendChild(contentDiv);
+
+    // Add timestamp
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'message-time';
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    timeDiv.textContent = `${hours}:${minutes}`;
+    msgDiv.appendChild(timeDiv);
+
     elements.chatContainer.appendChild(msgDiv);
     return { msgDiv, contentDiv };
 }

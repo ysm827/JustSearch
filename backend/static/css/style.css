@@ -1983,10 +1983,26 @@ textarea:focus-visible {
     line-height: 1.75;
     font-size: 15.5px;
     letter-spacing: 0.2px;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .message.user .message-content {
     box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+/* Message timestamps — show on hover */
+.message-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-align: right;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.message:hover .message-time {
+    opacity: 1;
 }
 
 [data-theme="dark"] .message.user .message-content {
