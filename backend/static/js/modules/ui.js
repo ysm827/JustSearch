@@ -316,6 +316,11 @@ export function createLogContainer(logs) {
     const logDetails = document.createElement('div');
     logDetails.className = 'log-details';
     
+    if (logs && Array.isArray(logs) && logs.length > 0) {
+        logDetails.classList.add('open');
+        expandIcon.classList.add('expanded');
+    }
+    
     if (logs && Array.isArray(logs)) {
         logs.forEach(log => {
             const entry = document.createElement('div');
@@ -361,14 +366,14 @@ export function createDynamicLogContainer() {
     statusLeft.appendChild(statusText);
     
     const expandIcon = document.createElement('span');
-    expandIcon.className = 'material-symbols-rounded expand-icon';
+    expandIcon.className = 'material-symbols-rounded expand-icon expanded';
     expandIcon.textContent = 'expand_more';
     
     logSummary.appendChild(statusLeft);
     logSummary.appendChild(expandIcon);
     
     const logDetails = document.createElement('div');
-    logDetails.className = 'log-details';
+    logDetails.className = 'log-details open';
     
     logSummary.onclick = () => {
         logDetails.classList.toggle('open');
