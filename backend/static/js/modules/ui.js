@@ -293,19 +293,19 @@ export function renderMessages(messages) {
     elements.heroSection.style.display = 'none';
     
     messages.forEach(msg => {
-        appendMessage(msg.role, msg.content, msg.logs, msg.sources);
+        appendMessage(msg.role, msg.content, msg.logs, msg.sources, msg.stats);
     });
     
     scrollToBottom();
 }
 
-export function appendMessage(role, content, logs = null, sources = null) {
+export function appendMessage(role, content, logs = null, sources = null, stats = null) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     
     if (role === 'assistant' && logs && logs.length > 0) {
-         const srcCount = (sources && sources.length) ? sources.length : 0;
-         msgDiv.appendChild(createLogContainer(logs, srcCount));
+         const siteCount = (stats && stats.sites_searched) ? stats.sites_searched : ((sources && sources.length) ? sources.length : 0);
+         msgDiv.appendChild(createLogContainer(logs, siteCount));
     }
 
     const contentDiv = document.createElement('div');

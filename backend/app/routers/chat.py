@@ -201,6 +201,7 @@ async def chat_endpoint(request: ChatRequest):
         queue = asyncio.Queue()
         logs = []
         accumulated_sources = []
+        final_stats = {}
 
         def progress_callback(msg):
             logs.append(msg)
@@ -214,6 +215,8 @@ async def chat_endpoint(request: ChatRequest):
             queue.put_nowait({"type": "sources", "content": sources})
 
         def stats_callback(stats):
+            nonlocal final_stats
+            final_stats = stats
             queue.put_nowait({"type": "stats", "content": stats})
 
         task = asyncio.create_task(
@@ -257,7 +260,7 @@ async def chat_endpoint(request: ChatRequest):
 
                 new_messages = [
                     {"role": "user", "content": request.query},
-                    {"role": "assistant", "content": result, "logs": logs, "sources": accumulated_sources},
+                    {"role": "assistant", "content": result, "logs": logs, "sources": accumulated_sources, "stats": final_stats},
                 ]
 
                 full_messages = existing_messages + new_messages

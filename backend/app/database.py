@@ -76,6 +76,7 @@ class ChatMessage(Base):
     content = Column(Text, default="")
     logs = Column(JSON, default=list)
     sources = Column(JSON, default=list)
+    stats = Column(JSON, default=dict)
     created_at = Column(DateTime, default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")
@@ -162,6 +163,7 @@ async def _migrate_chats_dir():
                         content=msg.get("content", ""),
                         logs=msg.get("logs") if isinstance(msg.get("logs"), list) else [],
                         sources=msg.get("sources") if isinstance(msg.get("sources"), list) else [],
+                        stats=msg.get("stats") if isinstance(msg.get("stats"), dict) else {},
                     ))
 
             except Exception as e:
@@ -246,6 +248,8 @@ async def load_chat_history(session_id_or_path: str) -> Optional[Dict[str, Any]]
                 msg_dict["logs"] = m.logs
             if m.sources:
                 msg_dict["sources"] = m.sources
+            if m.stats:
+                msg_dict["stats"] = m.stats
             messages.append(msg_dict)
 
         return {
@@ -287,6 +291,7 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
                     content=msg.get("content", ""),
                     logs=msg.get("logs") if isinstance(msg.get("logs"), list) else [],
                     sources=msg.get("sources") if isinstance(msg.get("sources"), list) else [],
+                    stats=msg.get("stats") if isinstance(msg.get("stats"), dict) else {},
                 ))
             await session.commit()
             return
@@ -309,6 +314,7 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
                     content=msg.get("content", ""),
                     logs=msg.get("logs") if isinstance(msg.get("logs"), list) else [],
                     sources=msg.get("sources") if isinstance(msg.get("sources"), list) else [],
+                    stats=msg.get("stats") if isinstance(msg.get("stats"), dict) else {},
                 ))
 
         await session.commit()
