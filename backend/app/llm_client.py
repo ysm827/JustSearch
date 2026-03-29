@@ -20,6 +20,22 @@ _LLM_SHORT_TIMEOUT = 30  # 秒（用于 analyze_task / assess_relevance 等短�
 # 并发 LLM 请求限制
 _LLM_CONCURRENCY = asyncio.Semaphore(5)
 
+# Task analysis cache — avoids duplicate API calls for identical queries
+_ANALYSIS_CACHE: dict = {}
+_ANALYSIS_CACHE_MAX = 50
+_ANALYSIS_CACHE_TTL = 180  # 3 minutes
+
+
+def _cache_analysis_result(key: str, result: dict):
+    """Store analysis result in cache, evicting old entries if needed."""
+    import time
+    if len(_ANALYSIS_CACHE) >= _ANALYSIS_CACHE_MAX:
+        # Evict oldest entries
+        sorted_keys = sorted(_ANALYSIS_CACHE.keys(), key=lambda k: _ANALYSIS_CACHE[k][1])
+        for k in sorted_keys[:_ANALYSIS_CACHE_MAX // 2]:
+            del _ANALYSIS_CACHE[k]
+    _ANALYSIS_CACHE[key] = (result, time.time())
+
 
 class LLMClient:
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1",
@@ -163,6 +179,16 @@ class LLMClient:
         [02] AI Model: Task Analysis
         Returns: {"type": "search", "queries": ["query1", "query2"]} or {"type": "direct", "url": "..."}
         """
+        # Cache lookup — if same query was analyzed recently, reuse result
+        import time as _time
+        cache_key = user_input.strip().lower()
+        now = _time.time()
+        if cache_key in _ANALYSIS_CACHE:
+            cached_result, cached_time = _ANALYSIS_CACHE[cache_key]
+            if now - cached_time < _ANALYSIS_CACHE_TTL:
+                logger.info("[Task Analysis] 缓存命中: %s", user_input[:50])
+                return cached_result
+
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = TASK_ANALYSIS_PROMPT.format(current_time=current_time)
 
@@ -187,6 +213,7 @@ class LLMClient:
                 # Validate the structure
                 if data.get("type") == "direct" and data.get("url"):
                     logger.info("[Task Analysis] 直接 URL: %s", data["url"][:100])
+                    _cache_analysis_result(cache_key, data)
                     return data
                 elif data.get("type") == "search" and data.get("queries"):
                     # Ensure queries is a list of strings
@@ -194,6 +221,7 @@ class LLMClient:
                     if queries:
                         data["queries"] = queries
                         logger.info("[Task Analysis] 查询: %s", json.dumps(data, ensure_ascii=False)[:200])
+                        _cache_analysis_result(cache_key, data)
                         return data
                 # If data has queries but no type, fix it
                 elif data.get("queries"):
@@ -204,11 +232,15 @@ class LLMClient:
 
             # Fallback
             logger.warning("[Task Analysis] JSON 解析失败或结构无效，使用 fallback")
-            return {"type": "search", "queries": [user_input]}
+            result = {"type": "search", "queries": [user_input]}
+            _cache_analysis_result(cache_key, result)
+            return result
 
         except Exception as e:
             logger.error("Error in analyze_task: %s", e)
-            return {"type": "search", "queries": [user_input]}
+            result = {"type": "search", "queries": [user_input]}
+            _cache_analysis_result(cache_key, result)
+            return result
 
     async def assess_relevance(self, query: str, snippets: List[Dict]) -> List[int]:
         """
@@ -216,6 +248,16 @@ class LLMClient:
         Input: Query and a list of snippets with IDs.
         Returns: List of IDs (integers) that are relevant and worth deep crawling.
         """
+        # Cache lookup — if same query was analyzed recently, reuse result
+        import time as _time
+        cache_key = user_input.strip().lower()
+        now = _time.time()
+        if cache_key in _ANALYSIS_CACHE:
+            cached_result, cached_time = _ANALYSIS_CACHE[cache_key]
+            if now - cached_time < _ANALYSIS_CACHE_TTL:
+                logger.info("[Task Analysis] 缓存命中: %s", user_input[:50])
+                return cached_result
+
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = RELEVANCE_ASSESSMENT_PROMPT.format(current_time=current_time)
 
@@ -291,6 +333,16 @@ class LLMClient:
         Input: Query and full content of selected sources.
         Returns: {"status": "sufficient"|"insufficient", "answer": "..."}
         """
+        # Cache lookup — if same query was analyzed recently, reuse result
+        import time as _time
+        cache_key = user_input.strip().lower()
+        now = _time.time()
+        if cache_key in _ANALYSIS_CACHE:
+            cached_result, cached_time = _ANALYSIS_CACHE[cache_key]
+            if now - cached_time < _ANALYSIS_CACHE_TTL:
+                logger.info("[Task Analysis] 缓存命中: %s", user_input[:50])
+                return cached_result
+
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         system_prompt = ANSWER_GENERATION_PROMPT.format(current_time=current_time)
@@ -322,12 +374,21 @@ class LLMClient:
             max_retries = 3
             for retry in range(max_retries):
                 try:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=messages,
-                        stream=True
-                    )
+                    async with _LLM_CONCURRENCY:
+                        response = await asyncio.wait_for(
+                            self.client.chat.completions.create(
+                                model=self.model,
+                                messages=messages,
+                                stream=True
+                            ),
+                            timeout=_LLM_TIMEOUT,
+                        )
                     break
+                except asyncio.TimeoutError:
+                    logger.warning("[Generate Answer] 请求超时, 重试 %d/%d", retry + 1, max_retries)
+                    if retry >= max_retries - 1:
+                        return {"status": "sufficient", "answer": "生成答案超时，请重试。"}
+                    await asyncio.sleep(2.0 * (retry + 1))
                 except Exception as e:
                     if "429" in str(e) and retry < max_retries - 1:
                         wait_time = 2.0 * (retry + 1)
