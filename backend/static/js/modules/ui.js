@@ -174,7 +174,9 @@ export function renderHistory(history, currentSessionId, callbacks) {
     
     if (!history || history.length === 0) {
         if (searchTerm) {
-            elements.historyList.innerHTML = '<div class="history-no-results">未找到匹配的对话</div>';
+            elements.historyList.innerHTML = '<div class="history-no-results"><span class="material-symbols-rounded" style="font-size:32px;color:var(--text-muted);margin-bottom:8px;">search_off</span><br>未找到匹配的对话</div>';
+        } else {
+            elements.historyList.innerHTML = '<div class="history-no-results"><span class="material-symbols-rounded" style="font-size:32px;color:var(--text-muted);margin-bottom:8px;">chat_bubble_outline</span><br>暂无对话记录</div>';
         }
         return;
     }
@@ -186,7 +188,7 @@ export function renderHistory(history, currentSessionId, callbacks) {
             (chat.title || '新对话').toLowerCase().includes(searchTerm)
         );
         if (filtered.length === 0) {
-            elements.historyList.innerHTML = '<div class="history-no-results">未找到匹配的对话</div>';
+            elements.historyList.innerHTML = '<div class="history-no-results"><span class="material-symbols-rounded" style="font-size:32px;color:var(--text-muted);margin-bottom:8px;">search_off</span><br>未找到匹配的对话</div>';
             return;
         }
     }

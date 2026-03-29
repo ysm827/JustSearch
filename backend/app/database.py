@@ -139,6 +139,11 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS ix_chat_sessions_updated "
             "ON chat_sessions (updated_at)"
         ))
+        # Full-text search index for chat content search
+        await conn.execute(text(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts "
+            "USING fts5(session_id, content, tokenize='unicode61')"
+        ))
 
     logger.info("Database initialised at %s", _DB_PATH)
 

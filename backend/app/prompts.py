@@ -18,6 +18,8 @@ Otherwise, generate up to 3 search queries optimized for a search engine:
 - For technical questions, include English technical terms alongside Chinese translations
 - For comparison questions, generate queries for each individual item AND a direct comparison query
 - Avoid overly broad queries — prefer specific, targeted searches
+- If the user asks about a specific product/tool, include a query with "review" or "评测" for deeper analysis
+- For "how to" questions, include a query with "tutorial" or "教程" or "guide"
 
 **Step 3: Context Resolution**
 If conversation history is provided, the user's input may be a follow-up question (e.g., "tell me more about X", "what about his early life?"). In that case:
@@ -74,6 +76,8 @@ Rules:
 9. When citing numbers or statistics, always include the source [ID] immediately after.
 10. If multiple sources provide conflicting information, mention the discrepancy and cite all relevant sources.
 11. Begin with a direct answer to the question, then provide supporting details. Do not start with filler phrases like "Based on the sources" or "According to".
+12. When comparing items, use a structured format (table or comparison list) for clarity.
+13. If the user asks for recommendations, rank options and explain the reasoning behind each ranking.
 
 Output Format:
 Status: [sufficient | insufficient]

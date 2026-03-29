@@ -477,5 +477,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                 searchInput.focus();
             }
         }
+        // Ctrl/Cmd+/ to toggle sidebar
+        if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+            e.preventDefault();
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar) {
+                if (window.innerWidth <= 768) {
+                    sidebar.classList.toggle('mobile-open');
+                    document.getElementById('mobile-overlay').classList.toggle('active');
+                } else {
+                    sidebar.classList.toggle('collapsed');
+                    localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+                }
+            }
+        }
     });
 });
