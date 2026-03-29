@@ -21,6 +21,7 @@ from ..database import (
 from ..workflow import SearchWorkflow
 from ..browser_manager import get_interaction_session, mark_interaction_completed
 from ..rate_limiter import chat_limiter
+from ..logging_utils import set_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,10 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
 
 @router.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
+    # Set request ID for log correlation
+    import uuid
+    set_request_id(uuid.uuid4().hex[:8])
+
     # Rate limiting
     allowed, retry_after = chat_limiter.check("global")
     if not allowed:

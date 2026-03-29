@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
 from .browser_manager import init_global_browser, shutdown_global_browser
-from .browser_context import _GLOBAL_CONTEXT  # legacy compat import
+from .browser_context import init_global_browser, shutdown_global_browser
 
 from .routers import chat as chat_router
 from .routers import history as history_router
@@ -57,10 +57,9 @@ async def lifespan(app: FastAPI):
     global _httpx_client
 
     # Startup
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    from .logging_utils import setup_logging
+    setup_logging(
+        level=logging.DEBUG if os.getenv("DEBUG", "").lower() == "true" else logging.INFO
     )
     logger.info("Startup: Loaded app from %s", __file__)
 
