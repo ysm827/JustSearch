@@ -35,6 +35,20 @@ class SearchWorkflow:
                 return decoded.lower().rstrip('/')
             except Exception:
                 pass
+        # Strip common tracking parameters
+        try:
+            from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+            parsed = urlparse(url)
+            if parsed.query:
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                # Remove known tracking params
+                tracking_keys = {'utm_source', 'utm_medium', 'utm_campaign', 'utm_term',
+                                 'utm_content', 'fbclid', 'gclid', 'msclkid', 'ref', 'source'}
+                cleaned = {k: v for k, v in params.items() if k.lower() not in tracking_keys}
+                new_query = urlencode(cleaned, doseq=True)
+                url = urlunparse(parsed._replace(query=new_query))
+        except Exception:
+            pass
         # 通用规范化：去尾斜杠、小写
         return url.lower().rstrip('/')
 
@@ -60,10 +74,8 @@ class SearchWorkflow:
         if not sources:
             return answer
         
-        unique_sources = {}
-        for src in sources:
-            unique_sources[src['id']] = src
-        
+        # Deduplicate by id — dict comprehension keeps last occurrence
+        unique_sources = {src['id']: src for src in sources}
         sorted_sources = sorted(unique_sources.values(), key=lambda x: x['id'])
         
         ref_section = "\n\n---\n### 参考资料\n"
@@ -203,9 +215,9 @@ class SearchWorkflow:
             progress_callback(f"  → {item.get('title', item.get('url', '?'))[:60]}")
 
         # Separate cached vs uncached
-        uncached_items = []
-        uncached_indices = []
-        cached_contents = {}
+        cached_contents: Dict[int, str] = {}
+        uncached_items: list = []
+        uncached_indices: list = []
 
         for i, item in enumerate(to_crawl):
             cached = self._content_cache.get(item['url'])
@@ -220,11 +232,13 @@ class SearchWorkflow:
         if uncached_items:
             tasks = [self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id) for item in uncached_items]
             contents = await asyncio.gather(*tasks)
+            # Build URL-to-index map for efficient lookup
+            url_to_item = {item['url']: (idx, item) for idx, item in zip(uncached_indices, uncached_items)}
             # Cache results
-            for idx, content in zip(uncached_indices, contents):
-                cached_contents[idx] = content
+            for content, (orig_idx, item) in zip(contents, url_to_item.values()):
+                cached_contents[orig_idx] = content
                 if content and content != "[CRAWL_TIMEOUT]":
-                    self._content_cache[uncached_items[uncached_indices.index(idx)]['url']] = content
+                    self._content_cache[item['url']] = content
 
         new_sources = []
         for i, item in enumerate(to_crawl):
@@ -261,9 +275,18 @@ class SearchWorkflow:
             last_feedback = "" 
             source_id_counter = 0
             total_search_results = 0
+            import time
+            start_time = time.monotonic()
+            _MAX_TOTAL_SECONDS = 180  # 3 minutes total timeout
             
             while iteration < self.max_iterations:
                 iteration += 1
+                # Total timeout check
+                elapsed = time.monotonic() - start_time
+                if elapsed > _MAX_TOTAL_SECONDS:
+                    progress_callback(f"已超过总搜索时限 ({_MAX_TOTAL_SECONDS}秒)，正在整理现有结果...")
+                    logger.info("[Workflow] 总搜索超时 (%.1fs), 已完成 %d 次迭代", elapsed, iteration - 1)
+                    break
                 if iteration == 1:
                     progress_callback(f"🔍 第 1 轮搜索开始...")
                 else:

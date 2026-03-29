@@ -16,6 +16,12 @@ from .browser_context import (
 )
 from .search_engine import load_selectors
 from .engine_health import engine_health
+
+import time
+
+# Simple search result cache: query -> (results, timestamp)
+_search_cache: dict = {}
+_SEARCH_CACHE_TTL = 300  # 5 minutes
 from .interaction import (
     _INTERACTION_SESSIONS, get_interaction_session,
     mark_interaction_completed, register_interaction_session, remove_interaction_session
@@ -44,13 +50,29 @@ class BrowserManager:
     async def search_web(self, query: str, log_func=None, session_id: str = None) -> List[Dict]:
         """
         Concurrent Web Search - scrapes search results for the query.
+        Automatically falls back to a healthy engine if the preferred one is unhealthy.
         """
+        # Check cache first
+        cache_key = f"{self.engine}:{query}"
+        cached = _search_cache.get(cache_key)
+        if cached and time.time() - cached[1] < _SEARCH_CACHE_TTL:
+            if log_func:
+                log_func(f"浏览器: 使用缓存搜索结果: '{_truncate_for_log(query)}'")
+            return cached[0]
+
         pool = get_context_pool_status()
         if pool["active_contexts"] == 0:
             await self.start()
 
-        config = self.engine_config.get(self.engine, self.engine_config["duckduckgo"])
-        engine_name = self.engine.capitalize()
+        # Auto-fallback: if preferred engine is unhealthy, switch to best available
+        available_engines = list(self.engine_config.keys())
+        actual_engine = engine_health.get_fallback(self.engine, available_engines)
+        if actual_engine != self.engine:
+            if log_func:
+                log_func(f"浏览器: {self.engine.capitalize()} 不稳定，自动切换到 {actual_engine.capitalize()}")
+
+        config = self.engine_config.get(actual_engine, self.engine_config["duckduckgo"])
+        engine_name = actual_engine.capitalize()
 
         page = await get_new_page()
         try:
@@ -246,12 +268,14 @@ class BrowserManager:
 
             if log_func:
                 log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
-            engine_health.record(engine, success=True)
+            engine_health.record(actual_engine, success=True)
+            # Cache results (use actual engine in key for consistency)
+            _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
             return results
         except Exception as e:
             msg = f"搜索错误: {e}"
             logger.error(msg)
-            engine_health.record(engine, success=False)
+            engine_health.record(actual_engine, success=False)
             if log_func:
                 log_func(f"浏览器错误: {msg}")
             return []

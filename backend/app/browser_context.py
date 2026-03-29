@@ -209,14 +209,17 @@ async def _rotate_stale_contexts():
 
 async def _rotation_loop():
     """Background task that periodically checks and rotates stale contexts."""
+    # Wait a bit before first check (avoid checking right after startup)
+    await asyncio.sleep(_ROTATION_CHECK_INTERVAL)
     while True:
         try:
-            await asyncio.sleep(_ROTATION_CHECK_INTERVAL)
             await _rotate_stale_contexts()
+            await asyncio.sleep(_ROTATION_CHECK_INTERVAL)
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error("Rotation loop error: %s", e)
+            await asyncio.sleep(_ROTATION_CHECK_INTERVAL)
 
 
 # ---------------------------------------------------------------------------
@@ -266,11 +269,7 @@ def _pick_slot_index() -> int:
     """Pick the slot with the fewest requests."""
     if not _context_pool:
         raise RuntimeError("Context pool is empty")
-    best = 0
-    for i in range(1, len(_context_pool)):
-        if _context_pool[i].request_count < _context_pool[best].request_count:
-            best = i
-    return best
+    return min(range(len(_context_pool)), key=lambda i: _context_pool[i].request_count)
 
 
 async def get_new_page() -> Page:
@@ -354,8 +353,8 @@ def get_context_pool_status() -> dict:
     }
 
 
-# For backward compatibility – browser_manager.py references these
-_GLOBAL_CONTEXT = None  # legacy compat, always None now
+# Legacy compat import (chat router references this module)
+# _GLOBAL_CONTEXT is no longer used — pool-based approach replaces it
 
 
 def reset_state():

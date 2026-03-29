@@ -116,6 +116,9 @@ _PRIVATE_NETWORKS = [
 # PDF URL pattern
 _PDF_PATTERN = re.compile(r'\.pdf(\?.*)?$', re.IGNORECASE)
 
+# Maximum extracted content length (chars) to prevent memory bloat
+_MAX_CONTENT_LENGTH = 200_000
+
 
 def is_private_url(url: str) -> bool:
     """Check if a URL points to a private/internal network address."""
@@ -402,7 +405,12 @@ async def extract_page_content(page: Page, url: str) -> str:
     """Extract main content from a page using DOM-density algorithm with retry logic."""
     for attempt in range(3):
         try:
-            return await page.evaluate(_JS_EXTRACT_CONTENT)
+            content = await page.evaluate(_JS_EXTRACT_CONTENT)
+            # Truncate oversized content to prevent memory bloat
+            if content and len(content) > _MAX_CONTENT_LENGTH:
+                logger.warning("[Crawler] Content too large (%d chars), truncating: %s", len(content), url[:80])
+                content = content[:_MAX_CONTENT_LENGTH] + "\n\n[... 内容过长，已截取]"
+            return content
         except Exception as e:
             if "Execution context was destroyed" in str(e) or "Cannot find context" in str(e):
                 if attempt < 2:
@@ -417,7 +425,7 @@ async def extract_page_content(page: Page, url: str) -> str:
 
 
 # Resource types to block during content crawling (speeds up page load significantly)
-_BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet"}
+_BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet", "websocket", "manifest", "texttrack"}
 
 
 async def _install_resource_blocker(page: Page):

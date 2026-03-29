@@ -30,6 +30,15 @@ async def _periodic_cleanup():
             await asyncio.sleep(300)  # Every 5 minutes
             from .rate_limiter import chat_limiter
             chat_limiter.cleanup()
+            # Clean expired search cache
+            from .browser_manager import _search_cache, _SEARCH_CACHE_TTL
+            import time
+            now = time.time()
+            expired = [k for k, (_, ts) in _search_cache.items() if now - ts > _SEARCH_CACHE_TTL]
+            for k in expired:
+                del _search_cache[k]
+            if expired:
+                logger.debug("Cleaned %d expired search cache entries", len(expired))
         except asyncio.CancelledError:
             break
         except Exception as e:

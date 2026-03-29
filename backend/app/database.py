@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, JSON, select, delete, update, text
+from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, JSON, select, delete, update, text, Index
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.sql import func
 
@@ -61,8 +61,8 @@ class ChatSession(Base):
 
     id = Column(String, primary_key=True)
     title = Column(String, default="新对话")
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=func.now(), index=True)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), index=True)
 
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan",
                             order_by="ChatMessage.created_at")
@@ -79,6 +79,11 @@ class ChatMessage(Base):
     sources = Column(JSON, default=list)
     stats = Column(JSON, default=dict)
     created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        # Composite index for efficient message loading ordered by time
+        {"sqlite_autoindex": True},
+    )
 
     session = relationship("ChatSession", back_populates="messages")
 
@@ -108,6 +113,7 @@ async def init_db():
         pool_pre_ping=True,
         pool_size=5,
         max_overflow=10,
+        pool_recycle=1800,  # Recycle connections after 30 minutes
         connect_args={"check_same_thread": False},
     )
     _async_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
@@ -129,6 +135,16 @@ async def init_db():
             ))
             logger.info("Added missing 'stats' column to chat_messages")
 
+        # Ensure performance indexes exist
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chat_messages_session_created "
+            "ON chat_messages (session_id, created_at)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chat_sessions_updated "
+            "ON chat_sessions (updated_at)"
+        ))
+
     logger.info("Database initialised at %s", _DB_PATH)
 
     # One-time migration from legacy JSON files
@@ -143,16 +159,13 @@ async def _cleanup_old_sessions(max_age_days: int = 90):
     try:
         cutoff = datetime.now() - __import__('datetime').timedelta(days=max_age_days)
         async with await get_session() as session:
-            # Find old sessions
-            old_sessions = (await session.execute(
-                select(ChatSession.id).where(ChatSession.updated_at < cutoff)
-            )).scalars().all()
-            if old_sessions:
-                for sid in old_sessions:
-                    await session.execute(delete(ChatMessage).where(ChatMessage.session_id == sid))
-                await session.execute(delete(ChatSession).where(ChatSession.updated_at < cutoff))
+            # Single batch delete — cascade handles messages automatically
+            result = await session.execute(
+                delete(ChatSession).where(ChatSession.updated_at < cutoff)
+            )
+            if result.rowcount > 0:
                 await session.commit()
-                logger.info("Cleaned up %d sessions older than %d days", len(old_sessions), max_age_days)
+                logger.info("Cleaned up %d sessions older than %d days", result.rowcount, max_age_days)
     except Exception as e:
         logger.warning("Session cleanup failed: %s", e)
 

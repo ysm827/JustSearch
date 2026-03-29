@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 _DEFAULT_CONTEXT_TURNS = 6
 
 # LLM 调用超时
-_LLM_TIMEOUT = 120  # 秒
+_LLM_TIMEOUT = 120  # 秒（默认，用于 generate_answer）
+_LLM_SHORT_TIMEOUT = 60  # 秒（用于 analyze_task / assess_relevance 等短操作）
+
+# 并发 LLM 请求限制
+_LLM_CONCURRENCY = asyncio.Semaphore(5)
 
 
 class LLMClient:
@@ -31,27 +35,39 @@ class LLMClient:
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
-    async def _call_with_retry(self, messages: list, retries: int = 2) -> Any:
-        """带重试的 LLM 调用。处理 429/500 等可重试错误。"""
+    async def _call_with_retry(self, messages: list, retries: int = 2, timeout: float = None) -> Any:
+        """带重试的 LLM 调用。处理 429/500 等可重试错误。使用指数退避 + 抖动。"""
         import httpx
+        import random as _rand
+        request_timeout = timeout or _LLM_TIMEOUT
         for attempt in range(retries + 1):
-            try:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                )
-                self._track_usage(response)
-                return response
-            except Exception as e:
-                err_str = str(e)
-                status_code = getattr(e, 'status_code', 0)
-                # 可重试的状态码
-                if status_code in (429, 500, 502, 503) and attempt < retries:
-                    wait = 2 ** attempt * 1.5
-                    logger.warning("[LLM] 请求失败 (%d), %.1f 秒后重试 (%d/%d)...", status_code, wait, attempt + 1, retries)
+            async with _LLM_CONCURRENCY:
+                try:
+                    response = await asyncio.wait_for(
+                        self.client.chat.completions.create(
+                            model=self.model,
+                            messages=messages,
+                        ),
+                        timeout=request_timeout,
+                    )
+                    self._track_usage(response)
+                    return response
+                except asyncio.TimeoutError:
+                    logger.warning("[LLM] 请求超时 (%.0fs), 重试 %d/%d", request_timeout, attempt + 1, retries)
+                    if attempt >= retries:
+                        raise
+                    wait = (2 ** attempt) * 1.5 + _rand.uniform(0, 1)
                     await asyncio.sleep(wait)
-                    continue
-                raise
+                except Exception as e:
+                    err_str = str(e)
+                    status_code = getattr(e, 'status_code', 0)
+                    # 可重试的状态码
+                    if status_code in (429, 500, 502, 503) and attempt < retries:
+                        wait = (2 ** attempt) * 1.5 + _rand.uniform(0, 1)
+                        logger.warning("[LLM] 请求失败 (%d), %.1f 秒后重试 (%d/%d)...", status_code, wait, attempt + 1, retries)
+                        await asyncio.sleep(wait)
+                        continue
+                    raise
 
     def _track_usage(self, response):
         """Track token usage from response."""
@@ -163,7 +179,7 @@ class LLMClient:
 
         try:
             logger.info("[Task Analysis] 输入: %s", _truncate_for_log(user_input, 80))
-            response = await self._call_with_retry(messages)
+            response = await self._call_with_retry(messages, timeout=_LLM_SHORT_TIMEOUT)
             content = response.choices[0].message.content
 
             data = self._extract_json(content)
@@ -198,7 +214,7 @@ class LLMClient:
             response = await self._call_with_retry([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
-            ])
+            ], timeout=_LLM_SHORT_TIMEOUT)
             content = response.choices[0].message.content
 
             data = self._extract_json(content)
@@ -236,7 +252,7 @@ class LLMClient:
             response = await self._call_with_retry([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
-            ])
+            ], timeout=_LLM_SHORT_TIMEOUT)
             content = response.choices[0].message.content
 
             data = self._extract_json(content)
