@@ -51,6 +51,9 @@ def load_selectors(engine: str = "duckduckgo") -> dict:
             }
         }
 
+    if engine is None:
+        return config
+
     if engine in config:
         return config[engine]
     # Engine not in config — return full config (caller will fallback to duckduckgo)

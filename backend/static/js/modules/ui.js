@@ -2,7 +2,6 @@ import { md, createCopyButton } from './utils.js';
 import { renameChatAPI } from './api.js';
 import { showToast } from './toast.js';
 import { state } from './state.js';
-import { showToast } from './toast.js';
 
 /**
  * 自定义确认弹窗（替代浏览器原生 confirm）。
@@ -240,7 +239,7 @@ export function renderHistory(history, currentSessionId, callbacks) {
             item.appendChild(deleteBtn);
 
             const exportBtn = document.createElement('button');
-            exportBtn.className = 'delete-history-btn';
+            exportBtn.className = 'history-action-btn history-export-btn';
             exportBtn.title = '导出对话';
             exportBtn.setAttribute('aria-label', '导出对话');
             exportBtn.innerHTML = '<span class="material-symbols-rounded">download</span>';
@@ -251,7 +250,7 @@ export function renderHistory(history, currentSessionId, callbacks) {
             item.appendChild(exportBtn);
 
             const shareBtn = document.createElement('button');
-            shareBtn.className = 'delete-history-btn';
+            shareBtn.className = 'history-action-btn history-share-btn';
             shareBtn.title = '复制对话链接';
             shareBtn.setAttribute('aria-label', '复制对话链接');
             shareBtn.innerHTML = '<span class="material-symbols-rounded">link</span>';
@@ -541,11 +540,11 @@ export function copyConversation(messages) {
         const content = msg.content || '';
         return `${role}:
 ${content}`;
-    }).join('
+    }).join(`
 
 ---
 
-');
+`);
     navigator.clipboard.writeText(text).catch(err => console.error('Copy failed:', err));
 }
 

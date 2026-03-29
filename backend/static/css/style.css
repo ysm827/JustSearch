@@ -8,10 +8,12 @@
     outline-offset: 2px;
 }
 
-button:focus-visible {
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
     outline: 2px solid var(--primary);
-    outline-offset: 2px;
-    border-radius: 4px;
+    outline-offset: 1px;
 }
 
 /* --- Design Tokens --- */
@@ -177,20 +179,6 @@ body {
     scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
-/* --- Focus Styles --- */
-:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
-}
-
-button:focus-visible,
-select:focus-visible,
-input:focus-visible,
-textarea:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 1px;
-}
-
 /* ========================================
    Sidebar
    ======================================== */
@@ -234,8 +222,9 @@ textarea:focus-visible {
 }
 
 @keyframes gradientShift {
-    0%, 100% { background-position: 0% 50%; }
+    0% { background-position: 0% 50%; }
     50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
 }
 
 .sidebar-header-buttons {
@@ -461,6 +450,39 @@ textarea:focus-visible {
 }
 
 .delete-history-btn span {
+    font-size: 16px;
+}
+
+/* --- History Action Buttons (Export, Share) --- */
+.history-action-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    margin-left: 5px;
+    transition: all var(--transition-fast);
+}
+
+.history-item:hover .history-action-btn {
+    display: flex;
+}
+
+.history-export-btn:hover {
+    color: var(--primary);
+    background-color: var(--primary-light);
+}
+
+.history-share-btn:hover {
+    color: var(--success);
+    background-color: var(--success-light);
+}
+
+.history-action-btn span {
     font-size: 16px;
 }
 
@@ -732,20 +754,20 @@ textarea:focus-visible {
 
 .log-container {
     margin-bottom: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
     overflow: hidden;
     max-width: 820px;
     width: 100%;
     margin-left: auto;
     margin-right: auto;
     background-color: var(--bg-secondary);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-xs);
     transition: all var(--transition-smooth);
 }
 
 .log-summary {
-    padding: 12px 16px;
+    padding: 10px 14px;
     background-color: var(--bg-secondary);
     cursor: pointer;
     font-size: 13.5px;
@@ -757,6 +779,7 @@ textarea:focus-visible {
     transition: all var(--transition-fast);
     border-bottom: 1px solid transparent;
     font-weight: 500;
+    border-radius: var(--radius-md);
 }
 
 .log-summary:hover {
@@ -819,7 +842,8 @@ textarea:focus-visible {
     padding: 12px 16px;
     max-height: 400px;
     opacity: 1;
-    border-top: 1px solid var(--border);
+    border-top: 1px dashed var(--border);
+    background-color: var(--bg-secondary);
 }
 
 .log-entry {
@@ -1842,7 +1866,7 @@ textarea:focus-visible {
         max-width: 100%;
     }
 
-    .suggestions {
+    .hero-suggestions {
         gap: 6px !important;
     }
 
@@ -2047,23 +2071,6 @@ textarea:focus-visible {
     box-shadow: 0 4px 12px rgba(96, 165, 250, 0.15);
 }
 
-.log-container {
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-light);
-    box-shadow: var(--shadow-xs);
-    background-color: var(--bg-secondary);
-}
-
-.log-summary {
-    padding: 10px 14px;
-    border-radius: var(--radius-md);
-}
-
-.log-details.open {
-    border-top: 1px dashed var(--border);
-    background-color: var(--bg-secondary);
-}
-
 .code-block-header {
     background-color: var(--bg);
 }
@@ -2086,22 +2093,9 @@ textarea:focus-visible {
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
-/* Add Mac-like dots to code block headers */
-.code-block-header::before {
-    content: '';
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background-color: #ff5f56;
-    box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f;
-    margin-right: 48px;
-}
-
 .code-block-lang {
     flex-grow: 1;
     text-align: left;
-    margin-left: -20px; /* Offset the dots visually if needed */
 }
 
 /* Improve modal animations and layout */
@@ -2321,13 +2315,6 @@ textarea:focus-visible {
 /* Typography line heights */
 .hero-title {
     letter-spacing: -1.5px;
-    background-size: 300% 300%;
-}
-
-@keyframes gradientShift {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
 }
 
 .hero-subtitle {
@@ -2336,14 +2323,39 @@ textarea:focus-visible {
 }
 
 .hero-hints {
+    margin-top: 16px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
     font-size: 12px;
     color: var(--text-muted);
+}
+
+.hero-suggestions {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
 }
 
 .hint-item {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+}
+
+.export-all-btn {
+    width: auto !important;
+    padding: 8px;
+    font-size: 18px;
+    opacity: 0.5;
+    transition: opacity var(--transition-fast);
+}
+
+.export-all-btn:hover {
+    opacity: 1;
 }
 
 .char-count {

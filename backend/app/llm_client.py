@@ -181,7 +181,7 @@ class LLMClient:
         """
         # Cache lookup — if same query was analyzed recently, reuse result
         import time as _time
-        cache_key = user_input.strip().lower()
+        cache_key = f"task:{user_input.strip().lower()}"
         now = _time.time()
         if cache_key in _ANALYSIS_CACHE:
             cached_result, cached_time = _ANALYSIS_CACHE[cache_key]
@@ -248,14 +248,14 @@ class LLMClient:
         Input: Query and a list of snippets with IDs.
         Returns: List of IDs (integers) that are relevant and worth deep crawling.
         """
-        # Cache lookup — if same query was analyzed recently, reuse result
+        # Cache lookup — if same query+snippets was analyzed recently, reuse result
         import time as _time
-        cache_key = user_input.strip().lower()
+        cache_key = f"rel:{query.strip().lower()}:{len(snippets)}"
         now = _time.time()
         if cache_key in _ANALYSIS_CACHE:
             cached_result, cached_time = _ANALYSIS_CACHE[cache_key]
             if now - cached_time < _ANALYSIS_CACHE_TTL:
-                logger.info("[Task Analysis] 缓存命中: %s", user_input[:50])
+                logger.info("[Relevance] 缓存命中: %s", query[:50])
                 return cached_result
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -278,6 +278,7 @@ class LLMClient:
             if data:
                 ids = data.get("relevant_ids", [])
                 logger.info("[Relevance Assessment] 选定 ID: %s", ids)
+                _cache_analysis_result(cache_key, ids)
                 return ids
 
             logger.warning("[Relevance Assessment] JSON 解析失败，返回前 3 个")
@@ -333,15 +334,9 @@ class LLMClient:
         Input: Query and full content of selected sources.
         Returns: {"status": "sufficient"|"insufficient", "answer": "..."}
         """
-        # Cache lookup — if same query was analyzed recently, reuse result
-        import time as _time
-        cache_key = user_input.strip().lower()
-        now = _time.time()
-        if cache_key in _ANALYSIS_CACHE:
-            cached_result, cached_time = _ANALYSIS_CACHE[cache_key]
-            if now - cached_time < _ANALYSIS_CACHE_TTL:
-                logger.info("[Task Analysis] 缓存命中: %s", user_input[:50])
-                return cached_result
+        # NOTE: generate_answer does NOT use cache — the same query with different sources
+        # should produce different results. Caching by query alone caused a collision bug
+        # where analyze_task's cached result was returned instead.
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 

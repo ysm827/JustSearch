@@ -145,8 +145,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const exportAllBtn = document.getElementById('export-all-btn');
         if (exportAllBtn) {
             exportAllBtn.addEventListener('click', async () => {
-                const format = await showConfirm('选择导出格式？', '导出全部对话');
-                // Default to markdown
                 window.open('/api/history/export/all?format=markdown', '_blank');
             });
         }
@@ -255,7 +253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const clearHistoryBtn = document.getElementById('clear-history-btn');
 
         settingsBtn.addEventListener('click', async () => {
-            elements.settingsModal.style.display = 'block';
+            elements.settingsModal.classList.add('active');
             
             // Load and display version + memory info
             const versionEl = document.getElementById('version-display');
@@ -295,12 +293,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         closeBtn.addEventListener('click', () => {
-            elements.settingsModal.style.display = 'none';
+            elements.settingsModal.classList.remove('active');
         });
 
         window.onclick = (event) => {
             if (event.target === elements.settingsModal) {
-                elements.settingsModal.style.display = 'none';
+                elements.settingsModal.classList.remove('active');
             }
         };
 
@@ -327,7 +325,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (await API.saveSettingsAPI(newSettings)) {
                 updateModelSelector(newSettings.model_id);
-                elements.settingsModal.style.display = 'none';
+                elements.settingsModal.classList.remove('active');
                 showToast('设置已保存', 'success');
             } else {
                 showToast('保存设置失败', 'error');
@@ -363,7 +361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                  elements.heroSection.style.display = 'block';
                  elements.chatContainer.appendChild(elements.heroSection);
                  updateActiveHistoryItem(null);
-                 elements.settingsModal.style.display = 'none';
+                 elements.settingsModal.classList.remove('active');
                  showToast('历史记录已清除', 'success');
             } else {
                 showToast('清除历史记录失败', 'error');
@@ -381,7 +379,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     elements.heroSection.style.display = 'block';
                     elements.chatContainer.appendChild(elements.heroSection);
                     updateActiveHistoryItem(null);
-                    elements.settingsModal.style.display = 'none';
+                    elements.settingsModal.classList.remove('active');
                     showToast('全部缓存已清除，页面即将刷新', 'success');
                     setTimeout(() => window.location.reload(), 1500);
                 } else {
@@ -403,7 +401,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         let ws = null;
 
         closeBtn.addEventListener('click', () => {
-            modal.style.display = 'none';
+            modal.classList.remove('active');
             if (ws) {
                 ws.close();
                 ws = null;
@@ -439,7 +437,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         img.tabIndex = 0;
 
         state.openBrowserModal = (sessionId) => {
-            modal.style.display = 'block';
+            modal.classList.add('active');
             status.style.display = 'block';
             status.textContent = '正在连接浏览器...';
             img.style.display = 'none';
@@ -465,7 +463,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     img.src = `data:image/jpeg;base64,${data.image}`;
                 } else if (data.type === 'status') {
                      if (data.msg === 'Completed') {
-                         modal.style.display = 'none';
+                         modal.classList.remove('active');
                          if (ws) {
                              ws.close();
                              ws = null;
@@ -475,7 +473,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             };
 
             ws.onclose = () => {
-                if (modal.style.display !== 'none') {
+                if (modal.classList.contains('active')) {
                     if (completeBtn.textContent !== '正在提交...') {
                         status.style.display = 'block';
                         status.textContent = '连接已断开 (会话可能已结束)';
@@ -521,9 +519,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- Keyboard Shortcuts ---
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            const activeModal = document.querySelector('.modal[style*="flex"]');
+            const activeModal = document.querySelector('.modal.active');
             if (activeModal) {
-                activeModal.style.display = 'none';
+                activeModal.classList.remove('active');
             }
         }
         if ((e.ctrlKey || e.metaKey) && e.key === 'n') {

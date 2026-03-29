@@ -11,6 +11,13 @@ export function setupChatHandler(elements, renderHistory) {
     // 记录最后一条用户消息，用于重新生成
     let lastUserMessage = '';
 
+    // 全局滚动状态跟踪（只注册一次，避免内存泄漏）
+    let userScrolled = false;
+    elements.chatContainer.addEventListener('scroll', () => {
+        const { scrollTop, scrollHeight, clientHeight } = elements.chatContainer;
+        userScrolled = (scrollHeight - scrollTop - clientHeight) > 100;
+    });
+
     async function loadChat(sessionId) {
         setCurrentSessionId(sessionId);
         updateActiveHistoryItem(sessionId);
@@ -117,8 +124,10 @@ export function setupChatHandler(elements, renderHistory) {
         let hasReceivedChunk = false;
         let logCount = 0;
         let searchStats = null;
-        let userScrolled = false;
         let searchStartTime = Date.now();
+
+        // 重置滚动跟踪（新一轮对话）
+        userScrolled = false;
 
         // 实时耗时更新器
         const elapsedTimer = setInterval(() => {
@@ -127,12 +136,6 @@ export function setupChatHandler(elements, renderHistory) {
                 statusText.textContent = statusText.textContent.replace(/ \([\d.]+s\)$/, '') + ` (${elapsed}s)`;
             }
         }, 500);
-
-        // 检测用户主动上滚 — 搜索过程中不强制拉回底部
-        elements.chatContainer.addEventListener('scroll', () => {
-            const { scrollTop, scrollHeight, clientHeight } = elements.chatContainer;
-            userScrolled = (scrollHeight - scrollTop - clientHeight) > 100;
-        });
 
         // Progress tracker
         function updateProgress() {
