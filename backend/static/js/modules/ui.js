@@ -2,6 +2,7 @@ import { md, createCopyButton } from './utils.js';
 import { renameChatAPI } from './api.js';
 import { showToast } from './toast.js';
 import { state } from './state.js';
+import { showToast } from './toast.js';
 
 /**
  * 自定义确认弹窗（替代浏览器原生 confirm）。
@@ -248,6 +249,22 @@ export function renderHistory(history, currentSessionId, callbacks) {
                 window.open(`/api/history/${chat.id}/export`, '_blank');
             };
             item.appendChild(exportBtn);
+
+            const shareBtn = document.createElement('button');
+            shareBtn.className = 'delete-history-btn';
+            shareBtn.title = '复制对话链接';
+            shareBtn.setAttribute('aria-label', '复制对话链接');
+            shareBtn.innerHTML = '<span class="material-symbols-rounded">link</span>';
+            shareBtn.onclick = (e) => {
+                e.stopPropagation();
+                const url = `${window.location.origin}/c/${chat.id}`;
+                navigator.clipboard.writeText(url).then(() => {
+                    showToast('对话链接已复制', 'success');
+                }).catch(() => {
+                    showToast('复制失败', 'error');
+                });
+            };
+            item.appendChild(shareBtn);
 
             item.dataset.id = chat.id;
             item.onclick = () => onSelect(chat.id);
