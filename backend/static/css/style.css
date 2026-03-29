@@ -121,8 +121,8 @@ button:focus-visible {
     --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
 
     /* Code */
-    --code-bg: #1e1e22;
-    --code-text: #fb7185;
+    --code-bg: #1a1a2e;
+    --code-text: #f472b6;
 
     /* Scrollbar */
     --scrollbar-thumb: #3f3f46;
@@ -1777,10 +1777,16 @@ textarea:focus-visible {
 
     #sidebar.mobile-open {
         transform: translateX(0);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
     }
 
     #sidebar.collapsed {
         margin-left: 0;
+        transform: translateX(-100%);
+    }
+
+    [data-theme="dark"] #sidebar.mobile-open {
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
     }
 
     .mobile-only { display: flex !important; }

@@ -342,10 +342,14 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
         deleteMsgBtn.innerHTML = '<span class="material-symbols-rounded">delete</span>';
         deleteMsgBtn.onclick = async (e) => {
             e.stopPropagation();
+            if (!await showConfirm('确定要删除这条消息吗？', '删除消息')) return;
             const { deleteMessageAPI } = await import('./api.js');
             const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
             if (ok) {
                 msgDiv.remove();
+            } else {
+                const { showToast } = await import('./toast.js');
+                showToast('删除失败', 'error');
             }
         };
         contentDiv.appendChild(deleteMsgBtn);

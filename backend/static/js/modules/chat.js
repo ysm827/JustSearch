@@ -1,6 +1,6 @@
 import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './state.js';
 import { createCopyButton } from './utils.js';
-import { createDynamicLogContainer, renderWithCitations, scrollToBottom, appendMessage, updateActiveHistoryItem, renderMessages } from './ui.js';
+import { createDynamicLogContainer, renderWithCitations, scrollToBottom, appendMessage, updateActiveHistoryItem, renderMessages, showConfirm } from './ui.js';
 import { showToast } from './toast.js';
 import * as API from './api.js';
 
@@ -118,6 +118,15 @@ export function setupChatHandler(elements, renderHistory) {
         let logCount = 0;
         let searchStats = null;
         let userScrolled = false;
+        let searchStartTime = Date.now();
+
+        // 实时耗时更新器
+        const elapsedTimer = setInterval(() => {
+            const elapsed = ((Date.now() - searchStartTime) / 1000).toFixed(1);
+            if (statusText.textContent.includes('正在')) {
+                statusText.textContent = statusText.textContent.replace(/ \([\d.]+s\)$/, '') + ` (${elapsed}s)`;
+            }
+        }, 500);
 
         // 检测用户主动上滚 — 搜索过程中不强制拉回底部
         elements.chatContainer.addEventListener('scroll', () => {
@@ -248,6 +257,8 @@ export function setupChatHandler(elements, renderHistory) {
                 contentWrapper.appendChild(errDiv);
             }
         } finally {
+            clearInterval(elapsedTimer);
+            const totalElapsed = ((Date.now() - searchStartTime) / 1000).toFixed(1);
             setIsProcessing(false);
             setAbortController(null);
             sendBtnIcon.textContent = 'send';
@@ -257,7 +268,7 @@ export function setupChatHandler(elements, renderHistory) {
             spinner.textContent = 'check_circle';
             spinner.classList.add('completed');
             if (searchStats && searchStats.sites_searched > 0) {
-                let statsText = `已完成 · 搜索过 ${searchStats.sites_searched} 个网页`;
+                let statsText = `已完成 · 搜索过 ${searchStats.sites_searched} 个网页 · ${totalElapsed}s`;
                 if (searchStats.prompt_tokens || searchStats.completion_tokens) {
                     const totalTokens = (searchStats.prompt_tokens || 0) + (searchStats.completion_tokens || 0);
                     if (totalTokens > 0) {
