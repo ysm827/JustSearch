@@ -500,7 +500,15 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         try:
             if log_func:
                 log_func(f"浏览器: 等待页面内容渲染...")
-            await page.wait_for_load_state("networkidle", timeout=5000)
+            await page.wait_for_load_state("networkidle", timeout=8000)
+            # SPA / documentation sites often need extra rendering time
+            spa_indicators = ['.wiki', '.docs', '/docs/', '/documentation/', 'docusaurus', 'vitepress']
+            is_spa = any(ind in final_url.lower() for ind in spa_indicators)
+            if is_spa:
+                await asyncio.sleep(2.0)  # Extra wait for client-side rendering
+                # Try to scroll to trigger lazy content
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+                await asyncio.sleep(1.0)
             if "github.com" in final_url:
                 if "tab=repositories" in final_url:
                     prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
