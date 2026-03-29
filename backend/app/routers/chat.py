@@ -205,7 +205,7 @@ async def chat_endpoint(request: ChatRequest):
             api_key, base_url, model, search_engine, max_results,
             max_iterations, interactive_search,
             session_id=session_id, max_context_turns=max_context_turns,
-            max_concurrent_pages=settings.get("max_concurrent_pages", 3),
+            max_concurrent_pages=int(settings.get("max_concurrent_pages", 3)),
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
