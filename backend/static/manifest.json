@@ -6,11 +6,14 @@
     "display": "standalone",
     "background_color": "#ffffff",
     "theme_color": "#3b82f6",
+    "orientation": "any",
+    "categories": ["productivity", "utilities"],
     "icons": [
         {
             "src": "/static/favicon.svg",
             "sizes": "any",
-            "type": "image/svg+xml"
+            "type": "image/svg+xml",
+            "purpose": "any"
         }
     ]
 }

@@ -9,7 +9,9 @@ export const md = {
     render: (text) => {
         const rawHtml = mdInstance.render(text);
         const sanitized = window.DOMPurify.sanitize(rawHtml, {
-            ADD_ATTR: ['target']
+            ADD_ATTR: ['target'],
+            FORBID_TAGS: ['style', 'form', 'input'],
+            FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
         });
         // 为所有链接添加 target="_blank"，在新标签页打开
         const withTarget = sanitized.replace(/<a /g, '<a target="_blank" rel="noopener noreferrer" ');

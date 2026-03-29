@@ -122,7 +122,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def cache_control_middleware(request, call_next):
-    """Add cache headers to static assets for better performance."""
+    """Add cache and security headers."""
     response = await call_next(request)
     path = request.url.path
     if path.startswith("/static/"):
@@ -132,6 +132,10 @@ async def cache_control_middleware(request, call_next):
             response.headers["Cache-Control"] = "public, max-age=604800"  # 1 week
         else:
             response.headers["Cache-Control"] = "public, max-age=3600"  # 1 hour
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
 # ---------------------------------------------------------------------------
