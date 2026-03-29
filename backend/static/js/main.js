@@ -206,6 +206,45 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         }
+
+        // Validate API key button
+        const validateBtn = document.getElementById('validate-key-btn');
+        if (validateBtn) {
+            validateBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const apiKey = document.getElementById('api-key-input').value.trim();
+                const baseUrl = document.getElementById('base-url-input').value.trim();
+                const modelId = document.getElementById('model-input').value.trim();
+                if (!apiKey || apiKey.includes('****')) {
+                    showToast('请先输入 API 密钥', 'warning');
+                    return;
+                }
+                validateBtn.disabled = true;
+                validateBtn.querySelector('.material-symbols-rounded').textContent = 'progress_activity';
+                try {
+                    const res = await fetch('/api/settings/validate-key', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            api_key: apiKey,
+                            base_url: baseUrl,
+                            model_id: modelId.split(',')[0].trim(),
+                        }),
+                    });
+                    const data = await res.json();
+                    if (data.valid) {
+                        showToast('API 密钥验证通过', 'success');
+                    } else {
+                        showToast(data.error || '验证失败', 'error');
+                    }
+                } catch (err) {
+                    showToast('验证请求失败', 'error');
+                } finally {
+                    validateBtn.disabled = false;
+                    validateBtn.querySelector('.material-symbols-rounded').textContent = 'verified';
+                }
+            });
+        }
     }
 
     function setupSettingsModal() {
@@ -455,6 +494,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if ((state.settings.theme || 'light') === 'auto') {
             import('./modules/utils.js').then(m => m.applyTheme('auto'));
         }
+    });
+
+    // --- PWA Install Prompt ---
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        // Could show an install button here
     });
 
     // --- Suggestion Chips ---

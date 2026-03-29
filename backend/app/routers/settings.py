@@ -2,11 +2,12 @@
 Settings router – /api/settings endpoints and /api/clear-cache
 """
 
+import asyncio
 import logging
 import os
 import shutil
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel
 from typing import Optional
 
@@ -91,6 +92,46 @@ async def update_settings_endpoint(settings: SettingsModel):
                 current[field] = mask_api_key(current[field])
         return {"status": "ok", "settings": current}
     raise HTTPException(status_code=500, detail="Failed to save settings")
+
+
+@router.post("/api/settings/validate-key")
+async def validate_api_key_endpoint(body: dict = Body(...)):
+    """Validate an API key by making a test request to the model endpoint."""
+    api_key = body.get("api_key", "").strip()
+    base_url = body.get("base_url", "").strip() or "https://api.openai.com/v1"
+    model_id = body.get("model_id", "").strip()
+
+    if not api_key:
+        return {"valid": False, "error": "API key is empty"}
+
+    if not model_id:
+        return {"valid": False, "error": "Model ID is empty"}
+
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        # Make a minimal request to validate
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model_id,
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=5,
+            ),
+            timeout=15.0,
+        )
+        return {"valid": True, "model": model_id}
+    except asyncio.TimeoutError:
+        return {"valid": False, "error": "请求超时 (15秒)"}
+    except Exception as e:
+        error_msg = str(e)
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            return {"valid": False, "error": "API 密钥无效或已过期"}
+        elif "404" in error_msg or "model" in error_msg.lower():
+            return {"valid": False, "error": f"模型不存在: {model_id}"}
+        elif "429" in error_msg:
+            return {"valid": True, "error": "密钥有效但触发限流"}  # Key works, just rate limited
+        else:
+            return {"valid": False, "error": error_msg[:200]}
 
 
 @router.post("/api/clear-cache")
