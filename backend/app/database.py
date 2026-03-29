@@ -531,14 +531,11 @@ async def save_settings(settings: dict) -> bool:
                 else:
                     str_value = str(value) if value is not None else ""
 
-                existing = (await session.execute(
-                    select(Settings).where(Settings.key == key)
-                )).scalar_one_or_none()
-
-                if existing:
-                    existing.value = str_value
-                else:
-                    session.add(Settings(key=key, value=str_value))
+                # Use SQLite INSERT OR REPLACE for efficient upsert
+                await session.execute(
+                    text("INSERT OR REPLACE INTO settings (key, value) VALUES (:k, :v)"),
+                    {"k": key, "v": str_value},
+                )
             await session.commit()
         return True
     except Exception as e:

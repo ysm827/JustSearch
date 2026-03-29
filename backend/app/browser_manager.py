@@ -16,18 +16,16 @@ from .browser_context import (
 )
 from .search_engine import load_selectors
 from .engine_health import engine_health
-
-import time
-
-# Simple search result cache: query -> (results, timestamp)
-_search_cache: dict = {}
-_SEARCH_CACHE_TTL = 300  # 5 minutes
 from .interaction import (
     _INTERACTION_SESSIONS, get_interaction_session,
     mark_interaction_completed, register_interaction_session, remove_interaction_session
 )
 from .llm_client import _truncate_for_log
 from .page_crawler import crawl_page
+
+# Simple search result cache: query -> (results, timestamp)
+_search_cache: dict = {}
+_SEARCH_CACHE_TTL = 300  # 5 minutes
 
 logger = logging.getLogger(__name__)
 
