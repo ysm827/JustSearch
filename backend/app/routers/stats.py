@@ -68,6 +68,13 @@ async def get_github_stats():
         return {"stars": github_stats_cache["stars"], "error": str(e)}
 
 
+@router.get("/api/engines")
+async def get_engines():
+    """Return list of available search engines."""
+    from ..search_engine import load_selectors, _config_cache
+    return {"engines": list(_config_cache.keys()) if _config_cache else ["duckduckgo"]}
+
+
 @router.get("/api/health")
 async def health_check():
     pool_status = get_context_pool_status()
