@@ -370,10 +370,10 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
                     continue
                 x, y = pos_map[cid]
                 clicked = False
-                # Retry up to 3 times with increasing timeout
+                # Retry up to 3 times
                 for attempt in range(3):
                     try:
-                        await page.mouse.click(x, y, timeout=5000)
+                        await page.mouse.click(x, y)
                         if log_func:
                             log_func(f"浏览器: 已点击元素 {cid}")
                         clicked = True

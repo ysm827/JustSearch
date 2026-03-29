@@ -42,11 +42,19 @@ class SearchWorkflow:
             if parsed.query:
                 params = parse_qs(parsed.query, keep_blank_values=True)
                 # Remove known tracking params
+                # Remove known tracking params + normalize mobile URLs
                 tracking_keys = {'utm_source', 'utm_medium', 'utm_campaign', 'utm_term',
-                                 'utm_content', 'fbclid', 'gclid', 'msclkid', 'ref', 'source'}
+                                 'utm_content', 'fbclid', 'gclid', 'msclkid', 'ref', 'source',
+                                 'share_token', 'is_shared', 's_bm', 'spm', 'from', 'bd_vid',
+                                 'wvr', 'mod', 'lang', 'sudaref', 'isa', '_ent', 'vtype',
+                                 'is_from_webapp', 'timestamp', 'share_wrap'}
                 cleaned = {k: v for k, v in params.items() if k.lower() not in tracking_keys}
                 new_query = urlencode(cleaned, doseq=True)
-                url = urlunparse(parsed._replace(query=new_query))
+                # Normalize mobile URLs (m.example.com -> example.com for dedup)
+                hostname = parsed.hostname or ''
+                if hostname.startswith('m.'):
+                    hostname = hostname[2:]
+                url = urlunparse(parsed._replace(query=new_query, netloc=hostname if hostname != parsed.hostname else parsed.netloc))
         except Exception:
             pass
         # 通用规范化：去尾斜杠、小写
