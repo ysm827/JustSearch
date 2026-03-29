@@ -701,6 +701,35 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             except Exception:
                 pass
 
+        # Special handling for Baidu Baike — extract article content only
+        if "baike.baidu.com" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const summary = document.querySelector('.lemma-summary, .lemma-desc');
+                    const mainContent = document.querySelector('.main-content, .lemma-main-content, #J-lemma-content');
+                    const parts = [];
+                    if (summary) parts.push(summary.innerText);
+                    if (mainContent) parts.push(mainContent.innerText);
+                    return parts.length > 0 ? parts.join('\n\n') : null;
+                }""")
+                if content and len(content) > 200:
+                    if log_func:
+                        log_func(f"浏览器: 百度百科内容提取成功 ({len(content)} 字符)")
+                    return content
+            except Exception:
+                pass
+
+        # Special handling for Zhihu Zhuanlan — expand full article
+        if "zhuanlan.zhihu.com" in final_url:
+            try:
+                await page.evaluate(r"""() => {
+                    const btn = document.querySelector('.ContentItem-expandButton');
+                    if (btn) btn.click();
+                }""")
+                await asyncio.sleep(1.0)
+            except Exception:
+                pass
+
         # Special handling for Wikipedia — extract main article content only
         if "wikipedia.org/wiki/" in final_url:
             try:
