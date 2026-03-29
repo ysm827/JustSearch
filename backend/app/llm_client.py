@@ -311,11 +311,24 @@ class LLMClient:
 
         try:
             logger.info("[Generate Answer] 使用 %d 个来源生成答案 (stream=%s)", len(sources), "yes" if stream_callback else "no")
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                stream=True
-            )
+            
+            # Use retry wrapper for API call — handle 429 rate limits
+            max_retries = 3
+            for retry in range(max_retries):
+                try:
+                    response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        stream=True
+                    )
+                    break
+                except Exception as e:
+                    if "429" in str(e) and retry < max_retries - 1:
+                        wait_time = 2.0 * (retry + 1)
+                        logger.warning("[Generate Answer] 429 错误, %.1f 秒后重试 (%d/%d)...", wait_time, retry + 1, max_retries)
+                        await asyncio.sleep(wait_time)
+                    else:
+                        raise
 
             full_content = ""
             status = "sufficient"
