@@ -141,6 +141,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
+        // Export all chats button
+        const exportAllBtn = document.getElementById('export-all-btn');
+        if (exportAllBtn) {
+            exportAllBtn.addEventListener('click', async () => {
+                const format = await showConfirm('选择导出格式？', '导出全部对话');
+                // Default to markdown
+                window.open('/api/history/export/all?format=markdown', '_blank');
+            });
+        }
+
         elements.newChatBtn.addEventListener('click', () => {
             setCurrentSessionId(null);
             elements.chatContainer.innerHTML = '';
