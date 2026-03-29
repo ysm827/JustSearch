@@ -285,6 +285,18 @@ async def chat_endpoint(request: ChatRequest):
 
                 full_messages = existing_messages + new_messages
                 title = existing_data.get("title") if existing_data else None
+                
+                # Auto-generate title from first user message if not set
+                if not title and not existing_messages:
+                    title = request.query[:50]
+                    if len(request.query) > 50:
+                        # Try to break at a sentence boundary
+                        last_punct = max(title.rfind('。'), title.rfind('.'), title.rfind('？'), title.rfind('?'), title.rfind('！'), title.rfind('!'))
+                        if last_punct > 10:
+                            title = title[:last_punct]
+                        else:
+                            title = title + "..."
+                
                 await save_chat_history(session_id, full_messages, title)
 
                 yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id})}\n\n"

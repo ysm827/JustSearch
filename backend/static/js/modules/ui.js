@@ -531,6 +531,24 @@ export function createDynamicLogContainer() {
     return { logContainer, logDetails, spinner, statusText, expandIcon };
 }
 
+/**
+ * Copy entire conversation to clipboard as plain text
+ */
+export function copyConversation(messages) {
+    if (!messages || messages.length === 0) return;
+    const text = messages.map(msg => {
+        const role = msg.role === 'user' ? '👤 You' : '🤖 JustSearch';
+        const content = msg.content || '';
+        return `${role}:
+${content}`;
+    }).join('
+
+---
+
+');
+    navigator.clipboard.writeText(text).catch(err => console.error('Copy failed:', err));
+}
+
 export function extractSources(text) {
     const sources = [];
     const regex = /\[(\d+)\] \[([^\]]*)\]\(([^)]+)\)/g;

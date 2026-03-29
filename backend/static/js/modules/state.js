@@ -3,7 +3,9 @@ export const state = {
     settings: {},
     isProcessing: false,
     abortController: null,
-    openBrowserModal: null
+    openBrowserModal: null,
+    connectionStatus: 'connected', // connected | disconnected | reconnecting
+    lastActivityTime: Date.now(),
 };
 
 export function setCurrentSessionId(id) {
