@@ -632,7 +632,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             except Exception:
                 pass
 
-        # Special handling for Arxiv papers
+        # Special handling for Arxiv papers (abstract page only; HTML version uses default extraction)
         if "arxiv.org/abs/" in final_url:
             try:
                 content = await page.evaluate(r"""() => {

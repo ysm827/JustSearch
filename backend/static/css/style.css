@@ -150,6 +150,7 @@ body {
     transition: background-color var(--transition-smooth), color var(--transition-smooth);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    touch-action: manipulation;  /* Eliminate 300ms tap delay on mobile */
 }
 
 /* --- Custom Scrollbar --- */
