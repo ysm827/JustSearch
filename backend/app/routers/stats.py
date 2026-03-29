@@ -69,6 +69,20 @@ async def health_check():
     pool_status = get_context_pool_status()
     from ..engine_health import engine_health
     from ..database import _engine
+    
+    # Memory usage info
+    mem_mb = 0
+    try:
+        import psutil
+        import os
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        mem_mb = round(mem_info.rss / 1024 / 1024, 1)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    
     return {
         "status": "ok",
         "version": __version__,
@@ -77,5 +91,6 @@ async def health_check():
         "engines": engine_health.get_stats(),
         "db_pool_size": _engine.pool.size() if _engine and hasattr(_engine, 'pool') else 0,
         "db_pool_checked_out": _engine.pool.checkedout() if _engine and hasattr(_engine, 'pool') else 0,
+        "memory_mb": mem_mb,
         "timestamp": datetime.now().isoformat(),
     }

@@ -321,13 +321,13 @@ export function renderMessages(messages) {
     elements.heroSection.style.display = 'none';
     
     messages.forEach((msg, idx) => {
-        appendMessage(msg.role, msg.content, msg.logs, msg.sources, msg.stats, idx);
+        appendMessage(msg.role, msg.content, msg.logs, msg.sources, msg.stats, idx, msg.timestamp);
     });
     
     scrollToBottom();
 }
 
-export function appendMessage(role, content, logs = null, sources = null, stats = null, messageIndex = null) {
+export function appendMessage(role, content, logs = null, sources = null, stats = null, messageIndex = null, timestamp = null) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     
@@ -373,13 +373,23 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
     
     msgDiv.appendChild(contentDiv);
 
-    // Add timestamp
+    // Add timestamp — use provided timestamp or current time
     const timeDiv = document.createElement('div');
     timeDiv.className = 'message-time';
-    const now = new Date();
-    const hours = now.getHours().toString().padStart(2, '0');
-    const minutes = now.getMinutes().toString().padStart(2, '0');
-    timeDiv.textContent = `${hours}:${minutes}`;
+    if (timestamp) {
+        // Try to parse ISO timestamp or date string
+        try {
+            const d = new Date(timestamp);
+            timeDiv.textContent = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        } catch {
+            timeDiv.textContent = timestamp;
+        }
+    } else {
+        const now = new Date();
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        timeDiv.textContent = `${hours}:${minutes}`;
+    }
     msgDiv.appendChild(timeDiv);
 
     elements.chatContainer.appendChild(msgDiv);

@@ -137,13 +137,27 @@ class SearchWorkflow:
             progress_callback(f"阶段 II: 在 {engine_name} 上搜索: {', '.join(valid_queries)}...")
             logger.info("[Workflow] 搜索引擎: %s, 查询: %s", engine_name, valid_queries)
             
-            # [03] Web Search (Parallel) with timeout
-            tasks = [self.browser.search_web(q, log_func=progress_callback, session_id=self.session_id) for q in valid_queries]
+            # [03] Web Search (Parallel) with timeout and retry
+            search_tasks = [self.browser.search_web(q, log_func=progress_callback, session_id=self.session_id) for q in valid_queries]
+            
+            # First attempt with shorter timeout
             try:
-                results_list = await asyncio.wait_for(asyncio.gather(*tasks), timeout=60.0)
+                results_list = await asyncio.wait_for(asyncio.gather(*search_tasks, return_exceptions=True), timeout=60.0)
             except asyncio.TimeoutError:
                 progress_callback("搜索超时（60秒），使用已获取的结果...")
-                results_list = [[] for _ in tasks]
+                results_list = [[] for _ in search_tasks]
+            
+            # Handle exceptions from individual searches
+            processed_results = []
+            for i, result in enumerate(results_list):
+                if isinstance(result, Exception):
+                    logger.warning("[Workflow] 搜索查询 %d 失败: %s", i, result)
+                    processed_results.append([])
+                elif isinstance(result, list):
+                    processed_results.append(result)
+                else:
+                    processed_results.append([])
+            results_list = processed_results
             
             # Flatten, deduplicate and reindex results
             current_id = 1

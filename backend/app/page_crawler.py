@@ -479,23 +479,6 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             if result is not None:
                 return result
 
-        # Special handling for Wikipedia — extract main article content only
-        if "wikipedia.org/wiki/" in final_url:
-            try:
-                content = await page.evaluate(r"""() => {
-                    const article = document.querySelector('#mw-content-text .mw-parser-output');
-                    if (!article) return null;
-                    const clone = article.cloneNode(true);
-                    clone.querySelectorAll('.reference, .noprint, .mw-editsection, .sidebar, .navbox, .infobox, table, .toc').forEach(el => el.remove());
-                    return clone.innerText;
-                }""")
-                if content:
-                    if log_func:
-                        log_func(f"浏览器: Wikipedia 内容提取成功")
-                    return content
-            except Exception:
-                pass  # Fall through to default extraction
-
         try:
             if log_func:
                 log_func(f"浏览器: 正在加载页面...")
@@ -526,6 +509,116 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                     prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
         except Exception:
             pass
+
+        # Special handling for YouTube — extract video metadata and transcript
+        if "youtube.com/watch" in final_url or "youtu.be/" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const parts = [];
+                    const title = document.querySelector('h1 yt-formatted-string, h1');
+                    if (title) parts.push('标题: ' + title.innerText);
+                    const channel = document.querySelector('#channel-name a, ytd-channel-name a');
+                    if (channel) parts.push('频道: ' + channel.innerText);
+                    const views = document.querySelector('#info-container #count, .view-count');
+                    if (views) parts.push(views.innerText);
+                    const date = document.querySelector('#info-container #info-strings yt-formatted-string, #date');
+                    if (date) parts.push('日期: ' + date.innerText);
+                    const desc = document.querySelector('#description-inner, #attributed-snippet-text');
+                    if (desc) parts.push('\n描述:\n' + desc.innerText.substring(0, 3000));
+                    // Try to get transcript if expandable
+                    const transcriptBtn = document.querySelector('[target-id="transcript"]');
+                    if (transcriptBtn) parts.push('\n[有字幕/文字版可用]');
+                    return parts.length > 0 ? parts.join('\n') : null;
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: YouTube 视频信息提取成功")
+                    return content
+            except Exception:
+                pass
+
+        # Special handling for Bilibili — extract video metadata
+        if "bilibili.com/video/" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const parts = [];
+                    const title = document.querySelector('h1.video-info-title, h1');
+                    if (title) parts.push('标题: ' + title.innerText);
+                    const author = document.querySelector('.up-info__detail a.username, .up-name');
+                    if (author) parts.push('UP主: ' + author.innerText);
+                    const views = document.querySelector('.view-text, .video-data-list .view');
+                    if (views) parts.push('播放: ' + views.innerText);
+                    const desc = document.querySelector('.desc-info-text, .basic-desc-info');
+                    if (desc) parts.push('\n简介:\n' + desc.innerText.substring(0, 3000));
+                    return parts.length > 0 ? parts.join('\n') : null;
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: Bilibili 视频信息提取成功")
+                    return content
+            except Exception:
+                pass
+
+        # Special handling for StackOverflow / StackExchange — extract Q&A
+        if "stackoverflow.com" in final_url or "stackexchange.com" in final_url or "serverfault.com" in final_url or "superuser.com" in final_url or "askubuntu.com" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const parts = [];
+                    const question = document.querySelector('.question .s-prose, .question .post-text');
+                    if (question) parts.push('## 问题\n' + question.innerText.substring(0, 4000));
+                    const answers = document.querySelectorAll('.answer .s-prose, .answer .post-text');
+                    let answerText = '';
+                    answers.forEach((a, i) => {
+                        if (i < 3) answerText += '\n### 回答 ' + (i+1) + '\n' + a.innerText.substring(0, 4000) + '\n';
+                    });
+                    if (answerText) parts.push(answerText);
+                    return parts.length > 0 ? parts.join('\n\n') : null;
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: StackExchange 问答提取成功")
+                    return content
+            except Exception:
+                pass
+
+        # Special handling for Arxiv papers
+        if "arxiv.org/abs/" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const parts = [];
+                    const title = document.querySelector('h1.title');
+                    if (title) parts.push('标题: ' + title.innerText.replace('Title:', '').trim());
+                    const authors = document.querySelector('.authors');
+                    if (authors) parts.push('作者: ' + authors.innerText.replace('Authors:', '').trim());
+                    const abstract = document.querySelector('.abstract');
+                    if (abstract) parts.push('\n摘要:\n' + abstract.innerText.replace('Abstract:', '').trim());
+                    const date = document.querySelector('.dateline');
+                    if (date) parts.push('日期: ' + date.innerText.trim());
+                    return parts.length > 0 ? parts.join('\n') : null;
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: Arxiv 论文信息提取成功")
+                    return content
+            except Exception:
+                pass
+
+        # Special handling for Wikipedia — extract main article content only
+        if "wikipedia.org/wiki/" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const article = document.querySelector('#mw-content-text .mw-parser-output');
+                    if (!article) return null;
+                    const clone = article.cloneNode(true);
+                    clone.querySelectorAll('.reference, .noprint, .mw-editsection, .sidebar, .navbox, .infobox, table, .toc').forEach(el => el.remove());
+                    return clone.innerText;
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: Wikipedia 内容提取成功")
+                    return content
+            except Exception:
+                pass  # Fall through to default extraction
 
         # Interactive Mode
         if interactive_mode and query and llm_client:

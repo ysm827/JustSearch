@@ -184,11 +184,26 @@ class LLMClient:
 
             data = self._extract_json(content)
             if data:
-                logger.info("[Task Analysis] 结果: %s", json.dumps(data, ensure_ascii=False)[:200])
-                return data
+                # Validate the structure
+                if data.get("type") == "direct" and data.get("url"):
+                    logger.info("[Task Analysis] 直接 URL: %s", data["url"][:100])
+                    return data
+                elif data.get("type") == "search" and data.get("queries"):
+                    # Ensure queries is a list of strings
+                    queries = [str(q) for q in data["queries"] if q]
+                    if queries:
+                        data["queries"] = queries
+                        logger.info("[Task Analysis] 查询: %s", json.dumps(data, ensure_ascii=False)[:200])
+                        return data
+                # If data has queries but no type, fix it
+                elif data.get("queries"):
+                    data["type"] = "search"
+                    return data
+                elif data.get("query"):
+                    return {"type": "search", "queries": [str(data["query"])]}
 
             # Fallback
-            logger.warning("[Task Analysis] JSON 解析失败，使用 fallback")
+            logger.warning("[Task Analysis] JSON 解析失败或结构无效，使用 fallback")
             return {"type": "search", "queries": [user_input]}
 
         except Exception as e:

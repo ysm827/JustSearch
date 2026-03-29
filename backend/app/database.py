@@ -302,6 +302,8 @@ async def load_chat_history(session_id_or_path: str) -> Optional[Dict[str, Any]]
                 msg_dict["sources"] = m.sources
             if m.stats:
                 msg_dict["stats"] = m.stats
+            if m.created_at:
+                msg_dict["timestamp"] = m.created_at.isoformat() if hasattr(m.created_at, 'isoformat') else str(m.created_at)
             messages.append(msg_dict)
 
         return {
@@ -372,11 +374,14 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
         await session.commit()
 
 
-async def list_chats() -> List[Dict[str, str]]:
-    """Return list of chat summaries (id, title, timestamp), newest first."""
+async def list_chats(limit: int = 100, offset: int = 0) -> List[Dict[str, str]]:
+    """Return list of chat summaries (id, title, timestamp), newest first. Supports pagination."""
     async with await get_session() as session:
         result = await session.execute(
-            select(ChatSession).order_by(ChatSession.updated_at.desc())
+            select(ChatSession)
+            .order_by(ChatSession.updated_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
         sessions = result.scalars().all()
 
