@@ -195,7 +195,10 @@ async def chat_endpoint(request: ChatRequest):
 
     session_id = request.session_id
     if not session_id:
-        session_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        session_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
+
+    logger.info("[Chat] New request: session=%s, query='%s', engine=%s, model=%s",
+                session_id, request.query[:80], search_engine, model)
 
     try:
         workflow = SearchWorkflow(
