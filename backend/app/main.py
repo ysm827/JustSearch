@@ -101,6 +101,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="JustSearch", lifespan=lifespan)
 
 # ---------------------------------------------------------------------------
+# GZip compression
+# ---------------------------------------------------------------------------
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
 _cors_origins_str = os.getenv("CORS_ORIGINS", "*")
@@ -122,8 +128,15 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def cache_control_middleware(request, call_next):
-    """Add cache and security headers."""
+    """Add cache and security headers + request timing."""
+    import time as _time
+    start = _time.monotonic()
     response = await call_next(request)
+    elapsed = _time.monotonic() - start
+    response.headers["X-Response-Time"] = f"{elapsed:.3f}s"
+    # Log slow requests
+    if elapsed > 5.0:
+        logger.warning("Slow request: %s %s (%.2fs)", request.method, request.url.path, elapsed)
     path = request.url.path
     if path.startswith("/static/"):
         if path.endswith((".js", ".css")):
