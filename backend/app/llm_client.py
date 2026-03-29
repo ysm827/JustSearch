@@ -15,7 +15,7 @@ _DEFAULT_CONTEXT_TURNS = 6
 
 # LLM 调用超时
 _LLM_TIMEOUT = 120  # 秒（默认，用于 generate_answer）
-_LLM_SHORT_TIMEOUT = 60  # 秒（用于 analyze_task / assess_relevance 等短操作）
+_LLM_SHORT_TIMEOUT = 30  # 秒（用于 analyze_task / assess_relevance 等短操作）
 
 # 并发 LLM 请求限制
 _LLM_CONCURRENCY = asyncio.Semaphore(5)
