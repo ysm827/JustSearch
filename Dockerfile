@@ -48,4 +48,4 @@ CMD ["python", "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--
 LABEL org.opencontainers.image.title="JustSearch"
 LABEL org.opencontainers.image.description="AI-powered deep search assistant"
 LABEL org.opencontainers.image.source="https://github.com/yeahhe365/JustSearch"
-LABEL org.opencontainers.image.version="2.0.0"
+LABEL org.opencontainers.image.version="2.1.0"
