@@ -307,7 +307,9 @@ class LLMClient:
         user_message = f"Question: {query}\n\nSources:\n"
         for src in sources:
             # 智能段落截取：在段落边界截断，而非硬切
-            content_preview = _smart_truncate(src['content'], max_chars=8000)
+            # Dynamic truncation based on number of sources — more sources = less per source
+            chars_per_source = min(8000, max(3000, 30000 // max(len(sources), 1)))
+            content_preview = _smart_truncate(src['content'], max_chars=chars_per_source)
             date_info = f" (Date: {src.get('date')})" if src.get('date') else ""
             user_message += f"Source [{src['id']}] (Title: {src['title']}{date_info}):\n{content_preview}\n\n"
 
