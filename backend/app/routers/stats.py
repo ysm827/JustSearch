@@ -68,11 +68,14 @@ async def get_github_stats():
 async def health_check():
     pool_status = get_context_pool_status()
     from ..engine_health import engine_health
+    from ..database import _engine
     return {
         "status": "ok",
         "version": __version__,
         "browser": pool_status["active_contexts"] > 0,
         "pool": pool_status,
         "engines": engine_health.get_stats(),
+        "db_pool_size": _engine.pool.size() if _engine and hasattr(_engine, 'pool') else 0,
+        "db_pool_checked_out": _engine.pool.checkedout() if _engine and hasattr(_engine, 'pool') else 0,
         "timestamp": datetime.now().isoformat(),
     }

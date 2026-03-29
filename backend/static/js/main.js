@@ -209,6 +209,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         settingsBtn.addEventListener('click', async () => {
             elements.settingsModal.style.display = 'block';
+            
+            // Load and display version
+            const versionEl = document.getElementById('version-display');
+            if (versionEl) {
+                try {
+                    const healthRes = await fetch('/api/health');
+                    if (healthRes.ok) {
+                        const health = await healthRes.json();
+                        versionEl.textContent = `v${health.version || '?.?.?'}`;
+                    }
+                } catch (e) { /* ignore */ }
+            }
+            
             document.getElementById('theme-select').value = state.settings.theme || 'light';
             document.getElementById('engine-select').value = state.settings.search_engine || 'duckduckgo';
             document.getElementById('max-results-input').value = state.settings.max_results || 8;
