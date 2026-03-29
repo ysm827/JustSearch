@@ -250,9 +250,19 @@ class SearchWorkflow:
                 uncached_items.append(item)
                 uncached_indices.append(i)
 
-        # Crawl only uncached pages
+        # Crawl only uncached pages — limit concurrency to avoid API rate limits
         if uncached_items:
-            tasks = [self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id) for item in uncached_items]
+            # Use semaphore to limit parallel crawls (each crawl may trigger LLM calls)
+            max_concurrent = min(3, len(uncached_items))  # Max 3 concurrent crawls
+            semaphore = asyncio.Semaphore(max_concurrent)
+
+            async def _crawl_with_semaphore(task):
+                async with semaphore:
+                    return await task
+
+            tasks = [_crawl_with_semaphore(
+                self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id)
+            ) for item in uncached_items]
             contents = await asyncio.gather(*tasks)
             # Build URL-to-index map for efficient lookup
             url_to_item = {item['url']: (idx, item) for idx, item in zip(uncached_indices, uncached_items)}
