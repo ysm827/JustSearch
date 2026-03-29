@@ -359,11 +359,10 @@ def get_context_pool_status() -> dict:
 
 def reset_state():
     """Reset all global state (testing only)."""
-    global _GLOBAL_PLAYWRIGHT, _GLOBAL_CONTEXT, _CURRENT_HEADLESS_MODE
+    global _GLOBAL_PLAYWRIGHT, _CURRENT_HEADLESS_MODE
     global _SEARCH_LOCK, _LAST_REQUEST_TIME, _PAGE_SEMAPHORE
     global _context_pool, _rotation_task
     _GLOBAL_PLAYWRIGHT = None
-    _GLOBAL_CONTEXT = None
     _CURRENT_HEADLESS_MODE = True
     _SEARCH_LOCK = asyncio.Lock()
     _LAST_REQUEST_TIME = 0

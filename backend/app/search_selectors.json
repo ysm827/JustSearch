@@ -46,5 +46,29 @@
         },
         "captcha_check": ["用户输入参数有误", "antispider"],
         "wait_selector": "#main, .results"
+    },
+    "brave": {
+        "base_url": "https://search.brave.com/search?q={query}",
+        "selectors": {
+            "result_container": ["div.snippet", "#results .snippet"],
+            "title": "a.result-header, .title",
+            "link": "a.result-header, .title a",
+            "snippet": ".snippet-description, .snippet-content p",
+            "date": ""
+        },
+        "captcha_check": [],
+        "wait_selector": "#results, .snippet"
+    },
+    "searxng": {
+        "base_url": "https://searx.be/search?q={query}&format=html",
+        "selectors": {
+            "result_container": ["article.result", ".result"],
+            "title": "h3 a",
+            "link": "h3 a",
+            "snippet": ".content, p",
+            "date": ""
+        },
+        "captcha_check": [],
+        "wait_selector": "#results, .result"
     }
 }

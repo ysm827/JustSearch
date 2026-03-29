@@ -4,6 +4,7 @@ Stats router – /api/stats/github and /api/health
 
 import logging
 import httpx
+import time
 from datetime import datetime
 
 from fastapi import APIRouter
@@ -12,6 +13,9 @@ from ..browser_context import get_context_pool_status
 from ..version import __version__
 
 logger = logging.getLogger(__name__)
+
+# Process start time for uptime tracking
+_START_TIME = time.monotonic()
 
 router = APIRouter()
 
@@ -83,6 +87,9 @@ async def health_check():
     except Exception:
         pass
     
+    # Uptime calculation
+    uptime_seconds = int(time.monotonic() - _START_TIME) if _START_TIME else 0
+
     return {
         "status": "ok",
         "version": __version__,
@@ -92,5 +99,6 @@ async def health_check():
         "db_pool_size": _engine.pool.size() if _engine and hasattr(_engine, 'pool') else 0,
         "db_pool_checked_out": _engine.pool.checkedout() if _engine and hasattr(_engine, 'pool') else 0,
         "memory_mb": mem_mb,
+        "uptime_seconds": uptime_seconds,
         "timestamp": datetime.now().isoformat(),
     }

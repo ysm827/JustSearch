@@ -796,6 +796,31 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             except Exception:
                 pass  # Fall through to default extraction
 
+        # Special handling for Xiaohongshu (小红书) — extract note content
+        if "xiaohongshu.com/explore/" in final_url or "xiaohongshu.com/discovery/item/" in final_url or "xhslink.com" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const parts = [];
+                    const title = document.querySelector('#detail-title, .note-content .title');
+                    if (title) parts.push('标题: ' + title.innerText.trim());
+                    const author = document.querySelector('.author-wrapper .username, .user-nickname');
+                    if (author) parts.push('作者: ' + author.innerText.trim());
+                    const desc = document.querySelector('#detail-desc, .note-text, .desc');
+                    if (desc) parts.push('\n简介:\n' + desc.innerText.trim().substring(0, 5000));
+                    const tags = document.querySelectorAll('.tag, .hash-tag');
+                    if (tags.length > 0) {
+                        const tagText = Array.from(tags).map(t => t.innerText.trim()).join(', ');
+                        if (tagText) parts.push('\n标签: ' + tagText);
+                    }
+                    return parts.length > 0 ? parts.join('\n') : null;
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: 小红书笔记内容提取成功")
+                    return content
+            except Exception:
+                pass
+
         # Interactive Mode
         if interactive_mode and query and llm_client:
             try:

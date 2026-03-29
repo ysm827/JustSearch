@@ -75,7 +75,7 @@ async def update_settings_endpoint(settings: SettingsModel):
         update["max_context_turns"] = max(1, min(20, int(update["max_context_turns"])))
 
     # Validate search engine
-    valid_engines = {"duckduckgo", "google", "bing", "sogou"}
+    valid_engines = {"duckduckgo", "google", "bing", "sogou", "brave", "searxng"}
     if "search_engine" in update and update["search_engine"] not in valid_engines:
         raise HTTPException(status_code=400, detail=f"不支持的搜索引擎。可选: {', '.join(valid_engines)}")
 

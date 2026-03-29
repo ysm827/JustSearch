@@ -20,6 +20,8 @@ class SearchWorkflow:
         self.max_concurrent_pages = max_concurrent_pages
         # Content cache: url -> content (avoid re-crawling same URL across iterations)
         self._content_cache: Dict[str, str] = {}
+        # Minimum content length to be considered useful (chars)
+        self._min_content_length = 150
 
     def _normalize_url(self, url: str) -> str:
         """规范化 URL 用于去重。处理 Bing redirect URL 等特殊格式。"""
@@ -391,7 +393,7 @@ class SearchWorkflow:
                             "completion_tokens": self.llm.total_completion_tokens,
                             "total_seconds": round(total_elapsed, 1),
                         })
-                    return final_answer
+                    return self._format_references(final_answer, accumulated_sources)
                 else:
                     last_feedback = result.get("answer")
                     if iteration < self.max_iterations:

@@ -171,7 +171,8 @@ async def chat_endpoint(request: ChatRequest):
     if not model:
         default_model = defaults.get("model_id", "")
         if isinstance(default_model, str) and "," in default_model:
-            model = default_model.split(",")[0].strip()
+            models_list = [m.strip() for m in default_model.split(",") if m.strip()]
+            model = models_list[0] if models_list else default_model
         else:
             model = default_model
 
