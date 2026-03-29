@@ -2067,6 +2067,15 @@ textarea:focus-visible {
     background-color: var(--bg);
 }
 
+[data-theme="dark"] .code-block-header {
+    background-color: #0d0d15;
+    border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .code-block-wrapper {
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 .markdown-body pre {
     border: 1px solid var(--border);
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.02);

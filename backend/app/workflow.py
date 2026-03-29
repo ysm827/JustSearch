@@ -349,11 +349,13 @@ class SearchWorkflow:
                     progress_callback("答案状态: 充分")
                     final_answer = result.get("answer")
                     if stats_callback:
+                        total_elapsed = time.monotonic() - start_time
                         stats_callback({
                             "sites_searched": total_search_results,
                             "iterations": iteration,
                             "prompt_tokens": self.llm.total_prompt_tokens,
                             "completion_tokens": self.llm.total_completion_tokens,
+                            "total_seconds": round(total_elapsed, 1),
                         })
                     return final_answer
                 else:
@@ -370,6 +372,7 @@ class SearchWorkflow:
                              stats_callback({
                                  "sites_searched": total_search_results,
                                  "iterations": iteration,
+                                 "total_seconds": round(time.monotonic() - start_time, 1),
                                  "prompt_tokens": self.llm.total_prompt_tokens,
                                  "completion_tokens": self.llm.total_completion_tokens,
                              })

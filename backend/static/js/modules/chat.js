@@ -161,6 +161,11 @@ export function setupChatHandler(elements, renderHistory) {
                         }
                         msg = "需要人工验证。请在弹出的窗口中解决验证码。";
                     }
+                    // Detect engine fallback notification
+                    if (msg.includes('自动切换到')) {
+                        const match = msg.match(/切换到\s*(\S+)/);
+                        if (match) showToast(`搜索引擎已切换到 ${match[1]}`, 'warning');
+                    }
                     statusText.textContent = msg;
                     updateProgress();
 
@@ -277,7 +282,7 @@ export function setupChatHandler(elements, renderHistory) {
                 }
                 statusText.textContent = statsText;
             } else {
-                statusText.textContent = '已完成';
+                statusText.textContent = `已完成 · ${totalElapsed}s`;
             }
             // 搜索完成，自动折叠过程日志
             logDetails.classList.remove('open');

@@ -17,13 +17,20 @@ class RateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._requests: Dict[str, list] = defaultdict(list)
+        self._last_cleanup: float = time.time()
+        self._cleanup_interval: float = 300.0  # Clean stale keys every 5 minutes
 
     def check(self, key: str) -> Tuple[bool, int]:
         """Check if a request is allowed. Returns (allowed, retry_after_seconds)."""
         now = time.time()
         cutoff = now - self.window_seconds
 
-        # Clean old entries
+        # Periodic cleanup of stale keys
+        if now - self._last_cleanup > self._cleanup_interval:
+            self.cleanup()
+            self._last_cleanup = now
+
+        # Clean old entries for this key
         self._requests[key] = [t for t in self._requests[key] if t > cutoff]
 
         if len(self._requests[key]) >= self.max_requests:
@@ -35,13 +42,16 @@ class RateLimiter:
         return True, 0
 
     def cleanup(self):
-        """Remove all expired entries."""
+        """Remove all expired entries across all keys."""
         now = time.time()
         cutoff = now - self.window_seconds
+        stale_keys = []
         for key in list(self._requests.keys()):
             self._requests[key] = [t for t in self._requests[key] if t > cutoff]
             if not self._requests[key]:
-                del self._requests[key]
+                stale_keys.append(key)
+        for key in stale_keys:
+            del self._requests[key]
 
 
 # Global rate limiter instance

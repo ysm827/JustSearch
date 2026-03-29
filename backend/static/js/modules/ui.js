@@ -41,11 +41,20 @@ export function showConfirm(message, title = '确认') {
 
 /**
  * 从 URL 提取 favicon URL（使用 Google favicon 服务）。
+ * 使用内存缓存避免重复请求。
  */
+const _faviconCache = new Map();
+
 function getFaviconUrl(url) {
     try {
         const u = new URL(url);
-        return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=32`;
+        const domain = u.hostname;
+        if (_faviconCache.has(domain)) {
+            return _faviconCache.get(domain);
+        }
+        const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+        _faviconCache.set(domain, faviconUrl);
+        return faviconUrl;
     } catch {
         return null;
     }
