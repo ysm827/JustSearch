@@ -83,6 +83,7 @@ async def health_check():
     
     # Memory usage info
     mem_mb = 0
+    db_size_mb = 0
     try:
         import psutil
         import os
@@ -91,6 +92,15 @@ async def health_check():
         mem_mb = round(mem_info.rss / 1024 / 1024, 1)
     except ImportError:
         pass
+    except Exception:
+        pass
+    
+    # Database file size
+    try:
+        from ..database import _DB_PATH
+        import os as _os
+        if _os.path.exists(_DB_PATH):
+            db_size_mb = round(_os.path.getsize(_DB_PATH) / 1024 / 1024, 2)
     except Exception:
         pass
     
