@@ -469,5 +469,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             e.preventDefault();
             elements.newChatBtn.click();
         }
+        // Ctrl/Cmd+K to focus search input
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            const searchInput = document.getElementById('history-search-input');
+            if (searchInput) {
+                searchInput.focus();
+            }
+        }
     });
 });
