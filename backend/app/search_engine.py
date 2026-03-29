@@ -52,6 +52,14 @@ def load_selectors(engine: str = "duckduckgo") -> dict:
         }
 
     if engine in config:
-        return config
+        return config[engine]
     # Engine not in config — return full config (caller will fallback to duckduckgo)
-    return config
+    return config.get("duckduckgo", {})
+
+
+def get_all_engines() -> list:
+    """Return a list of all available search engine names."""
+    global _config_cache
+    if not _config_cache:
+        load_selectors()  # Force load
+    return list(_config_cache.keys()) if _config_cache else ["duckduckgo"]
