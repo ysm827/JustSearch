@@ -369,6 +369,16 @@ export function setupChatHandler(elements, renderHistory) {
     // 初始化按钮状态
     updateSendButtonState();
 
+    // Ctrl+Shift+R: regenerate last answer
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'R') {
+            e.preventDefault();
+            if (lastUserMessage && !state.isProcessing) {
+                handleSendMessage(lastUserMessage);
+            }
+        }
+    });
+
     // 模型切换提示
     const modelSelect = document.getElementById('model-select');
     if (modelSelect) {
