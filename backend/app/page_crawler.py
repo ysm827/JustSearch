@@ -502,7 +502,9 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                 log_func(f"浏览器: 等待页面内容渲染...")
             await page.wait_for_load_state("networkidle", timeout=8000)
             # SPA / documentation sites often need extra rendering time
-            spa_indicators = ['.wiki', '.docs', '/docs/', '/documentation/', 'docusaurus', 'vitepress']
+            spa_indicators = ['.wiki', '/docs/', '/documentation/', 'docusaurus', 'vitepress',
+                             'notion.site', 'vercel.app', 'netlify.app',
+                             'gitbook.io', 'readme.io', 'mkdocs']
             is_spa = any(ind in final_url.lower() for ind in spa_indicators)
             if is_spa:
                 await asyncio.sleep(2.0)  # Extra wait for client-side rendering
@@ -608,6 +610,53 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                     if log_func:
                         log_func(f"浏览器: Arxiv 论文信息提取成功")
                     return content
+            except Exception:
+                pass
+
+        # Special handling for Zhihu — click "阅读全文" / "展开阅读全文" to expand
+        if "zhihu.com" in final_url:
+            try:
+                expanded = await page.evaluate(r"""() => {
+                    const btns = document.querySelectorAll('button');
+                    for (const btn of btns) {
+                        const text = btn.innerText.trim();
+                        if (text === '阅读全文' || text === '展开阅读全文' || text === '显示全部') {
+                            btn.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }""")
+                if expanded:
+                    await asyncio.sleep(1.5)
+                    if log_func:
+                        log_func(f"浏览器: 知乎全文已展开")
+            except Exception:
+                pass
+
+        # Special handling for Medium — remove paywall overlay
+        if "medium.com" in final_url:
+            try:
+                await page.evaluate(r"""() => {
+                    // Remove paywall overlays
+                    document.querySelectorAll('[aria-label="Member-only story"], .metabar, .js-sticky-footer, .overlay').forEach(el => el.remove());
+                    // Try to expand truncated content
+                    const expandBtn = document.querySelector('button[data-action="expand"]');
+                    if (expandBtn) expandBtn.click();
+                }""")
+            except Exception:
+                pass
+
+        # Special handling for WeChat articles — expand collapsed content
+        if "mp.weixin.qq.com" in final_url:
+            try:
+                await page.evaluate(r"""() => {
+                    const expandBtn = document.querySelector('#js_content_overflow_mask');
+                    if (expandBtn) {
+                        const clickEvent = new Event('click');
+                        expandBtn.dispatchEvent(clickEvent);
+                    }
+                }""")
             except Exception:
                 pass
 
