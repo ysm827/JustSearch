@@ -273,6 +273,10 @@ class LLMClient:
             data = self._extract_json(content)
             if data:
                 clicked = data.get("clicked_ids", [])
+                # Limit to max 3 clicks per page to avoid excessive interaction
+                if len(clicked) > 3:
+                    logger.info("[Click Decision] 截断点击列表: %s → 前 3 个", clicked)
+                    clicked = clicked[:3]
                 logger.info("[Click Decision] 决定点击: %s", clicked)
                 return clicked
             logger.info("[Click Decision] 不点击任何元素")

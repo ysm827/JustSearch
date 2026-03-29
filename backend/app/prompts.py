@@ -51,7 +51,7 @@ Examples of good clicks: "Read more", "Show full answer", "Next page" (if conten
 Examples of bad clicks: "Home", "Sign in", "Share", "Privacy Policy", generic navigation, "登录", "注册", "分享".
 
 Return a JSON object: {{"clicked_ids": [id1, id2]}}
-If no elements are worth clicking, return {{"clicked_ids": []}}.
+Select at most 3 elements. If no elements are worth clicking, return {{"clicked_ids": []}}.
 """
 
 ANSWER_GENERATION_PROMPT = """You are an intelligent assistant.
