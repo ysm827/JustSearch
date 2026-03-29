@@ -526,6 +526,38 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                 elif "/stars" in final_url:
                     # GitHub stars page optimization
                     prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
+                elif "/blob/" not in final_url and "/tree/" not in final_url and "/issues/" not in final_url:
+                    # GitHub repo homepage — try to extract README content specifically
+                    try:
+                        readme = await page.evaluate(r"""() => {
+                            const readme = document.querySelector('[data-target="readme-toc.content"], article.markdown-body, .readme .markdown-body');
+                            if (readme) {
+                                // Remove anchor links from headings
+                                readme.querySelectorAll('a.anchor').forEach(el => el.remove());
+                                return readme.innerText.substring(0, 8000);
+                            }
+                            return null;
+                        }""")
+                        if readme and len(readme) > 200:
+                            if log_func:
+                                log_func(f"浏览器: GitHub README 提取成功 ({len(readme)} 字符)")
+                            # Also get repo metadata
+                            meta = await page.evaluate(r"""() => {
+                                const parts = [];
+                                const desc = document.querySelector('[data-testid="about-description"], .f4.my-3');
+                                if (desc) parts.push('描述: ' + desc.innerText.trim());
+                                const stars = document.querySelector('#repo-stars-counter-star, a[href$="/stargazers"]');
+                                if (stars) parts.push('Stars: ' + stars.innerText.trim());
+                                const forks = document.querySelector('#repo-network-counter, a[href$="/forks"]');
+                                if (forks) parts.push('Forks: ' + forks.innerText.trim());
+                                const lang = document.querySelector('[data-ga-click*="language"], ul.list-style-none li .color-fg-default');
+                                if (lang) parts.push('语言: ' + lang.innerText.trim());
+                                return parts.join('\n');
+                            }""")
+                            prepend_text = (meta + "\n\n--- README ---\n") if meta else "--- README ---\n"
+                            prepend_text += readme + "\n--- END README ---\n\n"
+                    except Exception:
+                        pass
         except Exception:
             pass
 
