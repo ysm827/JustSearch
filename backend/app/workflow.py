@@ -9,7 +9,7 @@ from .browser_manager import BrowserManager
 logger = logging.getLogger(__name__)
 
 class SearchWorkflow:
-    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "duckduckgo", max_results: int = 8, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_context_turns: int = 6):
+    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "duckduckgo", max_results: int = 8, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_context_turns: int = 6, max_concurrent_pages: int = 3):
         self.llm = LLMClient(api_key, base_url, model, max_context_turns=max_context_turns)
         # Pass the search engine preference to the browser manager
         self.browser = BrowserManager(engine=search_engine, max_results=max_results)
@@ -17,6 +17,7 @@ class SearchWorkflow:
         self.history = []
         self.interactive_search = interactive_search
         self.session_id = session_id
+        self.max_concurrent_pages = max_concurrent_pages
         # Content cache: url -> content (avoid re-crawling same URL across iterations)
         self._content_cache: Dict[str, str] = {}
 
@@ -253,7 +254,7 @@ class SearchWorkflow:
         # Crawl only uncached pages — limit concurrency to avoid API rate limits
         if uncached_items:
             # Use semaphore to limit parallel crawls (each crawl may trigger LLM calls)
-            max_concurrent = min(3, len(uncached_items))  # Max 3 concurrent crawls
+            max_concurrent = min(self.max_concurrent_pages, len(uncached_items))
             semaphore = asyncio.Semaphore(max_concurrent)
 
             async def _crawl_with_semaphore(task):
