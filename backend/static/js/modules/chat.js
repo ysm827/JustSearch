@@ -357,6 +357,11 @@ export function setupChatHandler(elements, renderHistory) {
 
     elements.userInput.addEventListener('input', autoResizeInput);
 
+    // 粘贴大段文本时自动展开
+    elements.userInput.addEventListener('paste', () => {
+        setTimeout(autoResizeInput, 0);
+    });
+
     // 初始化按钮状态
     updateSendButtonState();
 

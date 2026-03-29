@@ -80,6 +80,13 @@ export const elements = {
 // 缓存完整历史数据，用于搜索过滤
 let _fullHistory = [];
 
+/**
+ * 获取缓存的历史记录（供搜索过滤使用，避免重复 fetch）
+ */
+export function getCachedHistory() {
+    return _fullHistory;
+}
+
 export function initUI() {
     elements.chatContainer = document.getElementById('chat-container');
     elements.historyList = document.getElementById('history-list');

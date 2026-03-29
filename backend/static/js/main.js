@@ -1,6 +1,6 @@
 import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './modules/state.js';
 import { createCopyButton } from './modules/utils.js';
-import { initUI, elements, renderHistory, renderMessages, appendMessage, scrollToBottom, updateActiveHistoryItem, showConfirm } from './modules/ui.js';
+import { initUI, elements, renderHistory, renderMessages, appendMessage, scrollToBottom, updateActiveHistoryItem, showConfirm, getCachedHistory } from './modules/ui.js';
 import { showToast } from './modules/toast.js';
 import { setupChatHandler } from './modules/chat.js';
 import * as API from './modules/api.js';
@@ -171,12 +171,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         searchInput.addEventListener('input', () => {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => {
-                // 重新获取历史并渲染（renderHistory 内部会读取搜索框值进行过滤）
-                API.fetchHistory().then(history => {
-                    renderHistory(history, state.currentSessionId, {
-                        onSelect: loadChat,
-                        onDelete: deleteChat
-                    });
+                // Use cached history instead of re-fetching from server
+                renderHistory(getCachedHistory(), state.currentSessionId, {
+                    onSelect: loadChat,
+                    onDelete: deleteChat
                 });
             }, 200);
         });
