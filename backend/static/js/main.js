@@ -218,7 +218,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         settingsBtn.addEventListener('click', async () => {
             elements.settingsModal.style.display = 'block';
             
-            // Load and display version
+            // Load and display version + memory info
             const versionEl = document.getElementById('version-display');
             if (versionEl) {
                 try {
@@ -226,6 +226,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (healthRes.ok) {
                         const health = await healthRes.json();
                         versionEl.textContent = `v${health.version || '?.?.?'}`;
+                        // Show memory usage if available
+                        if (health.memory_mb) {
+                            versionEl.title = `Memory: ${health.memory_mb} MB`;
+                        }
                     }
                 } catch (e) { /* ignore */ }
             }

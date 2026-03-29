@@ -366,6 +366,12 @@ class SearchWorkflow:
                 
                 accumulated_sources.extend(new_sources)
                 
+                # Adaptive iteration: if we have very little content, allow one extra iteration
+                total_content_length = sum(len(s.get('content', '')) for s in accumulated_sources)
+                if total_content_length < 500 and self.max_iterations < 6:
+                    self.max_iterations += 1
+                    progress_callback(f"信息量不足 ({total_content_length} 字符)，自动增加一轮搜索...")
+                
                 if not accumulated_sources:
                     progress_callback("目前尚未收集到有效信息，尝试下一次迭代...")
                     last_feedback = "No valid sources found yet."
