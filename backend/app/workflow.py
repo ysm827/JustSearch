@@ -323,9 +323,9 @@ class SearchWorkflow:
                     logger.info("[Workflow] 总搜索超时 (%.1fs), 已完成 %d 次迭代", elapsed, iteration - 1)
                     break
                 if iteration == 1:
-                    progress_callback(f"🔍 第 1 轮搜索开始...")
+                    progress_callback(f"🔍 第 1 轮搜索 — 阶段 I: 分析问题...")
                 else:
-                    progress_callback(f"🔄 第 {iteration}/{self.max_iterations} 轮搜索开始...")
+                    progress_callback(f"🔄 第 {iteration}/{self.max_iterations} 轮补充搜索 — 分析缺失信息...")
                 logger.info("[Workflow] === 迭代 %d/%d 开始 ===", iteration, self.max_iterations)
                 logger.info("[Workflow] 用户输入: %s", user_input[:100])
                 
