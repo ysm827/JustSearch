@@ -35,7 +35,9 @@ class BrowserManager:
         self.stealth = Stealth()
         self.engine = engine
         self.max_results = max_results
-        self.engine_config = load_selectors(engine)
+        # Load full engine config for fallback support, and single-engine config for direct use
+        self.engine_config = load_selectors(None)  # full config dict (all engines)
+        self.current_engine_config = self.engine_config.get(engine, load_selectors(engine))
 
     async def start(self):
         pool = get_context_pool_status()
@@ -69,7 +71,7 @@ class BrowserManager:
             if log_func:
                 log_func(f"浏览器: {self.engine.capitalize()} 不稳定，自动切换到 {actual_engine.capitalize()}")
 
-        config = self.engine_config.get(actual_engine, self.engine_config["duckduckgo"])
+        config = self.engine_config.get(actual_engine, self.current_engine_config)
         engine_name = actual_engine.capitalize()
 
         page = await get_new_page()
