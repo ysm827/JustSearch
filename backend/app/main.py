@@ -130,13 +130,16 @@ app.add_middleware(
 async def cache_control_middleware(request, call_next):
     """Add cache and security headers + request timing."""
     import time as _time
+    import uuid as _uuid
     start = _time.monotonic()
     response = await call_next(request)
     elapsed = _time.monotonic() - start
+    request_id = str(_uuid.uuid4())[:8]
     response.headers["X-Response-Time"] = f"{elapsed:.3f}s"
+    response.headers["X-Request-ID"] = request_id
     # Log slow requests
     if elapsed > 5.0:
-        logger.warning("Slow request: %s %s (%.2fs)", request.method, request.url.path, elapsed)
+        logger.warning("Slow request: %s %s (%.2fs) [%s]", request.method, request.url.path, elapsed, request_id)
     path = request.url.path
     if path.startswith("/static/"):
         if path.endswith((".js", ".css")):
