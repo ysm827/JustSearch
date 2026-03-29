@@ -384,7 +384,10 @@ class SearchWorkflow:
                     last_feedback = result.get("answer")
                     if iteration < self.max_iterations:
                         progress_callback(f"⚠️ 已有信息不足以完整回答，正在进行第 {iteration + 1} 轮深度搜索...")
-                        progress_callback(f"缺失信息: {last_feedback[:100]}")
+                        # Include specific missing info in the feedback
+                        missing = result.get("answer", "")[:200]
+                        if missing:
+                            progress_callback(f"缺失信息: {missing}")
                     else:
                         progress_callback(f"已达到最大迭代次数 ({self.max_iterations})，正在整理现有结果...")
                     
