@@ -821,6 +821,63 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             except Exception:
                 pass
 
+        # Special handling for GitHub — extract README, issues, or PR content
+        if "github.com" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    // README on repo page
+                    const readme = document.querySelector('#readme article, .markdown-body');
+                    if (readme) {
+                        const repoName = document.querySelector('strong a, .js-repo-nav span');
+                        let result = '';
+                        if (repoName) result += 'Repo: ' + repoName.innerText.trim() + '\n\n';
+                        result += readme.innerText.trim();
+                        // Also get star count
+                        const stars = document.querySelector('#repo-stars-counter-star, a[href$="/stargazers"]');
+                        if (stars) result += '\n\nStars: ' + stars.innerText.trim();
+                        return result.substring(0, 10000);
+                    }
+                    // Issue/PR page
+                    const issueBody = document.querySelector('.js-discussion, .comment-body');
+                    if (issueBody) {
+                        const title = document.querySelector('.js-issue-title, .gh-header-title');
+                        let result = '';
+                        if (title) result += 'Title: ' + title.innerText.trim() + '\n\n';
+                        result += issueBody.innerText.trim();
+                        return result.substring(0, 8000);
+                    }
+                    return null;
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: GitHub 页面内容提取成功")
+                    return content
+            except Exception:
+                pass
+
+        # Special handling for WeChat Official Account articles (微信公众号)
+        if "mp.weixin.qq.com" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const title = document.querySelector('#activity-name, .rich_media_title');
+                    const author = document.querySelector('#js_name, .rich_media_meta_nickname a');
+                    const date = document.querySelector('#publish_time, .rich_media_meta_primary_category');
+                    const body = document.querySelector('#js_content, .rich_media_content');
+                    if (!body) return null;
+                    let result = '';
+                    if (title) result += '标题: ' + title.innerText.trim() + '\n';
+                    if (author) result += '公众号: ' + author.innerText.trim() + '\n';
+                    if (date) result += '时间: ' + date.innerText.trim() + '\n';
+                    result += '\n' + body.innerText.trim();
+                    return result.substring(0, 10000);
+                }""")
+                if content:
+                    if log_func:
+                        log_func(f"浏览器: 微信公众号文章提取成功")
+                    return content
+            except Exception:
+                pass
+
         # Interactive Mode
         if interactive_mode and query and llm_client:
             try:

@@ -2,34 +2,55 @@
     "google": {
         "base_url": "https://www.google.com/search?q={query}&num={num}&hl=en",
         "selectors": {
-            "result_container": ["div.g", "#rso > div", "[data-sokoban-container]", "[data-ved]"],
+            "result_container": [
+                "div.g",
+                "#rso > div",
+                "[data-sokoban-container]",
+                "[data-ved]"
+            ],
             "title": "h3, div[role='heading']",
             "link": "a[href]:not([href^=\"#\"]):not([href^=\"/search\"])",
             "snippet": "div[style*='-webkit-line-clamp'], div.IsZvec, .VwiC3b, [data-sncf], .hb8SA",
             "date": ".LEwnzc, span.f, span.dna-a"
         },
-        "captcha_check": ["#captcha-form", "异常流量", "sorry/index", "unusual traffic"],
+        "captcha_check": [
+            "#captcha-form",
+            "异常流量",
+            "sorry/index",
+            "unusual traffic"
+        ],
         "wait_selector": "#rso, [data-ved]"
     },
     "bing": {
         "base_url": "https://www.bing.com/search?q={query}",
         "selectors": {
-            "result_container": ["li.b_algo"],
+            "result_container": [
+                "li.b_algo"
+            ],
             "title": "h2",
             "link": "h2 a",
             "snippet": ".b_caption p, .b_algoSlug, .b_lineclamp2",
             "date": ".news_dt, .b_demoteText"
         },
-        "captcha_check": ["Ref A:"],
+        "captcha_check": [
+            "Ref A:"
+        ],
         "wait_selector": "#b_results"
     },
     "duckduckgo": {
         "base_url": "https://duckduckgo.com/?q={query}",
         "selectors": {
-            "result_container": ["article[data-testid='result']", ".react-results--main li", "[data-result]"],
-            "title": "h2, [data-testid='result-title']",
-            "link": "a[data-testid='result-title-a'], h2 a",
-            "snippet": "[data-testid='result-snippet']",
+            "result_container": [
+                "article[data-testid='result']",
+                ".react-results--main li",
+                "[data-result]",
+                ".result",
+                ".web-result",
+                "li[data-layout='organic']"
+            ],
+            "title": "h2, [data-testid='result-title'], .result__title a, .result__a",
+            "link": "a[data-testid='result-title-a'], h2 a, .result__a, .result__title a",
+            "snippet": "[data-testid='result-snippet'], .result__snippet, .result_snippet",
             "date": ".result__timestamp"
         },
         "captcha_check": [],
@@ -38,19 +59,28 @@
     "sogou": {
         "base_url": "https://www.sogou.com/web?query={query}",
         "selectors": {
-            "result_container": ["div.vrwrap", "div.rb"],
+            "result_container": [
+                "div.vrwrap",
+                "div.rb"
+            ],
             "title": "h3 a",
             "link": "h3 a",
             "snippet": ".str-text-info, .str_info",
             "date": ".fb"
         },
-        "captcha_check": ["用户输入参数有误", "antispider"],
+        "captcha_check": [
+            "用户输入参数有误",
+            "antispider"
+        ],
         "wait_selector": "#main, .results"
     },
     "brave": {
         "base_url": "https://search.brave.com/search?q={query}",
         "selectors": {
-            "result_container": ["div.snippet", "#results .snippet"],
+            "result_container": [
+                "div.snippet",
+                "#results .snippet"
+            ],
             "title": "a.result-header, .title",
             "link": "a.result-header, .title a",
             "snippet": ".snippet-description, .snippet-content p",
@@ -62,7 +92,10 @@
     "searxng": {
         "base_url": "https://searx.be/search?q={query}&format=html",
         "selectors": {
-            "result_container": ["article.result", ".result"],
+            "result_container": [
+                "article.result",
+                ".result"
+            ],
             "title": "h3 a",
             "link": "h3 a",
             "snippet": ".content, p",
