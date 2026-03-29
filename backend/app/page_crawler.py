@@ -730,6 +730,55 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             except Exception:
                 pass
 
+        # Special handling for Toutiao articles — extract article body
+        if "toutiao.com/article/" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const article = document.querySelector('.article-content, .syl-article-base, #article-root');
+                    if (article) return article.innerText;
+                    return null;
+                }""")
+                if content and len(content) > 200:
+                    if log_func:
+                        log_func(f"浏览器: 头条文章内容提取成功 ({len(content)} 字符)")
+                    return content
+            except Exception:
+                pass
+
+        # Special handling for CSDN — remove ads and recommendations
+        if "csdn.net" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const article = document.querySelector('#article_content, #content_views');
+                    if (article) {
+                        const clone = article.cloneNode(true);
+                        clone.querySelectorAll('.hide-article-box, .more-toolbox, .recommend-box, .person-messagebox, script, style').forEach(el => el.remove());
+                        return clone.innerText;
+                    }
+                    return null;
+                }""")
+                if content and len(content) > 200:
+                    if log_func:
+                        log_func(f"浏览器: CSDN 文章内容提取成功 ({len(content)} 字符)")
+                    return content
+            except Exception:
+                pass
+
+        # Special handling for Juejin (掘金) — extract article body
+        if "juejin.cn" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const article = document.querySelector('.article-content, .markdown-body');
+                    if (article) return article.innerText;
+                    return null;
+                }""")
+                if content and len(content) > 200:
+                    if log_func:
+                        log_func(f"浏览器: 掘金文章内容提取成功 ({len(content)} 字符)")
+                    return content
+            except Exception:
+                pass
+
         # Special handling for Wikipedia — extract main article content only
         if "wikipedia.org/wiki/" in final_url:
             try:
