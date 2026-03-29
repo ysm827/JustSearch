@@ -855,6 +855,44 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             except Exception:
                 pass
 
+        # Special handling for Bilibili (B站) — extract video info and comments
+        if "bilibili.com/video/" in final_url or "b23.tv/" in final_url:
+            try:
+                content = await page.evaluate(r"""() => {
+                    const parts = [];
+                    const title = document.querySelector('h1.video-title, .video-info-container .video-title');
+                    if (title) parts.push('标题: ' + title.innerText.trim());
+                    const author = document.querySelector('.up-info .username, .up-name');
+                    if (author) parts.push('UP主: ' + author.innerText.trim());
+                    const views = document.querySelector('.view-text, .video-data .view');
+                    if (views) parts.push('播放量: ' + views.innerText.trim());
+                    const date = document.querySelector('.pubdate-ip-text, .pubdate-text');
+                    if (date) parts.push('发布时间: ' + date.innerText.trim());
+                    const desc = document.querySelector('.desc-info-text, .basic-desc-info');
+                    if (desc) parts.push('\n简介: ' + desc.innerText.trim().substring(0, 2000));
+                    const tags = document.querySelectorAll('.tag-link, .tag-area a');
+                    if (tags.length > 0) {
+                        const tagText = Array.from(tags).map(t => t.innerText.trim()).filter(t => t).join(', ');
+                        if (tagText) parts.push('\n标签: ' + tagText);
+                    }
+                    // Try to get Danmaku/comment summary
+                    const comments = document.querySelectorAll('.reply-content .root-reply .reply-content-container .reply-content');
+                    if (comments.length > 0) {
+                        parts.push('\n热门评论:');
+                        const maxComments = Math.min(comments.length, 5);
+                        for (let i = 0; i < maxComments; i++) {
+                            parts.push('  ' + (i+1) + '. ' + comments[i].innerText.trim().substring(0, 200));
+                        }
+                    }
+                    return parts.length > 0 ? parts.join('\n') : null;
+                }""")
+                if content:
+                    if log_func:
+                        log_func("浏览器: B站视频信息提取成功")
+                    return content
+            except Exception:
+                pass
+
         # Special handling for WeChat Official Account articles (微信公众号)
         if "mp.weixin.qq.com" in final_url:
             try:
@@ -877,6 +915,33 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                     return content
             except Exception:
                 pass
+
+        # Detect Cloudflare challenge page
+        is_cf_challenge = await page.evaluate(r"""() => {
+            const title = document.title || '';
+            const body = document.body ? document.body.innerText : '';
+            return title.includes('Just a moment') ||
+                   title.includes('Attention Required') ||
+                   body.includes('Checking your browser') ||
+                   body.includes('cf-browser-verification') ||
+                   document.querySelector('#challenge-running, .challenge-running') !== null;
+        }""")
+        if is_cf_challenge:
+            if log_func:
+                log_func("浏览器: 检测到 Cloudflare 验证页面，等待通过...")
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            # Re-check after waiting
+            still_blocked = await page.evaluate(r"""() => {
+                const title = document.title || '';
+                return title.includes('Just a moment') || title.includes('Attention Required');
+            }""")
+            if still_blocked:
+                if log_func:
+                    log_func("浏览器: Cloudflare 验证未通过，跳过此页面")
+                return None
 
         # Interactive Mode
         if interactive_mode and query and llm_client:
