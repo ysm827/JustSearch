@@ -8,11 +8,12 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from .database import init_db
-from .browser_manager import init_global_browser, shutdown_global_browser
 from .browser_context import init_global_browser, shutdown_global_browser
-
 from .routers import chat as chat_router
 from .routers import history as history_router
 from .routers import settings as settings_router
@@ -114,6 +115,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Cache headers for static assets
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def cache_control_middleware(request, call_next):
+    """Add cache headers to static assets for better performance."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/static/"):
+        if path.endswith((".js", ".css")):
+            response.headers["Cache-Control"] = "public, max-age=86400"  # 1 day
+        elif path.endswith((".png", ".jpg", ".svg", ".ico", ".woff2")):
+            response.headers["Cache-Control"] = "public, max-age=604800"  # 1 week
+        else:
+            response.headers["Cache-Control"] = "public, max-age=3600"  # 1 hour
+    return response
 
 # ---------------------------------------------------------------------------
 # Static Files
