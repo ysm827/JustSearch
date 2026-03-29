@@ -181,12 +181,15 @@ export function renderHistory(history, currentSessionId, callbacks) {
         return;
     }
 
-    // 搜索过滤
+    // 搜索过滤 — search titles and keep fuzzy matches
     let filtered = history;
     if (searchTerm) {
-        filtered = history.filter(chat => 
-            (chat.title || '新对话').toLowerCase().includes(searchTerm)
-        );
+        // Split search into terms for partial matching
+        const terms = searchTerm.split(/\s+/).filter(t => t);
+        filtered = history.filter(chat => {
+            const title = (chat.title || '新对话').toLowerCase();
+            return terms.every(term => title.includes(term));
+        });
         if (filtered.length === 0) {
             elements.historyList.innerHTML = '<div class="history-no-results"><span class="material-symbols-rounded" style="font-size:32px;color:var(--text-muted);margin-bottom:8px;">search_off</span><br>未找到匹配的对话</div>';
             return;
