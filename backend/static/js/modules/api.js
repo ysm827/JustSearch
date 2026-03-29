@@ -129,6 +129,18 @@ export async function clearCacheAPI() {
     }
 }
 
+export async function searchHistory(query) {
+    try {
+        const res = await fetch(`/api/history/search?q=${encodeURIComponent(query)}`);
+        if (res.ok) {
+            return await res.json();
+        }
+    } catch (e) {
+        console.error("Failed to search history", e);
+    }
+    return [];
+}
+
 export async function fetchChat(sessionId) {
     try {
         const res = await fetch(`/api/history/${sessionId}`);

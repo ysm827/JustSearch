@@ -5,11 +5,12 @@ History router – /api/history endpoints
 import logging
 import os
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Query
+from sqlalchemy import text as sql_text
 
 from ..database import (
     list_chats, load_chat_history, save_chat_history,
-    delete_chat, get_chat_path, delete_all_chats,
+    delete_chat, get_chat_path, delete_all_chats, get_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,38 @@ router = APIRouter()
 @router.get("/api/history")
 async def get_history_endpoint():
     return await list_chats()
+
+
+@router.get("/api/history/search")
+async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=200)):
+    """Full-text search across all chat messages using FTS5."""
+    async with await get_session() as session:
+        try:
+            result = await session.execute(
+                sql_text(
+                    "SELECT DISTINCT cs.id, cs.title, cs.updated_at "
+                    "FROM chat_messages_fts fts "
+                    "JOIN chat_sessions cs ON cs.id = fts.session_id "
+                    "WHERE chat_messages_fts MATCH :query "
+                    "ORDER BY cs.updated_at DESC LIMIT 20"
+                ),
+                {"query": q},
+            )
+            rows = result.fetchall()
+            return [
+                {
+                    "id": row[0],
+                    "title": row[1],
+                    "timestamp": row[2].isoformat() if row[2] else "",
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.warning("FTS search failed, falling back to title search: %s", e)
+            # Fallback: search by title only
+            all_chats = await list_chats()
+            q_lower = q.lower()
+            return [c for c in all_chats if q_lower in (c.get("title", "").lower())]
 
 
 @router.get("/api/history/export/all")
