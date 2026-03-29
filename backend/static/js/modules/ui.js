@@ -380,7 +380,18 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
         // Try to parse ISO timestamp or date string
         try {
             const d = new Date(timestamp);
-            timeDiv.textContent = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+            const now = new Date();
+            const isToday = d.toDateString() === now.toDateString();
+            const hours = d.getHours().toString().padStart(2, '0');
+            const minutes = d.getMinutes().toString().padStart(2, '0');
+            if (isToday) {
+                timeDiv.textContent = `${hours}:${minutes}`;
+            } else {
+                // Show date for older messages
+                const month = (d.getMonth() + 1).toString().padStart(2, '0');
+                const day = d.getDate().toString().padStart(2, '0');
+                timeDiv.textContent = `${month}-${day} ${hours}:${minutes}`;
+            }
         } catch {
             timeDiv.textContent = timestamp;
         }

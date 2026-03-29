@@ -374,6 +374,7 @@ class SearchWorkflow:
                         total_elapsed = time.monotonic() - start_time
                         stats_callback({
                             "sites_searched": total_search_results,
+                            "sites_crawled": len(visited_urls),
                             "iterations": iteration,
                             "prompt_tokens": self.llm.total_prompt_tokens,
                             "completion_tokens": self.llm.total_completion_tokens,

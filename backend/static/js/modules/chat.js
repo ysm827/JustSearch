@@ -273,7 +273,11 @@ export function setupChatHandler(elements, renderHistory) {
             spinner.textContent = 'check_circle';
             spinner.classList.add('completed');
             if (searchStats && searchStats.sites_searched > 0) {
-                let statsText = `已完成 · 搜索过 ${searchStats.sites_searched} 个网页 · ${totalElapsed}s`;
+                let statsText = `已完成 · 搜索 ${searchStats.sites_searched} 个结果`;
+                if (searchStats.sites_crawled > 0) {
+                    statsText += ` · 深度阅读 ${searchStats.sites_crawled} 个页面`;
+                }
+                statsText += ` · ${totalElapsed}s`;
                 if (searchStats.prompt_tokens || searchStats.completion_tokens) {
                     const totalTokens = (searchStats.prompt_tokens || 0) + (searchStats.completion_tokens || 0);
                     if (totalTokens > 0) {

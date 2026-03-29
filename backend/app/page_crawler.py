@@ -314,7 +314,7 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
         log_func("浏览器: 交互模式已开启，正在提取可点击元素...")
 
     # Extract elements and store their positions (no DOM mutation)
-    elements = await page.evaluate("""() => {
+    elements = await page.evaluate(r"""() => {
         const items = [];
         let idCounter = 0;
 
@@ -326,13 +326,22 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
 
         const candidates = document.querySelectorAll('button, a[href], [role="button"]');
 
+        // Blacklist patterns for elements that are never useful to click
+        const blacklist = /^(home|login|sign in|sign up|menu|privacy|terms|登录|注册|分享|首页|关闭|评论|like|share|follow|subscribe|cookie|accept|dismiss|下载 app|open in app|get app|feedback|feedback|举报|投诉|more actions)$/i;
+        // Generic navigation that rarely helps find content
+        const navPatterns = /^(back|next|previous|prev|1|2|3|4|5|6|7|8|9|10|first|last|<|>|<<|>>)$/i;
+
         for (const el of candidates) {
             if (!isVisible(el)) continue;
 
             const text = el.innerText.trim();
             if (text.length < 2 || text.length > 50) continue;
+            if (blacklist.test(text)) continue;
+            if (navPatterns.test(text)) continue;
 
-            if (/^(home|login|sign in|sign up|menu|privacy|terms|登录|注册|分享|首页|关闭|关闭|评论)$/i.test(text)) continue;
+            // Skip elements in header/footer/nav sections
+            const parent = el.closest('header, footer, nav, .navbar, .footer, .header, .sidebar, .nav-bar, #header, #footer, #nav');
+            if (parent) continue;
 
             const rect = el.getBoundingClientRect();
             const tempId = "js-interact-" + idCounter++;
@@ -345,7 +354,7 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
                 y: rect.y + rect.height / 2
             });
 
-            if (items.length >= 50) break;
+            if (items.length >= 30) break;
         }
         return items;
     }""")
