@@ -1,8 +1,25 @@
-// 初始化 markdown-it
+// 初始化 markdown-it with highlight.js
 const mdInstance = window.markdownit({
     html: false,
     linkify: true,
-    typographer: true
+    typographer: true,
+    highlight: function (str, lang) {
+        if (lang && window.hljs && hljs.getLanguage(lang)) {
+            try {
+                return '<pre class="hljs"><code class="hljs language-' + lang + '">' +
+                    hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+                    '</code></pre>';
+            } catch (__) {}
+        }
+        if (window.hljs) {
+            try {
+                return '<pre class="hljs"><code class="hljs">' +
+                    hljs.highlightAuto(str).value +
+                    '</code></pre>';
+            } catch (__) {}
+        }
+        return '<pre class="hljs"><code>' + mdInstance.utils.escapeHtml(str) + '</code></pre>';
+    }
 });
 
 export const md = {
@@ -55,9 +72,18 @@ export function applyTheme(theme) {
         // Auto-detect system preference
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+        _updateHljsTheme(prefersDark);
     } else {
         document.documentElement.setAttribute('data-theme', theme);
+        _updateHljsTheme(theme === 'dark');
     }
+}
+
+function _updateHljsTheme(isDark) {
+    const darkSheet = document.getElementById('hljs-dark');
+    const lightSheet = document.getElementById('hljs-light');
+    if (darkSheet) darkSheet.disabled = !isDark;
+    if (lightSheet) lightSheet.disabled = isDark;
 }
 
 /**
