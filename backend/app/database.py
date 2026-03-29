@@ -80,11 +80,6 @@ class ChatMessage(Base):
     stats = Column(JSON, default=dict)
     created_at = Column(DateTime, default=func.now())
 
-    __table_args__ = (
-        # Composite index for efficient message loading ordered by time
-        {"sqlite_autoindex": True},
-    )
-
     session = relationship("ChatSession", back_populates="messages")
 
 
