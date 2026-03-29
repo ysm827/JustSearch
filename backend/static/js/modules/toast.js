@@ -1,4 +1,13 @@
+// Toast 防重复缓存
+const _activeToasts = new Map();
+
 export function showToast(message, type = 'info', duration = 3000) {
+    // 防止短时间内重复显示相同的 toast
+    const dedupeKey = `${type}:${message}`;
+    if (_activeToasts.has(dedupeKey)) {
+        return;
+    }
+
     let container = document.getElementById('toast-container');
     if (!container) {
         container = document.createElement('div');
@@ -21,6 +30,8 @@ export function showToast(message, type = 'info', duration = 3000) {
     `;
     toast.querySelector('.toast-message').textContent = message;
 
+    _activeToasts.set(dedupeKey, true);
+
     container.appendChild(toast);
 
     // 触发回流以启动动画
@@ -29,6 +40,7 @@ export function showToast(message, type = 'info', duration = 3000) {
 
     setTimeout(() => {
         toast.classList.remove('show');
+        _activeToasts.delete(dedupeKey);
         setTimeout(() => {
             if (toast.parentNode) {
                 container.removeChild(toast);

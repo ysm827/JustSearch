@@ -2406,7 +2406,7 @@ textarea:focus-visible {
 
 /* Ensure smooth sidebar animation on mobile */
 #sidebar {
-    will-change: transform, margin-left;
+    /* will-change already set on line 206 */
 }
 
 /* Chat container flex bottom padding for input area shadow */
