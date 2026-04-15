@@ -144,6 +144,32 @@ async def init_db():
             "CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts "
             "USING fts5(session_id, content, tokenize='unicode61')"
         ))
+        await conn.execute(text(
+            "CREATE TRIGGER IF NOT EXISTS chat_messages_ai AFTER INSERT ON chat_messages "
+            "BEGIN "
+            "INSERT INTO chat_messages_fts(rowid, session_id, content) "
+            "VALUES (new.id, new.session_id, new.content); "
+            "END"
+        ))
+        await conn.execute(text(
+            "CREATE TRIGGER IF NOT EXISTS chat_messages_ad AFTER DELETE ON chat_messages "
+            "BEGIN "
+            "DELETE FROM chat_messages_fts WHERE rowid = old.id; "
+            "END"
+        ))
+        await conn.execute(text(
+            "CREATE TRIGGER IF NOT EXISTS chat_messages_au AFTER UPDATE ON chat_messages "
+            "BEGIN "
+            "DELETE FROM chat_messages_fts WHERE rowid = old.id; "
+            "INSERT INTO chat_messages_fts(rowid, session_id, content) "
+            "VALUES (new.id, new.session_id, new.content); "
+            "END"
+        ))
+        await conn.execute(text("DELETE FROM chat_messages_fts"))
+        await conn.execute(text(
+            "INSERT INTO chat_messages_fts(rowid, session_id, content) "
+            "SELECT id, session_id, content FROM chat_messages"
+        ))
 
     logger.info("Database initialised at %s", _DB_PATH)
 

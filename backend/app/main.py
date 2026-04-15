@@ -5,13 +5,17 @@ import httpx
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
 
+from .auth import (
+    AccessControlMiddleware,
+    build_html_bootstrap_payload,
+    get_auth_token,
+    inject_html_bootstrap,
+)
 from .database import init_db
 from .browser_context import init_global_browser, shutdown_global_browser
 from .routers import chat as chat_router
@@ -109,10 +113,11 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 # ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
-_cors_origins_str = os.getenv("CORS_ORIGINS", "*")
+_cors_origins_str = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:8000,http://127.0.0.1:8000,http://localhost,http://127.0.0.1",
+)
 _cors_origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
-if "*" in _cors_origins:
-    _cors_origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -121,6 +126,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AccessControlMiddleware, token_provider=get_auth_token)
 
 
 # ---------------------------------------------------------------------------
@@ -176,21 +182,26 @@ app.include_router(stats_router.router)
 # ---------------------------------------------------------------------------
 
 
-@app.get("/")
-async def read_index():
+def _render_index_html(request: Request) -> HTMLResponse:
     html_path = os.path.join(STATIC_DIR, "index.html")
     with open(html_path, "r", encoding="utf-8") as f:
         html = f.read()
-    return HTMLResponse(content=html)
+    html = inject_html_bootstrap(html, build_html_bootstrap_payload(request))
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/")
+async def read_index(request: Request):
+    return _render_index_html(request)
 
 
 @app.get("/c/{session_id}")
-async def read_chat_session(session_id: str):
+async def read_chat_session(request: Request, session_id: str):
     """Serve the same SPA index for any chat URL — client-side routing handles the rest."""
-    html_path = os.path.join(STATIC_DIR, "index.html")
-    with open(html_path, "r", encoding="utf-8") as f:
-        html = f.read()
-    return HTMLResponse(content=html)
+    return _render_index_html(request)
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

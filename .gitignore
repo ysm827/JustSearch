@@ -72,4 +72,5 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .auth_token
+backend/.auth_token
 patch.css

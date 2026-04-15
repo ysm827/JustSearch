@@ -10,10 +10,11 @@ import base64
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..auth import authorize_websocket
 from ..database import (
     load_settings, save_chat_history, load_chat_history, get_chat_path, get_next_api_key,
     delete_message,
@@ -51,6 +52,8 @@ class ChatRequest(BaseModel):
 
 @router.websocket("/ws/browser/{session_id}")
 async def browser_control_endpoint(websocket: WebSocket, session_id: str):
+    if not await authorize_websocket(websocket):
+        return
     await websocket.accept()
 
     session = get_interaction_session(session_id)
@@ -146,13 +149,14 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
 
 
 @router.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(http_request: Request, request: ChatRequest):
     # Set request ID for log correlation
     import uuid
     set_request_id(uuid.uuid4().hex[:8])
 
     # Rate limiting
-    allowed, retry_after = chat_limiter.check("global")
+    client_host = http_request.client.host if http_request.client else "global"
+    allowed, retry_after = chat_limiter.check(client_host)
     if not allowed:
         raise HTTPException(
             status_code=429,

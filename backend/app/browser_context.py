@@ -12,6 +12,7 @@ import random
 import time
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from playwright.async_api import Page
@@ -94,12 +95,16 @@ def get_browser_config(user_data_dir: str) -> dict:
     return config
 
 
+def get_context_user_data_dir(project_root: str | os.PathLike, slot_index: int) -> Path:
+    return Path(project_root) / "user_data" / f"ctx_{slot_index}"
+
+
 # ---------------------------------------------------------------------------
 # Context lifecycle helpers
 # ---------------------------------------------------------------------------
 
 
-async def _create_context(headless_override: bool = None) -> object:
+async def _create_context(slot_index: int, headless_override: bool = None) -> object:
     """Launch a single persistent browser context and return it."""
     from playwright.async_api import async_playwright
 
@@ -110,12 +115,10 @@ async def _create_context(headless_override: bool = None) -> object:
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(current_dir))
-    # Use a unique user_data_dir per context so they don't conflict
-    ctx_index = len(_context_pool)
-    user_data_dir = os.path.join(project_root, "user_data", f"ctx_{ctx_index}")
+    user_data_dir = get_context_user_data_dir(project_root, slot_index)
     os.makedirs(user_data_dir, exist_ok=True)
 
-    browser_config = get_browser_config(user_data_dir)
+    browser_config = get_browser_config(str(user_data_dir))
     user_agent = browser_config["user_agent"]
     width = browser_config["viewport"]["width"]
     height = browser_config["viewport"]["height"]
@@ -170,8 +173,8 @@ async def _create_context(headless_override: bool = None) -> object:
 async def _init_pool(headless_override: bool = None):
     """Fill the pool up to _POOL_SIZE."""
     async with _pool_lock:
-        for _ in range(_POOL_SIZE - len(_context_pool)):
-            ctx = await _create_context(headless_override)
+        for slot_index in range(len(_context_pool), _POOL_SIZE):
+            ctx = await _create_context(slot_index, headless_override)
             _context_pool.append(ContextSlot(context=ctx, created_at=time.time(), request_count=0))
     logger.info("Browser context pool initialised (%d contexts)", len(_context_pool))
 
@@ -200,7 +203,7 @@ async def _rotate_stale_contexts():
                 logger.warning("Error closing stale context %d: %s", i, e)
 
             try:
-                new_ctx = await _create_context(_CURRENT_HEADLESS_MODE)
+                new_ctx = await _create_context(i, _CURRENT_HEADLESS_MODE)
                 _context_pool[i] = ContextSlot(context=new_ctx, created_at=time.time(), request_count=0)
             except Exception as e:
                 logger.error("Failed to create replacement context %d: %s", i, e)
@@ -231,7 +234,8 @@ async def init_global_browser(headless_override: bool = None):
     """Initialise the context pool (replaces old single-context init)."""
     await _init_pool(headless_override)
     global _rotation_task
-    _rotation_task = asyncio.create_task(_rotation_loop())
+    if _rotation_task is None or _rotation_task.done():
+        _rotation_task = asyncio.create_task(_rotation_loop())
 
 
 async def shutdown_global_browser():
@@ -288,7 +292,7 @@ async def get_new_page() -> Page:
             if slot.context is None:
                 # Slot is empty, try to fill it
                 try:
-                    slot.context = await _create_context(_CURRENT_HEADLESS_MODE)
+                    slot.context = await _create_context(idx, _CURRENT_HEADLESS_MODE)
                     slot.created_at = time.time()
                     slot.request_count = 0
                 except Exception as e:

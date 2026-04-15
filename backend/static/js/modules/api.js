@@ -1,9 +1,10 @@
 import { state, setSettings } from './state.js';
+import { authFetch } from './auth.js';
 import { applyTheme } from './utils.js';
 
 export async function fetchSettings() {
     try {
-        const res = await fetch('/api/settings');
+        const res = await authFetch('/api/settings');
         if (res.ok) {
             const settings = await res.json();
             setSettings(settings);
@@ -18,7 +19,7 @@ export async function fetchSettings() {
 
 export async function saveSettingsAPI(newSettings) {
     try {
-        const res = await fetch('/api/settings', {
+        const res = await authFetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newSettings)
@@ -43,7 +44,7 @@ export async function saveSettingsAPI(newSettings) {
 
 export async function restoreDefaultSettingsAPI() {
     try {
-        const res = await fetch('/api/settings/default');
+        const res = await authFetch('/api/settings/default');
         if (res.ok) {
             return await res.json();
         }
@@ -55,7 +56,7 @@ export async function restoreDefaultSettingsAPI() {
 
 export async function fetchHistory() {
     try {
-        const res = await fetch('/api/history');
+        const res = await authFetch('/api/history');
         if (res.ok) {
             return await res.json();
         }
@@ -67,7 +68,7 @@ export async function fetchHistory() {
 
 export async function deleteChatAPI(sessionId) {
     try {
-        const res = await fetch(`/api/history/${sessionId}`, {
+        const res = await authFetch(`/api/history/${sessionId}`, {
             method: 'DELETE'
         });
         return res.ok;
@@ -79,7 +80,7 @@ export async function deleteChatAPI(sessionId) {
 
 export async function renameChatAPI(sessionId, newTitle) {
     try {
-        const res = await fetch(`/api/history/${sessionId}`, {
+        const res = await authFetch(`/api/history/${sessionId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: newTitle })
@@ -93,7 +94,7 @@ export async function renameChatAPI(sessionId, newTitle) {
 
 export async function clearHistoryAPI() {
     try {
-        const res = await fetch('/api/history', {
+        const res = await authFetch('/api/history', {
             method: 'DELETE'
         });
         return res.ok;
@@ -105,7 +106,7 @@ export async function clearHistoryAPI() {
 
 export async function deleteMessageAPI(sessionId, messageIndex) {
     try {
-        const res = await fetch('/api/chat/message', {
+        const res = await authFetch('/api/chat/message', {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: sessionId, message_index: messageIndex })
@@ -119,7 +120,7 @@ export async function deleteMessageAPI(sessionId, messageIndex) {
 
 export async function clearCacheAPI() {
     try {
-        const res = await fetch('/api/clear-cache', {
+        const res = await authFetch('/api/clear-cache', {
             method: 'POST'
         });
         return res.ok;
@@ -131,7 +132,7 @@ export async function clearCacheAPI() {
 
 export async function searchHistory(query) {
     try {
-        const res = await fetch(`/api/history/search?q=${encodeURIComponent(query)}`);
+        const res = await authFetch(`/api/history/search?q=${encodeURIComponent(query)}`);
         if (res.ok) {
             return await res.json();
         }
@@ -143,7 +144,7 @@ export async function searchHistory(query) {
 
 export async function fetchChat(sessionId) {
     try {
-        const res = await fetch(`/api/history/${sessionId}`);
+        const res = await authFetch(`/api/history/${sessionId}`);
         if (res.ok) {
             return await res.json();
         }
@@ -166,7 +167,7 @@ export async function fetchGitHubStats() {
     }
 
     try {
-        const res = await fetch('/api/stats/github');
+        const res = await authFetch('/api/stats/github');
         if (res.ok) {
             const data = await res.json();
             _githubStarsCache = data;
@@ -187,7 +188,7 @@ export async function streamChat(query, callbacks) {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const response = await fetch('/api/chat', {
+            const response = await authFetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

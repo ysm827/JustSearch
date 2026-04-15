@@ -1,5 +1,6 @@
 import { md, createCopyButton } from './utils.js';
 import { renameChatAPI } from './api.js';
+import { buildAuthenticatedUrl } from './auth.js';
 import { showToast } from './toast.js';
 import { state } from './state.js';
 
@@ -245,7 +246,7 @@ export function renderHistory(history, currentSessionId, callbacks) {
             exportBtn.innerHTML = '<span class="material-symbols-rounded">download</span>';
             exportBtn.onclick = (e) => {
                 e.stopPropagation();
-                window.open(`/api/history/${chat.id}/export`, '_blank');
+                window.open(buildAuthenticatedUrl(`/api/history/${chat.id}/export`), '_blank');
             };
             item.appendChild(exportBtn);
 

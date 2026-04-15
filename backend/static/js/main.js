@@ -1,4 +1,5 @@
 import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './modules/state.js';
+import { authFetch, buildAuthenticatedUrl, buildBrowserWebSocketUrl, initializeAuth, normalizeSettings } from './modules/auth.js';
 import { createCopyButton } from './modules/utils.js';
 import { initUI, elements, renderHistory, renderMessages, appendMessage, scrollToBottom, updateActiveHistoryItem, showConfirm, getCachedHistory } from './modules/ui.js';
 import { showToast } from './modules/toast.js';
@@ -7,15 +8,16 @@ import * as API from './modules/api.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     initUI();
+    initializeAuth();
 
     // --- Initialization ---
-    const settings = await API.fetchSettings();
-    updateModelSelector(settings.model_id);
-    const history = await API.fetchHistory();
+    const settings = normalizeSettings(await API.fetchSettings());
+    updateModelSelector(settings.model_id || '');
+    const chatHistory = await API.fetchHistory();
 
     const { loadChat, deleteChat } = setupChatHandler(elements, renderHistory);
 
-    renderHistory(history, state.currentSessionId, {
+    renderHistory(chatHistory, state.currentSessionId, {
         onSelect: loadChat,
         onDelete: deleteChat
     });
@@ -25,12 +27,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (pathMatch) {
         const urlSessionId = pathMatch[1];
         // 确保该会话存在于历史中
-        const exists = history.some(h => h.id === urlSessionId);
+        const exists = chatHistory.some(h => h.id === urlSessionId);
         if (exists) {
             loadChat(urlSessionId);
         } else {
             // 会话不存在，回到首页
-            history.replaceState(null, '', '/');
+            window.history.replaceState(null, '', '/');
         }
     }
 
@@ -145,7 +147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const exportAllBtn = document.getElementById('export-all-btn');
         if (exportAllBtn) {
             exportAllBtn.addEventListener('click', async () => {
-                window.open('/api/history/export/all?format=markdown', '_blank');
+                window.open(buildAuthenticatedUrl('/api/history/export/all?format=markdown'), '_blank');
             });
         }
 
@@ -161,7 +163,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             elements.userInput.focus();
             // 回到首页 URL
             if (window.location.pathname !== '/') {
-                history.pushState(null, '', '/');
+                window.history.pushState(null, '', '/');
             }
         });
 
@@ -220,7 +222,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 validateBtn.disabled = true;
                 validateBtn.querySelector('.material-symbols-rounded').textContent = 'progress_activity';
                 try {
-                    const res = await fetch('/api/settings/validate-key', {
+                    const res = await authFetch('/api/settings/validate-key', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -259,7 +261,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const versionEl = document.getElementById('version-display');
             if (versionEl) {
                 try {
-                    const healthRes = await fetch('/api/health');
+                    const healthRes = await authFetch('/api/health');
                     if (healthRes.ok) {
                         const health = await healthRes.json();
                         versionEl.textContent = `v${health.version || '?.?.?'}`;
@@ -444,8 +446,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             completeBtn.disabled = false;
             completeBtn.textContent = '完成验证，继续执行';
 
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/browser/${sessionId}`;
+            const wsUrl = buildBrowserWebSocketUrl(window.location, sessionId);
 
             if (ws) ws.close();
             ws = new WebSocket(wsUrl);

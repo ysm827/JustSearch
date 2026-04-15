@@ -55,5 +55,5 @@ class RateLimiter:
 
 
 # Global rate limiter instance
-# 30 requests per minute per IP for chat endpoint
+# 30 requests per minute per client key for chat endpoint
 chat_limiter = RateLimiter(max_requests=30, window_seconds=60)
