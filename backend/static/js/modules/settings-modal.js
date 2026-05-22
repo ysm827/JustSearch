@@ -186,7 +186,7 @@ async function updateVersionDisplay() {
         const healthRes = await authFetch('/api/health');
         if (healthRes.ok) {
             const health = await healthRes.json();
-            const versionText = `v${health.version || '?.?.?'}`;
+            const versionText = formatVersionText(health.version);
             if (versionEl) {
                 versionEl.textContent = versionText;
             }
@@ -200,6 +200,14 @@ async function updateVersionDisplay() {
     } catch (e) {
         // Version metadata is non-critical.
     }
+}
+
+function formatVersionText(version) {
+    const rawVersion = String(version || '?.?.?').trim();
+    if (!rawVersion || rawVersion === '?.?.?') return 'v?.?.?';
+    return rawVersion.startsWith('v') || /[^\d.]/.test(rawVersion)
+        ? rawVersion
+        : `v${rawVersion}`;
 }
 
 async function populateSettingsForm() {

@@ -458,6 +458,19 @@ def test_validate_api_key_button_shows_loading_state():
     assert ".password-toggle-btn.is-validating span" in settings_css
 
 
+def test_initial_release_version_uses_semver_and_v_display_prefix():
+    version_source = (PROJECT_ROOT / "backend/app/version.py").read_text(encoding="utf-8")
+    dockerfile_source = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+
+    assert '__version__ = "1.0.0"' in version_source
+    assert 'org.opencontainers.image.version="1.0.0"' in dockerfile_source
+    assert "formatVersionText" in settings_js
+    assert "`v${rawVersion}`" in settings_js
+
+
 def test_confirm_dialog_resolves_when_dismissed_without_buttons():
     source = (PROJECT_ROOT / "backend/static/js/modules/ui.js").read_text(encoding="utf-8")
     show_confirm = source.split("export function showConfirm", 1)[1].split(
