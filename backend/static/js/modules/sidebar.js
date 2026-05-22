@@ -1,6 +1,6 @@
 import { state, setCurrentSessionId } from './state.js';
 import { elements } from './ui.js';
-import { updateActiveHistoryItem, getCachedHistory } from './history-view.js';
+import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js';
 
 let popoverEl = null;
 let popoverTimeout = null;
@@ -130,6 +130,15 @@ export function setupSidebar(loadChat) {
 
     elements.expandSidebarBtn?.addEventListener('click', toggleSidebar);
     elements.collapseSidebarBtn?.addEventListener('click', toggleSidebar);
+
+    const sidebarBrandToggle = document.getElementById('sidebar-brand-toggle');
+    sidebarBrandToggle?.addEventListener('click', toggleSidebar);
+    sidebarBrandToggle?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleSidebar();
+        }
+    });
     
     const miniToggleBtn = document.getElementById('mini-toggle-btn');
     miniToggleBtn?.addEventListener('click', toggleSidebar);
@@ -229,7 +238,7 @@ export function setupSidebar(loadChat) {
             localStorage.setItem('sidebarCollapsed', 'false');
         }
         setTimeout(() => {
-            elements.historySearchInput?.focus();
+            openHistorySearch();
         }, 300);
     });
 

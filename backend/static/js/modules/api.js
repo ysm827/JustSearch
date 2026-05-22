@@ -54,6 +54,22 @@ export async function restoreDefaultSettingsAPI() {
     return null;
 }
 
+export async function checkEnginesAPI() {
+    try {
+        const res = await authFetch('/api/settings/check-engines', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        if (res.ok) {
+            return await res.json();
+        }
+    } catch (e) {
+        console.error("Failed to check search engines", e);
+    }
+    return null;
+}
+
 export async function fetchHistory() {
     try {
         const res = await authFetch('/api/history');
@@ -64,6 +80,76 @@ export async function fetchHistory() {
         console.error("Failed to load history", e);
     }
     return [];
+}
+
+export async function fetchChatGroups() {
+    try {
+        const res = await authFetch('/api/history/groups');
+        if (res.ok) {
+            return await res.json();
+        }
+    } catch (e) {
+        console.error("Failed to load chat groups", e);
+    }
+    return [];
+}
+
+export async function createChatGroupAPI(title = '新分组') {
+    try {
+        const res = await authFetch('/api/history/groups', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title })
+        });
+        if (res.ok) {
+            return await res.json();
+        }
+    } catch (e) {
+        console.error("Failed to create chat group", e);
+    }
+    return null;
+}
+
+export async function updateChatGroupAPI(groupId, changes) {
+    try {
+        const res = await authFetch(`/api/history/groups/${groupId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(changes)
+        });
+        if (res.ok) {
+            return await res.json();
+        }
+    } catch (e) {
+        console.error("Failed to update chat group", e);
+    }
+    return null;
+}
+
+export async function deleteChatGroupAPI(groupId) {
+    try {
+        const res = await authFetch(`/api/history/groups/${groupId}`, {
+            method: 'DELETE'
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("Failed to delete chat group", e);
+        return false;
+    }
+}
+
+export async function moveChatToGroupAPI(sessionId, groupId) {
+    try {
+        const res = await authFetch(`/api/history/${sessionId}/group`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ group_id: groupId })
+        });
+        return res.ok;
+    } catch (e) {
+        console.error("Failed to move chat to group", e);
+        return false;
+    }
 }
 
 export async function deleteChatAPI(sessionId) {

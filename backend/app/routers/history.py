@@ -11,6 +11,8 @@ from sqlalchemy import text as sql_text
 from ..database import (
     list_chats, load_chat_history, save_chat_history,
     delete_chat, get_chat_path, delete_all_chats, get_session,
+    list_chat_groups, create_chat_group, update_chat_group,
+    delete_chat_group, move_chat_to_group,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=2
         try:
             result = await session.execute(
                 sql_text(
-                    "SELECT DISTINCT cs.id, cs.title, cs.updated_at "
+                    "SELECT DISTINCT cs.id, cs.title, cs.group_id, cs.updated_at "
                     "FROM chat_messages_fts fts "
                     "JOIN chat_sessions cs ON cs.id = fts.session_id "
                     "WHERE chat_messages_fts MATCH :query "
@@ -43,7 +45,8 @@ async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=2
                 {
                     "id": row[0],
                     "title": row[1],
-                    "timestamp": row[2].isoformat() if row[2] else "",
+                    "group_id": row[2],
+                    "timestamp": row[3].isoformat() if row[3] else "",
                 }
                 for row in rows
             ]
@@ -53,6 +56,49 @@ async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=2
             all_chats = await list_chats()
             q_lower = q.lower()
             return [c for c in all_chats if q_lower in (c.get("title", "").lower())]
+
+
+@router.get("/api/history/groups")
+async def get_chat_groups_endpoint():
+    return await list_chat_groups()
+
+
+@router.post("/api/history/groups")
+async def create_chat_group_endpoint(body: dict = Body(default={})):
+    title = body.get("title", "新分组") if isinstance(body, dict) else "新分组"
+    return await create_chat_group(str(title))
+
+
+@router.patch("/api/history/groups/{group_id}")
+async def update_chat_group_endpoint(group_id: str, body: dict = Body(...)):
+    title = body.get("title") if isinstance(body, dict) else None
+    is_expanded = body.get("is_expanded") if isinstance(body, dict) else None
+    group = await update_chat_group(
+        group_id,
+        title=str(title) if title is not None else None,
+        is_expanded=is_expanded if isinstance(is_expanded, bool) else None,
+    )
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return group
+
+
+@router.delete("/api/history/groups/{group_id}")
+async def delete_chat_group_endpoint(group_id: str):
+    if not await delete_chat_group(group_id):
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"status": "ok"}
+
+
+@router.patch("/api/history/{session_id}/group")
+async def move_chat_to_group_endpoint(session_id: str, body: dict = Body(...)):
+    group_id = body.get("group_id") if isinstance(body, dict) else None
+    if group_id == "":
+        group_id = None
+    moved = await move_chat_to_group(session_id, group_id)
+    if not moved:
+        raise HTTPException(status_code=404, detail="Chat or group not found")
+    return {"status": "ok", "group_id": group_id}
 
 
 @router.get("/api/history/export/all")

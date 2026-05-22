@@ -15,13 +15,17 @@ from ..database import (
     load_settings, save_settings, delete_all_chats,
     DEFAULT_SETTINGS, mask_api_key, get_chat_path, load_chat_history,
 )
+from ..browser_manager import BrowserManager
 from ..openai_client import create_openai_client
+from ..search_engine import get_all_engines
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 _SENSITIVE_FIELDS = {"api_key"}
+_ENGINE_CHECK_QUERY = "JustSearch test"
+_ENGINE_CHECK_TIMEOUT_SECONDS = 75.0
 
 
 class SettingsModel(BaseModel):
@@ -30,11 +34,15 @@ class SettingsModel(BaseModel):
     base_url: Optional[str] = ""
     model_id: Optional[str] = ""
     search_engine: Optional[str] = "duckduckgo"
-    max_results: Optional[int] = 8
+    max_results: Optional[int] = 50
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
     max_concurrent_pages: Optional[int] = 10
     max_context_turns: Optional[int] = 6
+
+
+class EngineCheckRequest(BaseModel):
+    query: Optional[str] = _ENGINE_CHECK_QUERY
 
 
 @router.get("/api/settings")
@@ -68,7 +76,7 @@ async def update_settings_endpoint(settings: SettingsModel):
 
     # Validate numeric ranges
     if "max_results" in update:
-        update["max_results"] = max(1, min(20, int(update["max_results"])))
+        update["max_results"] = max(1, min(50, int(update["max_results"])))
     if "max_iterations" in update:
         update["max_iterations"] = max(1, min(10, int(update["max_iterations"])))
     if "max_concurrent_pages" in update:
@@ -93,6 +101,52 @@ async def update_settings_endpoint(settings: SettingsModel):
                 current[field] = mask_api_key(current[field])
         return {"status": "ok", "settings": current}
     raise HTTPException(status_code=500, detail="Failed to save settings")
+
+
+async def _check_single_engine(engine: str, query: str) -> dict:
+    manager = BrowserManager(engine=engine, max_results=3)
+    try:
+        results = await asyncio.wait_for(
+            manager.search_web(
+                query,
+                allow_fallback=False,
+                use_cache=False,
+            ),
+            timeout=_ENGINE_CHECK_TIMEOUT_SECONDS,
+        )
+        result_count = len(results)
+        return {
+            "engine": engine,
+            "available": result_count > 0,
+            "result_count": result_count,
+            "error": "" if result_count > 0 else "未解析到搜索结果",
+        }
+    except asyncio.TimeoutError:
+        return {
+            "engine": engine,
+            "available": False,
+            "result_count": 0,
+            "error": "检测超时",
+        }
+    except Exception as e:
+        logger.warning("Search engine check failed for %s: %s", engine, e)
+        return {
+            "engine": engine,
+            "available": False,
+            "result_count": 0,
+            "error": str(e)[:200] or "检测失败",
+        }
+
+
+@router.post("/api/settings/check-engines")
+async def check_search_engines_endpoint(body: EngineCheckRequest | None = None):
+    query = (body.query if body else _ENGINE_CHECK_QUERY) or _ENGINE_CHECK_QUERY
+    query = query.strip() or _ENGINE_CHECK_QUERY
+    engines = get_all_engines()
+    results = await asyncio.gather(
+        *(_check_single_engine(engine, query) for engine in engines)
+    )
+    return {"query": query, "results": results}
 
 
 @router.post("/api/settings/validate-key")

@@ -27,20 +27,25 @@
     }
 
     #sidebar.collapsed {
+        width: 80%;
+        max-width: 300px;
         margin-left: 0;
         transform: translateX(-100%);
     }
 
     #sidebar.collapsed .sidebar-expanded-pane {
-        display: flex !important;
         opacity: 1 !important;
+        visibility: visible !important;
+        transform: translateX(0) !important;
         pointer-events: auto !important;
         width: 100% !important;
     }
 
     #sidebar.collapsed .sidebar-collapsed-pane {
-        display: none !important;
         opacity: 0 !important;
+        visibility: hidden !important;
+        transform: translateX(8px) !important;
+        pointer-events: none !important;
     }
 
     [data-theme="dark"] #sidebar.mobile-open {

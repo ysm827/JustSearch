@@ -236,6 +236,87 @@ def test_search_web_uses_fallback_when_wait_selector_times_out(monkeypatch):
     assert engine_health.get_stats()["brave"]["failures"] == 0
 
 
+def test_search_web_can_check_preferred_engine_without_fallback_or_cache(monkeypatch):
+    class FakeMouse:
+        async def move(self, *_args):
+            return None
+
+    class FakePage:
+        mouse = FakeMouse()
+
+        def __init__(self):
+            self.loaded_urls = []
+
+        async def goto(self, url, **_kwargs):
+            self.loaded_urls.append(url)
+            return None
+
+        async def evaluate(self, script, *_args):
+            if "querySelectorAll" not in script:
+                return None
+            return [
+                {
+                    "id": 1,
+                    "title": "JustSearch",
+                    "url": "https://example.com/justsearch",
+                    "snippet": "test result",
+                }
+            ]
+
+        async def content(self):
+            return ""
+
+        async def query_selector(self, *_args):
+            return None
+
+        async def wait_for_selector(self, *_args, **_kwargs):
+            return None
+
+    @asynccontextmanager
+    async def fake_rate_limit(_log_func=None):
+        yield
+
+    async def fake_release_page(_page):
+        return None
+
+    fake_page = FakePage()
+
+    async def fake_get_new_page():
+        return fake_page
+
+    async def fake_resolve(url, log_func=None):
+        return url
+
+    browser_manager._search_cache.clear()
+    engine_health._results.clear()
+    engine_health.record("brave", success=False)
+    engine_health.record("brave", success=False)
+    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
+    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
+    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
+    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
+
+    manager = BrowserManager(engine="brave", max_results=3)
+
+    async def fake_apply_stealth(_page):
+        return None
+
+    manager.stealth.apply_stealth_async = fake_apply_stealth
+
+    results = asyncio.run(
+        manager.search_web(
+            "JustSearch test",
+            allow_fallback=False,
+            use_cache=False,
+        )
+    )
+
+    assert results[0]["title"] == "JustSearch"
+    assert fake_page.loaded_urls == ["https://search.brave.com/search?q=JustSearch%20test"]
+    assert "brave:JustSearch test" not in browser_manager._search_cache
+
+
 def test_engine_health_marks_engine_unhealthy_after_two_failures_by_default():
     monitor = EngineHealthMonitor()
 

@@ -4,7 +4,7 @@
     "base_url": "https://api.deepseek.com/v1",
     "model_id": "deepseek-v4-pro",
     "search_engine": "duckduckgo",
-    "max_results": 8,
+    "max_results": 50,
     "max_iterations": 5,
     "interactive_search": true,
     "max_concurrent_pages": 10,

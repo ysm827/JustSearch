@@ -136,6 +136,7 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
     }
 
     setupPasswordControls();
+    setupEngineCheckControls();
     initModelListUI();
 
     // Auto-save logic
@@ -231,7 +232,7 @@ async function populateSettingsForm() {
 function fillSettingsForm(settings) {
     document.getElementById('theme-select').value = settings.theme || 'light';
     document.getElementById('engine-select').value = settings.search_engine || 'duckduckgo';
-    document.getElementById('max-results-input').value = settings.max_results || 8;
+    document.getElementById('max-results-input').value = settings.max_results || 50;
     document.getElementById('max-iterations-input').value = settings.max_iterations || 5;
     document.getElementById('api-key-input').value = settings.api_key || '';
     document.getElementById('api-key-input').placeholder = settings.api_key ? '已配置 (留空保持不变)' : '输入 API Key';
@@ -259,7 +260,7 @@ function collectSettingsForm() {
     return {
         theme: document.getElementById('theme-select').value,
         search_engine: document.getElementById('engine-select').value,
-        max_results: parseInt(document.getElementById('max-results-input').value) || 8,
+        max_results: parseInt(document.getElementById('max-results-input').value) || 50,
         max_iterations: parseInt(document.getElementById('max-iterations-input').value) || 5,
         api_key: apiKeyValue,
         base_url: document.getElementById('base-url-input').value,
@@ -291,6 +292,112 @@ function setupPasswordControls() {
     if (validateBtn) {
         validateBtn.addEventListener('click', validateApiKey);
     }
+}
+
+function setupEngineCheckControls() {
+    const checkEnginesBtn = document.getElementById('check-engines-btn');
+    if (checkEnginesBtn) {
+        checkEnginesBtn.addEventListener('click', checkSearchEngines);
+    }
+}
+
+async function checkSearchEngines(e) {
+    e.preventDefault();
+    const checkEnginesBtn = e.currentTarget;
+    const resultsEl = document.getElementById('engine-check-results');
+    const checkIcon = checkEnginesBtn.querySelector('.material-symbols-rounded');
+
+    checkEnginesBtn.disabled = true;
+    checkEnginesBtn.classList.add('is-checking');
+    if (checkIcon) {
+        checkIcon.textContent = 'progress_activity';
+    }
+    if (resultsEl) {
+        resultsEl.classList.add('active');
+        resultsEl.innerHTML = `
+            <div class="engine-check-pending">
+                <span class="material-symbols-rounded">progress_activity</span>
+                <span>正在检测搜索引擎...</span>
+            </div>
+        `;
+    }
+
+    try {
+        const data = await API.checkEnginesAPI();
+        if (!data || !Array.isArray(data.results)) {
+            showToast('搜索引擎检测失败', 'error');
+            renderEngineCheckResults({ results: [] });
+            return;
+        }
+
+        renderEngineCheckResults(data);
+        const availableCount = data.results.filter(item => item.available).length;
+        const totalCount = data.results.length;
+        const toastType = availableCount === totalCount ? 'success' : 'warning';
+        showToast(`搜索引擎检测完成：${availableCount}/${totalCount} 可用`, toastType);
+    } catch (err) {
+        showToast('搜索引擎检测请求失败', 'error');
+        renderEngineCheckResults({ results: [] });
+    } finally {
+        checkEnginesBtn.disabled = false;
+        checkEnginesBtn.classList.remove('is-checking');
+        if (checkIcon) {
+            checkIcon.textContent = 'network_check';
+        }
+    }
+}
+
+function renderEngineCheckResults(data) {
+    const resultsEl = document.getElementById('engine-check-results');
+    if (!resultsEl) return;
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    resultsEl.classList.add('active');
+
+    if (results.length === 0) {
+        resultsEl.innerHTML = `
+            <div class="engine-check-empty">
+                <span class="material-symbols-rounded">error</span>
+                <span>暂无检测结果</span>
+            </div>
+        `;
+        return;
+    }
+
+    const query = data.query ? `<div class="engine-check-query">测试词：${escapeHtml(data.query)}</div>` : '';
+    const items = results.map(result => {
+        const available = Boolean(result.available);
+        const statusClass = available ? 'available' : 'unavailable';
+        const icon = available ? 'check_circle' : 'error';
+        const label = getEngineDisplayName(result.engine);
+        const detail = available
+            ? `可用 · ${Number(result.result_count || 0)} 个结果`
+            : `不可用 · ${escapeHtml(result.error || '未解析到搜索结果')}`;
+
+        return `
+            <div class="engine-check-result ${statusClass}">
+                <span class="material-symbols-rounded">${icon}</span>
+                <div class="engine-check-copy">
+                    <div class="engine-check-name">${escapeHtml(label)}</div>
+                    <div class="engine-check-detail">${detail}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    resultsEl.innerHTML = `${query}<div class="engine-check-list">${items}</div>`;
+}
+
+function getEngineDisplayName(engine) {
+    const names = {
+        duckduckgo: 'DuckDuckGo',
+        google: 'Google',
+        bing: 'Bing',
+        sogou: '搜狗',
+        brave: 'Brave Search',
+        searxng: 'SearXNG',
+    };
+    return names[engine] || engine || 'Unknown';
 }
 
 async function validateApiKey(e) {
@@ -345,7 +452,7 @@ function resetConversationView(historyCallbacks) {
     if (elements.historySearchInput) {
         elements.historySearchInput.value = '';
     }
-    renderHistory([], state.currentSessionId, historyCallbacks);
+    renderHistory([], state.currentSessionId, historyCallbacks, []);
     elements.chatContainer.innerHTML = '';
     elements.heroSection.style.display = 'block';
     elements.chatContainer.appendChild(elements.heroSection);

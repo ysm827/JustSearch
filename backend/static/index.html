@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
     <link rel="preconnect" href="https://www.google.com">
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=9">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet">
@@ -33,15 +33,16 @@
         <div class="sidebar-expanded-pane">
             <div class="sidebar-header">
                 <div class="sidebar-brand">
-                    <img src="/static/assets/justsearch-favicon.png" alt="Logo" class="sidebar-logo">
-                    <span class="sidebar-brand-name">JustSearch</span>
+                    <span id="sidebar-brand-toggle" class="sidebar-brand-name" role="button" tabindex="0" aria-label="收起侧栏" title="收起侧栏">
+                        <span class="brand-text-blue">Just</span><span class="brand-text-cyan">Search</span>
+                    </span>
                 </div>
                 <div class="sidebar-header-buttons">
                     <button id="quick-theme-btn" class="icon-btn" aria-label="切换主题" title="切换主题">
                         <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>
                     </button>
                     <button id="collapse-sidebar-btn" class="icon-btn desktop-only" aria-label="收起侧栏" title="收起侧栏">
-                        <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="8" y2="8" /><line x1="4" x2="14" y1="16" y2="16" /></svg>
+                        <svg class="icon-svg sidebar-collapse-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="8" y2="8" /><line x1="4" x2="14" y1="16" y2="16" /></svg>
                     </button>
                     <button id="close-sidebar-btn" class="icon-btn mobile-only" aria-label="关闭侧栏" title="关闭侧栏">
                         <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -55,12 +56,22 @@
                     <span class="btn-text">新对话</span>
                     <kbd class="sidebar-kbd">⌘N</kbd>
                 </button>
-            </div>
-
-            <div class="history-search-box">
-                <svg class="search-icon-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                <input type="text" id="history-search-input" class="history-search-input" placeholder="搜索对话...">
-                <kbd class="sidebar-kbd search-kbd">⌘K</kbd>
+                <button id="history-search-open-btn" class="history-search-btn" aria-label="搜索对话" title="搜索对话">
+                    <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <span class="btn-text">搜索</span>
+                    <kbd class="sidebar-kbd">⌘K</kbd>
+                </button>
+                <div class="history-search-box" id="history-search-box" hidden>
+                    <svg class="search-icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <input type="text" id="history-search-input" class="history-search-input" placeholder="搜索对话..." aria-label="搜索对话">
+                    <button id="history-search-close-btn" class="history-search-close-btn" aria-label="关闭搜索" title="关闭搜索">
+                        <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
+                <button id="new-group-btn" class="new-group-btn" aria-label="新建分组" title="新建分组">
+                    <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6"></path><path d="M9 13h6"></path><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+                    <span class="btn-text">新建分组</span>
+                </button>
             </div>
 
             <div class="history-list" id="history-list" role="list" aria-label="对话历史">
@@ -78,21 +89,21 @@
         <!-- Collapsed Pane -->
         <div class="sidebar-collapsed-pane">
             <button id="mini-toggle-btn" class="icon-btn mini-btn" aria-label="展开侧栏" title="展开侧栏">
-                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="8" y2="8" /><line x1="4" x2="14" y1="16" y2="16" /></svg>
+                <svg class="icon-svg sidebar-expand-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="8" y2="8" /><line x1="4" x2="14" y1="16" y2="16" /></svg>
             </button>
             <div class="mini-divider"></div>
             <button id="mini-new-chat-btn" class="icon-btn mini-btn" aria-label="新建对话" title="新建对话">
-                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z"></path></svg>
+                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z"></path></svg>
             </button>
             <button id="mini-search-btn" class="icon-btn mini-btn" aria-label="搜索对话" title="搜索对话">
-                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             </button>
             <button id="mini-history-btn" class="icon-btn mini-btn" aria-label="最近对话" title="最近对话">
-                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><polyline points="3 3 3 8 8 8"></polyline><line x1="12" y1="7" x2="12" y2="12"></line><line x1="12" y1="12" x2="16" y2="14"></line></svg>
+                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><polyline points="3 3 3 8 8 8"></polyline><line x1="12" y1="7" x2="12" y2="12"></line><line x1="12" y1="12" x2="16" y2="14"></line></svg>
             </button>
             <div class="mini-footer">
                 <button id="mini-settings-btn" class="icon-btn mini-btn" aria-label="设置" title="设置">
-                    <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                 </button>
             </div>
         </div>
@@ -101,7 +112,7 @@
     <div id="main">
         <div class="main-header">
             <button id="expand-sidebar-btn" class="icon-btn sidebar-toggle" aria-label="展开侧栏">
-                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="8" y2="8" /><line x1="4" x2="14" y1="16" y2="16" /></svg>
+                <svg class="icon-svg sidebar-expand-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="8" y2="8" /><line x1="4" x2="14" y1="16" y2="16" /></svg>
             </button>
             <div class="model-select-wrapper" id="custom-model-select-container">
                 <div class="model-select-trigger" id="model-select-trigger" tabindex="0" role="button" aria-haspopup="listbox" aria-expanded="false" aria-label="选择模型">
@@ -150,9 +161,10 @@
                             <button id="quick-engine-btn" class="toolbar-btn" aria-label="切换搜索引擎" title="搜索引擎">
                                 <span id="quick-engine-icon-container">
                                     <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <circle cx="12" cy="12" r="10"></circle>
-                                        <line x1="2" y1="12" x2="22" y2="12"></line>
-                                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                                        <path d="M21.35 11.1h-8.7v2.9h4.98c-.47 2.3-2.43 3.9-4.98 3.9a5.7 5.7 0 1 1 0-11.4c1.64 0 2.96.62 3.9 1.53l2.1-2.1A8.8 8.8 0 1 0 12.65 21c4.86 0 8.95-3.32 8.95-8.97 0-.58-.05-1.01-.25-1.93Z" fill="#4285F4" stroke="none"></path>
+                                        <path d="M3.6 8.2l2.26 1.66A5.72 5.72 0 0 1 12.65 6c1.64 0 2.96.62 3.9 1.53l2.1-2.1A8.8 8.8 0 0 0 12.65 3c-3.54 0-6.6 1.98-8.05 4.9Z" fill="#EA4335" stroke="none"></path>
+                                        <path d="M12.65 21c2.53 0 4.66-.83 6.22-2.26l-2.87-2.4c-1 .68-2.28 1.06-3.35 1.06a5.72 5.72 0 0 1-5.42-3.86l-2.28 1.76A8.8 8.8 0 0 0 12.65 21Z" fill="#34A853" stroke="none"></path>
+                                        <path d="M5.43 14.14a5.67 5.67 0 0 1 0-4.28L3.16 8.16A8.8 8.8 0 0 0 3.6 15.1l1.83-1.4Z" fill="#FBBC05" stroke="none"></path>
                                     </svg>
                                 </span>
                                 <span id="quick-engine-name">DuckDuckGo</span>
@@ -166,7 +178,12 @@
                                     <span>DuckDuckGo</span>
                                 </div>
                                 <div class="quick-dropdown-item" data-value="google">
-                                    <svg class="engine-icon logo-google" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>
+                                    <svg class="engine-icon logo-google" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                        <path d="M21.35 11.1h-8.7v2.9h4.98c-.47 2.3-2.43 3.9-4.98 3.9a5.7 5.7 0 1 1 0-11.4c1.64 0 2.96.62 3.9 1.53l2.1-2.1A8.8 8.8 0 1 0 12.65 21c4.86 0 8.95-3.32 8.95-8.97 0-.58-.05-1.01-.25-1.93Z" fill="#4285F4" stroke="none"></path>
+                                        <path d="M3.6 8.2l2.26 1.66A5.72 5.72 0 0 1 12.65 6c1.64 0 2.96.62 3.9 1.53l2.1-2.1A8.8 8.8 0 0 0 12.65 3c-3.54 0-6.6 1.98-8.05 4.9Z" fill="#EA4335" stroke="none"></path>
+                                        <path d="M12.65 21c2.53 0 4.66-.83 6.22-2.26l-2.87-2.4c-1 .68-2.28 1.06-3.35 1.06a5.72 5.72 0 0 1-5.42-3.86l-2.28 1.76A8.8 8.8 0 0 0 12.65 21Z" fill="#34A853" stroke="none"></path>
+                                        <path d="M5.43 14.14a5.67 5.67 0 0 1 0-4.28L3.16 8.16A8.8 8.8 0 0 0 3.6 15.1l1.83-1.4Z" fill="#FBBC05" stroke="none"></path>
+                                    </svg>
                                     <span>Google</span>
                                 </div>
                                 <div class="quick-dropdown-item" data-value="bing">
@@ -189,21 +206,13 @@
                         </div>
                         <div class="quick-interactive-wrapper">
                             <button id="quick-interactive-btn" class="toolbar-btn" aria-label="切换交互式深度搜索" title="交互式深度搜索">
-                                <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <circle cx="12" cy="12" r="1"></circle>
-                                    <path d="M12 2a10 10 0 1 0 10 10"></path>
-                                    <path d="M12 6a6 6 0 1 1-6 6"></path>
-                                    <path d="m18 6 0.5-2.5 2.5-.5"></path>
-                                    <path d="m18 18 2.5.5.5 2.5"></path>
-                                    <path d="m6 18-2.5.5-.5 2.5"></path>
-                                </svg>
+                                <span class="material-symbols-rounded toolbar-symbol" aria-hidden="true">travel_explore</span>
                                 <span>深度搜索</span>
                                 <span class="interactive-status-badge"></span>
                             </button>
                         </div>
                     </div>
                     <div class="input-toolbar-right">
-                        <span id="char-count" class="char-count" style="display:none;"></span>
                         <button id="send-btn" aria-label="发送消息">
                             <svg class="send-icon-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="12" y1="19" x2="12" y2="5"></line>
@@ -290,6 +299,17 @@
                                         <option value="searxng">SearXNG</option>
                                     </select>
                                 </div>
+                                <div class="form-group settings-field-row engine-check-row">
+                                    <div class="settings-field-copy">
+                                        <label for="check-engines-btn">搜索引擎可用性</label>
+                                        <span class="field-desc">实际搜索测试词并检查结果解析状态。</span>
+                                    </div>
+                                    <button type="button" id="check-engines-btn" class="engine-check-btn secondary-btn">
+                                        <span class="material-symbols-rounded">network_check</span>
+                                        <span>检测</span>
+                                    </button>
+                                </div>
+                                <div id="engine-check-results" class="engine-check-results" aria-live="polite"></div>
                                 <div class="form-group toggle-group settings-field-row">
                                     <div class="toggle-info settings-field-copy">
                                         <label for="interactive-search-input" class="toggle-label">交互式深度搜索 (Beta)</label>
@@ -309,7 +329,7 @@
                                 <div class="form-grid">
                                     <div class="form-group">
                                         <label for="max-results-input">最大搜索结果数</label>
-                                        <input type="number" id="max-results-input" placeholder="8" min="1" max="20">
+                                        <input type="number" id="max-results-input" placeholder="50" min="1" max="50">
                                     </div>
                                     <div class="form-group">
                                         <label for="max-iterations-input">最大迭代次数</label>
@@ -493,6 +513,6 @@
         </div>
     </div>
 
-    <script type="module" src="/static/js/main.js"></script>
+    <script type="module" src="/static/js/main.js?v=9"></script>
 </body>
 </html>

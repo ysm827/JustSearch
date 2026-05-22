@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class BrowserManager:
-    def __init__(self, engine: str = "duckduckgo", max_results: int = 8):
+    def __init__(self, engine: str = "duckduckgo", max_results: int = 50):
         self.stealth = Stealth()
         self.engine = engine
         self.max_results = max_results
@@ -52,14 +52,21 @@ class BrowserManager:
         """No-op: browser contexts are managed by backend.app.browser_context."""
         return None
 
-    async def search_web(self, query: str, log_func=None, session_id: str = None) -> List[Dict]:
+    async def search_web(
+        self,
+        query: str,
+        log_func=None,
+        session_id: str = None,
+        allow_fallback: bool = True,
+        use_cache: bool = True,
+    ) -> List[Dict]:
         """
         Concurrent Web Search - scrapes search results for the query.
         Automatically falls back to a healthy engine if the preferred one is unhealthy.
         """
         # Check cache first
         cache_key = f"{self.engine}:{query}"
-        cached = _search_cache.get(cache_key)
+        cached = _search_cache.get(cache_key) if use_cache else None
         if cached and time.time() - cached[1] < _SEARCH_CACHE_TTL:
             if log_func:
                 log_func(f"浏览器: 使用缓存搜索结果: '{_truncate_for_log(query)}'")
@@ -71,7 +78,11 @@ class BrowserManager:
 
         # Auto-fallback: if preferred engine is unhealthy, switch to best available
         available_engines = list(self.engine_config.keys())
-        actual_engine = engine_health.get_fallback(self.engine, available_engines)
+        actual_engine = (
+            engine_health.get_fallback(self.engine, available_engines)
+            if allow_fallback
+            else self.engine
+        )
         if actual_engine != self.engine:
             if log_func:
                 log_func(f"浏览器: {self.engine.capitalize()} 不稳定，自动切换到 {actual_engine.capitalize()}")
@@ -137,13 +148,11 @@ class BrowserManager:
                     log_func("浏览器: 检测到验证码！等待手动解决...")
 
                 if session_id:
-                    if log_func:
-                        log_func("ACTION_REQUIRED: CAPTCHA_DETECTED")
-
                     event = asyncio.Event()
                     register_interaction_session(session_id, page, event)
 
                     if log_func:
+                        log_func("ACTION_REQUIRED: CAPTCHA_DETECTED")
                         log_func(f"浏览器: 请点击界面上的'手动验证'按钮来解决验证码")
 
                     try:
@@ -180,7 +189,8 @@ class BrowserManager:
                     if log_func:
                         log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
                     engine_health.record(actual_engine, success=True)
-                    _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
+                    if use_cache:
+                        _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
                     return results
                 engine_health.record(actual_engine, success=False)
                 return []
@@ -275,7 +285,8 @@ class BrowserManager:
                 log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
             engine_health.record(actual_engine, success=True)
             # Cache results (use actual engine in key for consistency)
-            _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
+            if use_cache:
+                _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
             return results
         except Exception as e:
             msg = f"搜索错误: {e}"

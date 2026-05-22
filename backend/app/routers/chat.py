@@ -40,7 +40,7 @@ class ChatRequest(BaseModel):
     model: Optional[str] = None
     base_url: Optional[str] = None
     search_engine: Optional[str] = None
-    max_results: Optional[int] = 8
+    max_results: Optional[int] = 50
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
 
@@ -184,7 +184,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         model = model.split(":")[0].strip()
 
     search_engine = request.search_engine or defaults.get("search_engine", "duckduckgo")
-    max_results = request.max_results or defaults.get("max_results", 8)
+    max_results = request.max_results or defaults.get("max_results", 50)
     max_iterations = request.max_iterations or defaults.get("max_iterations", 5)
     interactive_search = (
         request.interactive_search

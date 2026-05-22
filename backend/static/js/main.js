@@ -3,7 +3,7 @@ import { state, setCurrentSessionId } from './modules/state.js';
 import { initUI, elements } from './modules/ui.js';
 import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js';
 import { setupBrowserModal } from './modules/browser-modal.js';
-import { renderHistory, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js';
+import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js';
 import { setupSettingsModal } from './modules/settings-modal.js';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js';
 import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js';
@@ -17,11 +17,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settings = normalizeSettings(await API.fetchSettings());
     updateModelSelector(settings.model_id || '');
 
-    const chatHistory = await API.fetchHistory();
+    const [chatHistory, chatGroups] = await Promise.all([
+        API.fetchHistory(),
+        API.fetchChatGroups()
+    ]);
     const { loadChat, deleteChat } = setupChatHandler(elements, renderHistory);
     const historyCallbacks = { onSelect: loadChat, onDelete: deleteChat };
 
-    renderHistory(chatHistory, state.currentSessionId, historyCallbacks);
+    renderHistory(chatHistory, state.currentSessionId, historyCallbacks, chatGroups);
     restoreSessionFromUrl(chatHistory, loadChat);
 
     window.addEventListener('popstate', (event) => {
@@ -39,6 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         onSettingsSaved: syncQuickSettingsFromState 
     });
     setupBrowserModal();
+    setupHistoryGroups(historyCallbacks);
     setupHistorySearch(historyCallbacks);
     setupSystemThemeListener();
     setupPwaInstallPrompt();
@@ -153,7 +157,7 @@ function setupKeyboardShortcuts() {
 
         if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
             event.preventDefault();
-            elements.historySearchInput?.focus();
+            openHistorySearch();
         }
 
         if ((event.ctrlKey || event.metaKey) && event.key === '/') {

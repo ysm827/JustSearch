@@ -8,11 +8,12 @@ import logging
 import os
 import re
 import asyncio
+import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, JSON, select, delete, update, text, Index
+from sqlalchemy import Boolean, Column, String, Text, DateTime, Integer, ForeignKey, JSON, select, delete, update, text, Index
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.sql import func
 
@@ -57,11 +58,22 @@ async def get_session() -> AsyncSession:
 # ---------------------------------------------------------------------------
 
 
+class ChatGroup(Base):
+    __tablename__ = "chat_groups"
+
+    id = Column(String, primary_key=True)
+    title = Column(String, nullable=False)
+    is_expanded = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=func.now(), index=True)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), index=True)
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(String, primary_key=True)
     title = Column(String, default="新对话")
+    group_id = Column(String, ForeignKey("chat_groups.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=func.now(), index=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), index=True)
 
@@ -123,6 +135,14 @@ async def init_db():
 
     # Ensure missing columns are added (create_all only creates new tables)
     async with _engine.begin() as conn:
+        result = await conn.execute(text("PRAGMA table_info('chat_sessions')"))
+        session_cols = {row[1] for row in result}
+        if "group_id" not in session_cols:
+            await conn.execute(text(
+                "ALTER TABLE chat_sessions ADD COLUMN group_id VARCHAR"
+            ))
+            logger.info("Added missing 'group_id' column to chat_sessions")
+
         result = await conn.execute(text("PRAGMA table_info('chat_messages')"))
         existing_cols = {row[1] for row in result}
         if "stats" not in existing_cols:
@@ -139,6 +159,10 @@ async def init_db():
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_chat_sessions_updated "
             "ON chat_sessions (updated_at)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chat_sessions_group_updated "
+            "ON chat_sessions (group_id, updated_at)"
         ))
         # Full-text search index for chat content search
         await conn.execute(text(
@@ -249,6 +273,7 @@ async def load_chat_history(session_id_or_path: str) -> Optional[Dict[str, Any]]
         return {
             "id": sess.id,
             "title": sess.title,
+            "group_id": sess.group_id,
             "timestamp": sess.updated_at.isoformat() if sess.updated_at else "",
             "messages": messages,
         }
@@ -314,7 +339,7 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
         await session.commit()
 
 
-async def list_chats(limit: int = 100, offset: int = 0) -> List[Dict[str, str]]:
+async def list_chats(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
     """Return list of chat summaries (id, title, timestamp), newest first. Supports pagination."""
     async with await get_session() as session:
         result = await session.execute(
@@ -329,10 +354,108 @@ async def list_chats(limit: int = 100, offset: int = 0) -> List[Dict[str, str]]:
             {
                 "id": s.id,
                 "title": s.title,
+                "group_id": s.group_id,
                 "timestamp": s.updated_at.isoformat() if s.updated_at else "",
             }
             for s in sessions
         ]
+
+
+def _group_to_dict(group: ChatGroup) -> Dict[str, Any]:
+    return {
+        "id": group.id,
+        "title": group.title,
+        "is_expanded": bool(group.is_expanded),
+        "timestamp": group.updated_at.isoformat() if group.updated_at else "",
+    }
+
+
+async def list_chat_groups() -> List[Dict[str, Any]]:
+    """Return user-defined chat groups, newest first."""
+    async with await get_session() as session:
+        result = await session.execute(
+            select(ChatGroup).order_by(ChatGroup.updated_at.desc())
+        )
+        groups = result.scalars().all()
+        return [_group_to_dict(group) for group in groups]
+
+
+async def create_chat_group(title: str) -> Dict[str, Any]:
+    title = title.strip() or "新分组"
+    now = datetime.now()
+    group = ChatGroup(
+        id=f"group-{int(now.timestamp() * 1000)}-{uuid.uuid4().hex[:8]}",
+        title=title,
+        is_expanded=True,
+        created_at=now,
+        updated_at=now,
+    )
+    async with await get_session() as session:
+        session.add(group)
+        await session.commit()
+        await session.refresh(group)
+        return _group_to_dict(group)
+
+
+async def update_chat_group(
+    group_id: str,
+    title: Optional[str] = None,
+    is_expanded: Optional[bool] = None,
+) -> Optional[Dict[str, Any]]:
+    async with await get_session() as session:
+        group = (await session.execute(
+            select(ChatGroup).where(ChatGroup.id == group_id)
+        )).scalar_one_or_none()
+        if group is None:
+            return None
+
+        if title is not None and title.strip():
+            group.title = title.strip()
+        if is_expanded is not None:
+            group.is_expanded = bool(is_expanded)
+        group.updated_at = datetime.now()
+
+        await session.commit()
+        await session.refresh(group)
+        return _group_to_dict(group)
+
+
+async def delete_chat_group(group_id: str) -> bool:
+    async with await get_session() as session:
+        group = (await session.execute(
+            select(ChatGroup).where(ChatGroup.id == group_id)
+        )).scalar_one_or_none()
+        if group is None:
+            return False
+
+        await session.execute(
+            update(ChatSession)
+            .where(ChatSession.group_id == group_id)
+            .values(group_id=None)
+        )
+        await session.delete(group)
+        await session.commit()
+        return True
+
+
+async def move_chat_to_group(session_id: str, group_id: Optional[str]) -> bool:
+    async with await get_session() as session:
+        sess = (await session.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
+        )).scalar_one_or_none()
+        if sess is None:
+            return False
+
+        if group_id is not None:
+            group = (await session.execute(
+                select(ChatGroup).where(ChatGroup.id == group_id)
+            )).scalar_one_or_none()
+            if group is None:
+                return False
+
+        sess.group_id = group_id
+        await session.commit()
+        return True
 
 
 async def delete_chat(session_id: str):
@@ -363,6 +486,7 @@ async def delete_all_chats():
     async with await get_session() as session:
         await session.execute(delete(ChatMessage))
         await session.execute(delete(ChatSession))
+        await session.execute(delete(ChatGroup))
         await session.commit()
 
 
@@ -384,7 +508,7 @@ DEFAULT_SETTINGS = {
     "base_url": "https://api.deepseek.com/v1",
     "model_id": "deepseek-v4-pro",
     "search_engine": "duckduckgo",
-    "max_results": "8",
+    "max_results": "50",
     "max_iterations": "5",
     "interactive_search": "true",
     "max_concurrent_pages": "10",

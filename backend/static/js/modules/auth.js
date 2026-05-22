@@ -37,7 +37,7 @@ export function buildAuthHeaders(token, headers = {}) {
     return merged;
 }
 
-export function buildBrowserWebSocketUrl(locationLike, sessionId, token = '') {
+export function buildBrowserWebSocketUrl(locationLike, sessionId, token = getAuthToken()) {
     const protocol = locationLike.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = new URL(`${protocol}//${locationLike.host}/ws/browser/${sessionId}`);
     if (token) {

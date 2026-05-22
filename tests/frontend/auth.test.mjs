@@ -5,6 +5,7 @@ import {
     buildAuthenticatedUrl,
     buildAuthHeaders,
     buildBrowserWebSocketUrl,
+    initializeAuth,
     normalizeSettings,
     resolveClientAuth,
 } from '../../backend/static/js/modules/auth.js';
@@ -38,6 +39,37 @@ test('buildBrowserWebSocketUrl appends token and protocol correctly', () => {
     assert.equal(
         result,
         'wss://example.com/ws/browser/session-1?token=secret-token',
+    );
+});
+
+test('buildBrowserWebSocketUrl uses current auth token by default', () => {
+    const stored = new Map();
+    initializeAuth({
+        __JUSTSEARCH_BOOTSTRAP__: { authEnabled: true },
+        localStorage: {
+            getItem: (key) => stored.get(key) || '',
+            setItem: (key, value) => stored.set(key, value),
+        },
+        location: {
+            href: 'https://example.com/?token=query-token',
+            pathname: '/',
+            search: '?token=query-token',
+            hash: '',
+        },
+        history: {
+            state: null,
+            replaceState: () => {},
+        },
+    });
+
+    const result = buildBrowserWebSocketUrl(
+        { protocol: 'https:', host: 'example.com' },
+        'session-2',
+    );
+
+    assert.equal(
+        result,
+        'wss://example.com/ws/browser/session-2?token=query-token',
     );
 });
 

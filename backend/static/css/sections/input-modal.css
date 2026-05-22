@@ -166,6 +166,19 @@
     color: var(--amc-text-primary);
 }
 
+.toolbar-btn .toolbar-symbol {
+    width: 16px;
+    height: 16px;
+    color: var(--amc-icon-color);
+    font-size: 16px;
+    line-height: 1;
+    transition: color 0.2s ease;
+}
+
+.toolbar-btn:hover .toolbar-symbol {
+    color: var(--amc-text-primary);
+}
+
 .toolbar-btn .chevron-svg {
     width: 14px;
     height: 14px;
@@ -293,7 +306,8 @@
     color: var(--amc-success-text);
 }
 
-#quick-interactive-btn.active .icon-svg {
+#quick-interactive-btn.active .icon-svg,
+#quick-interactive-btn.active .toolbar-symbol {
     color: var(--amc-success-text);
 }
 
@@ -310,12 +324,6 @@
 #quick-interactive-btn.active .interactive-status-badge {
     background-color: var(--amc-success-text);
     box-shadow: 0 0 4px var(--amc-success-text);
-}
-
-.char-count {
-    font-size: 12px;
-    color: var(--amc-text-tertiary);
-    font-family: monospace;
 }
 
 /* Submit/Send Button - Morphing and Animations */
@@ -964,6 +972,109 @@
 .settings-field-row > input {
     width: min(280px, 45%);
     flex-shrink: 0;
+}
+
+.engine-check-row {
+    align-items: flex-start;
+}
+
+.engine-check-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 104px;
+    min-height: 40px;
+    padding: 9px 14px;
+    border-radius: var(--amc-radius);
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.engine-check-btn .material-symbols-rounded {
+    font-size: 18px;
+}
+
+.engine-check-btn:disabled {
+    cursor: wait;
+    opacity: 0.72;
+}
+
+.engine-check-btn.is-checking .material-symbols-rounded,
+.engine-check-pending .material-symbols-rounded {
+    display: inline-flex;
+    animation: api-verify-spin 0.85s linear infinite;
+}
+
+.engine-check-results {
+    display: none;
+    padding: 2px 0 12px;
+}
+
+.engine-check-results.active {
+    display: block;
+}
+
+.engine-check-query {
+    margin-bottom: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.engine-check-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.engine-check-result,
+.engine-check-pending,
+.engine-check-empty {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 44px;
+    padding: 9px 10px;
+    border-radius: var(--amc-radius);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+.engine-check-result .material-symbols-rounded,
+.engine-check-pending .material-symbols-rounded,
+.engine-check-empty .material-symbols-rounded {
+    flex: 0 0 auto;
+    font-size: 19px;
+}
+
+.engine-check-result.available {
+    background: var(--success-light);
+    color: var(--success);
+}
+
+.engine-check-result.unavailable {
+    background: var(--error-light);
+    color: var(--error);
+}
+
+.engine-check-copy {
+    min-width: 0;
+}
+
+.engine-check-name {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.25;
+}
+
+.engine-check-detail {
+    margin-top: 2px;
+    color: currentColor;
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
 }
 
 .form-group input:focus,

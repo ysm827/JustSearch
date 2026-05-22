@@ -20,6 +20,14 @@ export function setupChatHandler(elements, renderHistory) {
         userScrolled = (scrollHeight - scrollTop - clientHeight) > 100;
     });
 
+    async function refreshHistory() {
+        const [history, groups] = await Promise.all([
+            API.fetchHistory(),
+            API.fetchChatGroups()
+        ]);
+        renderHistory(history, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat }, groups);
+    }
+
     async function loadChat(sessionId) {
         setCurrentSessionId(sessionId);
         updateActiveHistoryItem(sessionId);
@@ -38,8 +46,7 @@ export function setupChatHandler(elements, renderHistory) {
             if (state.currentSessionId === sessionId) {
                 elements.newChatBtn.click();
             }
-            const history = await API.fetchHistory();
-            renderHistory(history, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat });
+            await refreshHistory();
             showToast('对话已删除', 'success');
         } else {
             showToast('删除对话失败', 'error');
@@ -224,7 +231,7 @@ export function setupChatHandler(elements, renderHistory) {
                     currentAnswerBuffer = finalAnswer;
                     contentWrapper.innerHTML = renderWithCitations(finalAnswer, currentSources);
                     setCurrentSessionId(sessionId);
-                    API.fetchHistory().then(h => renderHistory(h, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat }));
+                    refreshHistory();
                 },
                 onError: (err) => {
                     if (!hasReceivedChunk) {
@@ -338,18 +345,6 @@ export function setupChatHandler(elements, renderHistory) {
         }
         updateSendButtonState();
 
-        // Update character count
-        const charCount = document.getElementById('char-count');
-        if (charCount) {
-            const len = elements.userInput.value.length;
-            if (len > 0) {
-                charCount.style.display = 'block';
-                charCount.textContent = `${len}`;
-                charCount.style.color = len > 2000 ? 'var(--error)' : 'var(--text-muted)';
-            } else {
-                charCount.style.display = 'none';
-            }
-        }
     }
 
     // 绑定事件

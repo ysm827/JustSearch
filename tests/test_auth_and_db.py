@@ -174,6 +174,59 @@ def test_save_chat_history_populates_fts_table(tmp_path):
     asyncio.run(run())
 
 
+def test_chat_groups_can_manage_sessions(tmp_path):
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        await database.save_chat_history(
+            "session-1",
+            [{"role": "user", "content": "alpha"}],
+            title="Alpha",
+        )
+
+        group = await database.create_chat_group("研究资料")
+        assert group["title"] == "研究资料"
+        assert group["is_expanded"] is True
+
+        moved = await database.move_chat_to_group("session-1", group["id"])
+        assert moved is True
+        chats = await database.list_chats()
+        assert chats[0]["group_id"] == group["id"]
+
+        renamed = await database.update_chat_group(
+            group["id"],
+            title="论文资料",
+            is_expanded=False,
+        )
+        assert renamed["title"] == "论文资料"
+        assert renamed["is_expanded"] is False
+
+        deleted = await database.delete_chat_group(group["id"])
+        assert deleted is True
+        assert await database.list_chat_groups() == []
+        chats = await database.list_chats()
+        assert chats[0]["group_id"] is None
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_context_user_data_dir_is_stable_for_slot(tmp_path):
     from backend.app.browser_context import get_context_user_data_dir
 
@@ -283,3 +336,88 @@ def test_validate_key_resolves_masked_key(tmp_path):
 
     asyncio.run(run())
 
+
+def test_check_search_engines_reports_availability(monkeypatch):
+    from backend.app.routers.settings import router
+
+    calls = []
+
+    class FakeBrowserManager:
+        def __init__(self, engine, max_results):
+            self.engine = engine
+            self.max_results = max_results
+
+        async def search_web(
+            self,
+            query,
+            log_func=None,
+            session_id=None,
+            allow_fallback=True,
+            use_cache=True,
+        ):
+            calls.append(
+                {
+                    "engine": self.engine,
+                    "max_results": self.max_results,
+                    "query": query,
+                    "allow_fallback": allow_fallback,
+                    "use_cache": use_cache,
+                }
+            )
+            if self.engine == "bing":
+                return []
+            return [{"title": "JustSearch", "url": "https://example.com"}]
+
+    monkeypatch.setattr(
+        "backend.app.routers.settings.BrowserManager",
+        FakeBrowserManager,
+    )
+    monkeypatch.setattr(
+        "backend.app.routers.settings.get_all_engines",
+        lambda: ["duckduckgo", "bing"],
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post("/api/settings/check-engines")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "query": "JustSearch test",
+            "results": [
+                {
+                    "engine": "duckduckgo",
+                    "available": True,
+                    "result_count": 1,
+                    "error": "",
+                },
+                {
+                    "engine": "bing",
+                    "available": False,
+                    "result_count": 0,
+                    "error": "未解析到搜索结果",
+                },
+            ],
+        }
+        assert calls == [
+            {
+                "engine": "duckduckgo",
+                "max_results": 3,
+                "query": "JustSearch test",
+                "allow_fallback": False,
+                "use_cache": False,
+            },
+            {
+                "engine": "bing",
+                "max_results": 3,
+                "query": "JustSearch test",
+                "allow_fallback": False,
+                "use_cache": False,
+            },
+        ]
+
+    asyncio.run(run())

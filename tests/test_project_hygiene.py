@@ -135,6 +135,82 @@ def test_search_result_cleanup_is_split_from_browser_manager():
     assert "def _is_search_engine_internal_page" not in manager_source
 
 
+def test_captcha_interaction_session_is_registered_before_frontend_notification():
+    manager_source = (
+        PROJECT_ROOT / "backend/app/browser_manager.py"
+    ).read_text(encoding="utf-8")
+    captcha_block = manager_source.split("if detected_captcha:", 1)[1].split(
+        "# Wait for results", 1
+    )[0]
+
+    register_index = captcha_block.index("register_interaction_session(session_id, page, event)")
+    notify_index = captcha_block.index("ACTION_REQUIRED: CAPTCHA_DETECTED")
+
+    assert register_index < notify_index
+
+
+def test_google_engine_uses_official_multicolor_icon():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    chat_source = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+    google_item_match = re.search(
+        r'<div class="quick-dropdown-item" data-value="google">(.*?)</div>',
+        index_source,
+        re.DOTALL,
+    )
+
+    assert google_item_match is not None
+    google_markup = google_item_match.group(1)
+    assert 'class="engine-icon logo-google"' in google_markup
+    assert 'fill="currentColor"' not in google_markup
+    assert google_markup.count('<path') >= 4
+    assert 'fill="#4285F4"' in google_markup
+    assert 'fill="#EA4335"' in google_markup
+    assert 'fill="#FBBC05"' in google_markup
+    assert 'fill="#34A853"' in google_markup
+    assert "appendChild(activeSvg.cloneNode(true))" in chat_source
+
+
+def test_sidebar_brand_uses_split_google_style_colors():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    sidebar_source = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+
+    assert '<span class="brand-text-blue">Just</span>' in index_source
+    assert '<span class="brand-text-cyan">Search</span>' in index_source
+    assert "--brand-google-blue: #0024bb;" in sidebar_source
+    assert "--brand-google-cyan: #00a5a5;" in sidebar_source
+    assert "color: var(--brand-google-blue);" in sidebar_source
+    assert "color: var(--brand-google-cyan);" in sidebar_source
+
+
+def test_sidebar_brand_toggles_sidebar_like_collapse_button():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    sidebar_js = (
+        PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
+    ).read_text(encoding="utf-8")
+    sidebar_source = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+
+    assert 'id="sidebar-brand-toggle"' in index_source
+    assert 'role="button"' in index_source
+    assert 'tabindex="0"' in index_source
+    assert "const sidebarBrandToggle = document.getElementById('sidebar-brand-toggle');" in sidebar_js
+    assert "sidebarBrandToggle?.addEventListener('click', toggleSidebar);" in sidebar_js
+    assert "event.key === 'Enter' || event.key === ' '" in sidebar_js
+    assert ".sidebar-brand-name:hover" in sidebar_source
+    assert "cursor: pointer;" in sidebar_source
+
+
 def test_crawler_security_and_redirect_helpers_are_split_out():
     crawler_dir = PROJECT_ROOT / "backend/app/crawler"
     security_path = crawler_dir / "security.py"
@@ -232,6 +308,7 @@ def test_frontend_uses_generated_logo_asset():
     assert "/static/assets/justsearch-favicon.png?v=7" in index_source
     assert "/static/assets/justsearch-favicon.png" in manifest_source
     assert "class=\"brand-logo\"" not in index_source
+    assert "sidebar-logo" not in index_source
     assert "hero-brand-logo-light" in index_source
     assert "hero-brand-logo-dark" in index_source
 
@@ -458,6 +535,89 @@ def test_validate_api_key_button_shows_loading_state():
     assert ".password-toggle-btn.is-validating span" in settings_css
 
 
+def test_settings_modal_has_search_engine_availability_check():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    api_js = (PROJECT_ROOT / "backend/static/js/modules/api.js").read_text(
+        encoding="utf-8"
+    )
+    settings_css = (
+        PROJECT_ROOT / "backend/static/css/sections/input-modal.css"
+    ).read_text(encoding="utf-8")
+
+    assert 'id="check-engines-btn"' in index_source
+    assert 'id="engine-check-results"' in index_source
+    assert 'export async function checkEnginesAPI' in api_js
+    assert "API.checkEnginesAPI" in settings_js
+    assert "checkEnginesBtn.disabled = true" in settings_js
+    assert "checkEnginesBtn.disabled = false" in settings_js
+    assert "renderEngineCheckResults" in settings_js
+    assert ".engine-check-results" in settings_css
+    assert ".engine-check-result.available" in settings_css
+    assert ".engine-check-result.unavailable" in settings_css
+
+
+def test_default_max_search_results_is_fifty_across_app():
+    database_source = (PROJECT_ROOT / "backend/app/database.py").read_text(
+        encoding="utf-8"
+    )
+    chat_source = (PROJECT_ROOT / "backend/app/routers/chat.py").read_text(
+        encoding="utf-8"
+    )
+    settings_source = (PROJECT_ROOT / "backend/app/routers/settings.py").read_text(
+        encoding="utf-8"
+    )
+    browser_manager_source = (PROJECT_ROOT / "backend/app/browser_manager.py").read_text(
+        encoding="utf-8"
+    )
+    workflow_source = (PROJECT_ROOT / "backend/app/workflow.py").read_text(
+        encoding="utf-8"
+    )
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    settings_example = (PROJECT_ROOT / "backend/settings.json.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"max_results": "50"' in database_source
+    assert "max_results: Optional[int] = 50" in chat_source
+    assert 'defaults.get("max_results", 50)' in chat_source
+    assert "max_results: Optional[int] = 50" in settings_source
+    assert 'min(50, int(update["max_results"]))' in settings_source
+    assert 'max_results: int = 50' in browser_manager_source
+    assert 'max_results: int = 50' in workflow_source
+    assert "settings.max_results || 50" in settings_js
+    assert "max_results: parseInt(document.getElementById('max-results-input').value) || 50" in settings_js
+    assert 'id="max-results-input" placeholder="50" min="1" max="50"' in index_source
+    assert '"max_results": 50' in settings_example
+
+
+def test_input_area_has_no_character_counter():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    chat_source = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+    css_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((PROJECT_ROOT / "backend/static/css").rglob("*.css"))
+    )
+
+    assert "char-count" not in index_source
+    assert "charCount" not in chat_source
+    assert "Update character count" not in chat_source
+    assert ".char-count" not in css_source
+
+
 def test_initial_release_version_uses_semver_and_v_display_prefix():
     version_source = (PROJECT_ROOT / "backend/app/version.py").read_text(encoding="utf-8")
     dockerfile_source = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -523,9 +683,21 @@ def test_css_is_split_into_named_sections():
 
     for filename in expected_sections:
         assert (sections_dir / filename).is_file()
-        assert f"@import url('./sections/{filename}');" in style_source
+        assert f"./sections/{filename}" in style_source
 
     assert len(style_source.splitlines()) < 40
+
+
+def test_sidebar_stylesheet_changes_are_cache_busted():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    style_source = (
+        PROJECT_ROOT / "backend/static/css/style.css"
+    ).read_text(encoding="utf-8")
+
+    assert 'href="/static/css/style.css?v=9"' in index_source
+    assert "@import url('./sections/sidebar.css?v=8');" in style_source
 
 
 def test_history_rename_updates_cached_history_source():
@@ -553,6 +725,184 @@ def test_history_empty_state_uses_dom_helper_instead_of_html_strings():
     assert "style=\"font-size" not in source
 
 
+def test_sidebar_history_groups_have_frontend_controls():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    history_source = (
+        PROJECT_ROOT / "backend/static/js/modules/history-view.js"
+    ).read_text(encoding="utf-8")
+    api_source = (PROJECT_ROOT / "backend/static/js/modules/api.js").read_text(
+        encoding="utf-8"
+    )
+    sidebar_css = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+
+    assert 'id="new-group-btn"' in index_source
+    assert "fetchChatGroups" in api_source
+    assert "createChatGroupAPI" in api_source
+    assert "moveChatToGroupAPI" in api_source
+    assert "renderChatGroups" in history_source
+    assert "setupHistoryDragAndDrop" in history_source
+    assert "data-group-id" in history_source
+    assert ".chat-group-header" in sidebar_css
+    assert ".chat-group-drop-target" in sidebar_css
+
+
+def test_sidebar_search_action_matches_amc_layout():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    history_source = (
+        PROJECT_ROOT / "backend/static/js/modules/history-view.js"
+    ).read_text(encoding="utf-8")
+    sidebar_css = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+
+    action_stack = index_source.split('<div class="new-chat-wrapper">', 1)[1].split(
+        '<div class="history-list"',
+        1,
+    )[0]
+
+    assert action_stack.index('id="new-chat-btn"') < action_stack.index(
+        'id="history-search-open-btn"'
+    )
+    assert action_stack.index('id="history-search-open-btn"') < action_stack.index(
+        'id="new-group-btn"'
+    )
+    assert 'id="history-search-box"' in action_stack
+    assert 'id="history-search-close-btn"' in action_stack
+    assert 'class="history-search-btn"' in action_stack
+
+    assert ".history-search-btn" in sidebar_css
+    assert ".history-search-box[hidden]" in sidebar_css
+    assert ".history-search-close-btn" in sidebar_css
+
+    assert "export function openHistorySearch" in history_source
+    assert "historySearchOpenBtn.hidden = true" in history_source
+    assert "historySearchBox.hidden = false" in history_source
+    assert "historySearchInput.value = ''" in history_source
+
+
+def test_sidebar_collapse_uses_crossfade_instead_of_display_toggle():
+    sidebar_css = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+    responsive_css = (
+        PROJECT_ROOT / "backend/static/css/sections/responsive.css"
+    ).read_text(encoding="utf-8")
+
+    expanded_collapsed_rule = re.search(
+        r"#sidebar\.collapsed\s+\.sidebar-expanded-pane\s*\{(?P<body>.*?)\}",
+        sidebar_css,
+        re.DOTALL,
+    )
+    mini_base_rule = re.search(
+        r"\.sidebar-collapsed-pane\s*\{(?P<body>.*?)\}",
+        sidebar_css,
+        re.DOTALL,
+    )
+    mini_collapsed_rule = re.search(
+        r"#sidebar\.collapsed\s+\.sidebar-collapsed-pane\s*\{(?P<body>.*?)\}",
+        sidebar_css,
+        re.DOTALL,
+    )
+    responsive_expanded_rule = re.search(
+        r"#sidebar\.collapsed\s+\.sidebar-expanded-pane\s*\{(?P<body>.*?)\}",
+        responsive_css,
+        re.DOTALL,
+    )
+    responsive_mini_rule = re.search(
+        r"#sidebar\.collapsed\s+\.sidebar-collapsed-pane\s*\{(?P<body>.*?)\}",
+        responsive_css,
+        re.DOTALL,
+    )
+
+    assert expanded_collapsed_rule is not None
+    assert mini_base_rule is not None
+    assert mini_collapsed_rule is not None
+    assert "display: none" not in expanded_collapsed_rule.group("body")
+    assert "display: none" not in mini_base_rule.group("body")
+    assert "display: flex" not in mini_collapsed_rule.group("body")
+    assert "visibility:" in expanded_collapsed_rule.group("body")
+    assert "pointer-events: none" in expanded_collapsed_rule.group("body")
+    assert "transform:" in expanded_collapsed_rule.group("body")
+    assert "transform:" in mini_collapsed_rule.group("body")
+    assert responsive_expanded_rule is not None
+    assert responsive_mini_rule is not None
+    assert "display: flex !important" not in responsive_expanded_rule.group("body")
+    assert "display: none !important" not in responsive_mini_rule.group("body")
+
+
+def test_sidebar_mini_icons_match_expanded_icon_size_and_direction():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    sidebar_css = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+
+    collapsed_markup = index_source.split('<div class="sidebar-collapsed-pane">', 1)[
+        1
+    ].split('    </div>\n\n    <div id="main">', 1)[0]
+    assert 'width="20" height="20"' not in collapsed_markup
+    assert collapsed_markup.count('width="18" height="18"') >= 5
+    assert 'class="icon-svg sidebar-collapse-icon"' in index_source
+    assert 'class="icon-svg sidebar-expand-icon"' in index_source
+    assert ".sidebar-expand-icon" in sidebar_css
+    assert "transform: scaleX(-1);" in sidebar_css
+
+
+def test_sidebar_polish_uses_precise_cursor_hover_and_stable_shortcuts():
+    sidebar_css = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+
+    assert "cursor: ew-resize" not in sidebar_css
+    assert "#sidebar.collapsed:hover" not in sidebar_css
+    assert "transition: all" not in sidebar_css
+    assert "min-width:" in re.search(
+        r"\.sidebar-kbd\s*\{(?P<body>.*?)\}",
+        sidebar_css,
+        re.DOTALL,
+    ).group("body")
+    assert "text-align: right" in sidebar_css
+    assert ".new-chat-btn:hover .sidebar-kbd" in sidebar_css
+
+
+def test_sidebar_header_primary_controls_are_twenty_percent_larger():
+    sidebar_css = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+
+    brand_rule = re.search(
+        r"\.sidebar-brand-name\s*\{(?P<body>.*?)\}",
+        sidebar_css,
+        re.DOTALL,
+    )
+    header_button_rule = re.search(
+        r"\.sidebar-header-buttons\s+\.icon-btn\s*\{(?P<body>.*?)\}",
+        sidebar_css,
+        re.DOTALL,
+    )
+    header_icon_rule = re.search(
+        r"\.sidebar-header-buttons\s+\.icon-svg\s*\{(?P<body>.*?)\}",
+        sidebar_css,
+        re.DOTALL,
+    )
+
+    assert brand_rule is not None
+    assert header_button_rule is not None
+    assert header_icon_rule is not None
+    assert "font-size: 19.8px;" in brand_rule.group("body")
+    assert "width: 41px !important;" in header_button_rule.group("body")
+    assert "height: 41px;" in header_button_rule.group("body")
+    assert "width: 21.6px;" in header_icon_rule.group("body")
+    assert "height: 21.6px;" in header_icon_rule.group("body")
+
+
 def test_model_selector_trigger_has_no_provider_icon():
     index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(encoding="utf-8")
     selector_source = (
@@ -570,7 +920,7 @@ def test_model_selector_trigger_has_no_provider_icon():
     assert "model-item-icon-svg" in selector_source
 
 
-def test_deep_search_toggle_uses_scan_icon():
+def test_deep_search_toggle_uses_material_symbol_icon():
     index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(encoding="utf-8")
 
     button_match = re.search(
@@ -581,9 +931,9 @@ def test_deep_search_toggle_uses_scan_icon():
 
     assert button_match is not None
     button_markup = button_match.group(1)
-    assert '<circle cx="12" cy="12" r="1"></circle>' in button_markup
-    assert '<path d="M12 2a10 10 0 1 0 10 10"></path>' in button_markup
-    assert '<line x1="21" y1="21" x2="16.65" y2="16.65"></line>' not in button_markup
+    assert 'class="material-symbols-rounded toolbar-symbol"' in button_markup
+    assert "travel_explore" in button_markup
+    assert '<svg class="icon-svg"' not in button_markup
 
 
 def test_browser_modal_queries_status_inside_its_modal():
