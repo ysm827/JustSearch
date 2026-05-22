@@ -1,5 +1,9 @@
 # 🚀 JustSearch: 智能 AI 深度搜索助手
 
+<p align="center">
+  <a href="./README.md">中文</a> | <a href="./README.en.md">English</a>
+</p>
+
 **JustSearch** 是一款基于大语言模型（LLM）和自动化浏览器技术的深度搜索工具。它不仅仅是一个搜索界面，更是一个能够像人类一样"思考、搜索、阅读、总结"的智能代理。它能自动拆解复杂问题，深入网页正文提取关键信息，并生成带有精确引用的详尽答案。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
