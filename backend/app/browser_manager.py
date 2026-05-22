@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import random
 import time
 import urllib.parse
@@ -10,18 +9,23 @@ from playwright_stealth import Stealth
 from typing import List, Dict
 
 from .browser_context import (
-    _SEARCH_LOCK, _LAST_REQUEST_TIME, _MIN_SEARCH_INTERVAL,
-    init_global_browser, shutdown_global_browser, get_new_page, release_page,
+    init_global_browser, get_new_page, release_page,
     get_context_pool_status,
+    search_rate_limit,
 )
 from .search_engine import load_selectors
 from .engine_health import engine_health
 from .interaction import (
-    _INTERACTION_SESSIONS, get_interaction_session,
-    mark_interaction_completed, register_interaction_session, remove_interaction_session
+    register_interaction_session, remove_interaction_session
 )
 from .llm_client import _truncate_for_log
+from .crawler.redirects import resolve_redirect_url
 from .page_crawler import crawl_page
+from .search_result_cleanup import (
+    clean_fallback_title,
+    is_generic_search_aux_title,
+    is_search_engine_internal_page,
+)
 
 # Simple search result cache: query -> (results, timestamp)
 _search_cache: dict = {}
@@ -45,7 +49,8 @@ class BrowserManager:
             await init_global_browser()
 
     async def stop(self):
-        pass
+        """No-op: browser contexts are managed by backend.app.browser_context."""
+        return None
 
     async def search_web(self, query: str, log_func=None, session_id: str = None) -> List[Dict]:
         """
@@ -88,19 +93,7 @@ class BrowserManager:
             encoded_query = urllib.parse.quote(query)
             url = config["base_url"].format(query=encoded_query, num=self.max_results + 2)
 
-            # Rate limiting
-            global _LAST_REQUEST_TIME
-            async with _SEARCH_LOCK:
-                now = time.time()
-                elapsed = now - _LAST_REQUEST_TIME
-                if elapsed < _MIN_SEARCH_INTERVAL:
-                    wait_time = _MIN_SEARCH_INTERVAL - elapsed + random.uniform(0.5, 1.5)
-                    if log_func:
-                        log_func(f"浏览器: 正在排队等待搜索 (冷却 {wait_time:.1f}s)...")
-                    await asyncio.sleep(wait_time)
-
-                _LAST_REQUEST_TIME = time.time()
-
+            async with search_rate_limit(log_func):
                 try:
                     if log_func:
                         log_func(f"浏览器: 正在加载搜索页面...")
@@ -180,6 +173,16 @@ class BrowserManager:
                 logger.warning(msg)
                 if log_func:
                     log_func(f"浏览器错误: {msg}")
+                    log_func("浏览器: 尝试使用降级文本提取搜索结果...")
+                results = await self._fallback_text_extract(page, query, log_func)
+                results = await self._postprocess_search_results(results, log_func=log_func)
+                if results:
+                    if log_func:
+                        log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
+                    engine_health.record(actual_engine, success=True)
+                    _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
+                    return results
+                engine_health.record(actual_engine, success=False)
                 return []
 
             if log_func:
@@ -266,6 +269,8 @@ class BrowserManager:
                 logger.info("CSS 选择器解析无结果，尝试降级文本提取...")
                 results = await self._fallback_text_extract(page, query, log_func)
 
+            results = await self._postprocess_search_results(results, log_func=log_func)
+
             if log_func:
                 log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
             engine_health.record(actual_engine, success=True)
@@ -311,15 +316,43 @@ class BrowserManager:
             }""", self.max_results)
 
             # 给结果编号
-            for i, item in enumerate(items):
+            filtered_items = []
+            for item in items:
+                item['title'] = clean_fallback_title(item.get('title', ''), item.get('url', ''))
+                if is_generic_search_aux_title(item['title']):
+                    continue
+                filtered_items.append(item)
+
+            for i, item in enumerate(filtered_items):
                 item['id'] = i + 1
 
-            if items and log_func:
-                log_func(f"浏览器: 降级文本提取到 {len(items)} 个结果。")
-            return items
+            if filtered_items and log_func:
+                log_func(f"浏览器: 降级文本提取到 {len(filtered_items)} 个结果。")
+            return filtered_items
         except Exception as e:
             logger.warning("降级文本提取失败: %s", e)
             return []
+
+    async def _postprocess_search_results(self, results: List[Dict], log_func=None) -> List[Dict]:
+        """Resolve result-wrapper URLs and remove search-engine utility pages."""
+        processed = []
+        for item in results:
+            url = item.get('url', '')
+            if not url:
+                continue
+
+            resolved_url = await resolve_redirect_url(url, log_func=log_func)
+            if is_search_engine_internal_page(resolved_url):
+                continue
+
+            new_item = item.copy()
+            new_item['url'] = resolved_url
+            processed.append(new_item)
+
+        for i, item in enumerate(processed):
+            item['id'] = i + 1
+
+        return processed
 
     async def crawl_page(self, url: str, log_func=None, interactive_mode: bool = False,
                          query: str = None, llm_client=None, session_id: str = None) -> str:

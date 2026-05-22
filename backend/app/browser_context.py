@@ -11,6 +11,7 @@ import os
 import random
 import time
 import json
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -97,6 +98,25 @@ def get_browser_config(user_data_dir: str) -> dict:
 
 def get_context_user_data_dir(project_root: str | os.PathLike, slot_index: int) -> Path:
     return Path(project_root) / "user_data" / f"ctx_{slot_index}"
+
+
+@asynccontextmanager
+async def search_rate_limit(log_func=None):
+    """Throttle search request starts without exposing module-private state."""
+    global _LAST_REQUEST_TIME
+
+    async with _SEARCH_LOCK:
+        now = time.time()
+        elapsed = now - _LAST_REQUEST_TIME
+        if elapsed < _MIN_SEARCH_INTERVAL:
+            wait_time = _MIN_SEARCH_INTERVAL - elapsed + random.uniform(0.5, 1.5)
+            if log_func:
+                log_func(f"浏览器: 正在排队等待搜索 (冷却 {wait_time:.1f}s)...")
+            await asyncio.sleep(wait_time)
+
+        _LAST_REQUEST_TIME = time.time()
+
+    yield
 
 
 # ---------------------------------------------------------------------------
@@ -355,10 +375,6 @@ def get_context_pool_status() -> dict:
             for i, s in enumerate(_context_pool)
         ],
     }
-
-
-# Legacy compat import (chat router references this module)
-# _GLOBAL_CONTEXT is no longer used — pool-based approach replaces it
 
 
 def reset_state():

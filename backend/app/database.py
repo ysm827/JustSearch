@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import asyncio
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -16,6 +15,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, JSON, select, delete, update, text, Index
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.sql import func
+
+from .legacy_migration import migrate_legacy_data
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,15 @@ async def init_db():
     logger.info("Database initialised at %s", _DB_PATH)
 
     # One-time migration from legacy JSON files
-    await _migrate_legacy_data()
+    await migrate_legacy_data(
+        get_session,
+        ChatSession,
+        ChatMessage,
+        Settings,
+        _CHATS_DIR,
+        _SETTINGS_FILE,
+        logger,
+    )
 
     # Auto-cleanup: remove sessions older than 90 days with no messages
     await _cleanup_old_sessions()
@@ -196,108 +205,8 @@ async def _cleanup_old_sessions(max_age_days: int = 90):
         logger.warning("Session cleanup failed: %s", e)
 
 
-async def _migrate_legacy_data():
-    """If chats/ or settings.json exist, import them into SQLite and remove."""
-    await _migrate_chats_dir()
-    await _migrate_settings_file()
-
-
-async def _migrate_chats_dir():
-    if not os.path.isdir(_CHATS_DIR):
-        return
-
-    import glob
-    json_files = glob.glob(os.path.join(_CHATS_DIR, "*.json"))
-    if not json_files:
-        return
-
-    logger.info("Migrating %d chat JSON files from %s …", len(json_files), _CHATS_DIR)
-
-    async with await get_session() as session:
-        for fpath in json_files:
-            try:
-                with open(fpath, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-
-                session_id = data.get("id") or os.path.splitext(os.path.basename(fpath))[0]
-                title = data.get("title", "新对话")
-                timestamp_str = data.get("timestamp")
-                ts = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.now()
-
-                # Upsert session
-                existing = (await session.execute(
-                    select(ChatSession).where(ChatSession.id == session_id)
-                )).scalar_one_or_none()
-                if existing is None:
-                    session_obj = ChatSession(id=session_id, title=title, created_at=ts, updated_at=ts)
-                    session.add(session_obj)
-                else:
-                    session_obj = existing
-
-                # Clear old messages
-                await session.execute(
-                    delete(ChatMessage).where(ChatMessage.session_id == session_id)
-                )
-
-                for msg in data.get("messages", []):
-                    session.add(ChatMessage(
-                        session_id=session_id,
-                        role=msg.get("role", "user"),
-                        content=msg.get("content", ""),
-                        logs=msg.get("logs") if isinstance(msg.get("logs"), list) else [],
-                        sources=msg.get("sources") if isinstance(msg.get("sources"), list) else [],
-                        stats=msg.get("stats") if isinstance(msg.get("stats"), dict) else {},
-                    ))
-
-            except Exception as e:
-                logger.error("Failed to migrate %s: %s", fpath, e)
-
-        await session.commit()
-
-    # Remove legacy directory
-    try:
-        shutil.rmtree(_CHATS_DIR, ignore_errors=True)
-        logger.info("Removed legacy chats/ directory")
-    except Exception as e:
-        logger.warning("Could not remove chats/ directory: %s", e)
-
-
-async def _migrate_settings_file():
-    if not os.path.isfile(_SETTINGS_FILE):
-        return
-
-    logger.info("Migrating settings.json …")
-    try:
-        with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        async with await get_session() as session:
-            for key, value in data.items():
-                # Convert non-string values to JSON strings
-                if isinstance(value, (dict, list, bool)):
-                    str_value = json.dumps(value, ensure_ascii=False)
-                else:
-                    str_value = str(value) if value is not None else ""
-
-                existing = (await session.execute(
-                    select(Settings).where(Settings.key == key)
-                )).scalar_one_or_none()
-
-                if existing:
-                    existing.value = str_value
-                else:
-                    session.add(Settings(key=key, value=str_value))
-
-            await session.commit()
-
-        os.remove(_SETTINGS_FILE)
-        logger.info("Migrated settings.json and removed file")
-    except Exception as e:
-        logger.error("Failed to migrate settings.json: %s", e)
-
-
 # ---------------------------------------------------------------------------
-# Chat helpers (drop-in replacements for chat_manager.py)
+# Chat helpers
 # ---------------------------------------------------------------------------
 
 
@@ -466,14 +375,14 @@ def get_chat_path(session_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Settings helpers (drop-in replacements for settings_manager.py)
+# Settings helpers
 # ---------------------------------------------------------------------------
 
 DEFAULT_SETTINGS = {
     "theme": "light",
     "api_key": "",
-    "base_url": "https://integrate.api.nvidia.com/v1",
-    "model_id": "z-ai/glm5,nvidia/nemotron-3-nano-30b-a3b,qwen/qwen3.5-397b-a17b",
+    "base_url": "https://api.deepseek.com/v1",
+    "model_id": "deepseek-v4-pro",
     "search_engine": "duckduckgo",
     "max_results": "8",
     "max_iterations": "5",

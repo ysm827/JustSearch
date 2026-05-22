@@ -5,7 +5,8 @@ import re
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Optional, Callable, Any
-from openai import AsyncOpenAI
+
+from .openai_client import create_openai_client
 from .prompts import TASK_ANALYSIS_PROMPT, RELEVANCE_ASSESSMENT_PROMPT, CLICK_DECISION_PROMPT, ANSWER_GENERATION_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,8 @@ def _cache_analysis_result(key: str, result: dict):
 
 class LLMClient:
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1",
-                 model: str = "deepseek-ai/deepseek-v3.2", max_context_turns: int = _DEFAULT_CONTEXT_TURNS):
-        self.client = AsyncOpenAI(
+                 model: str = "deepseek-v4-pro", max_context_turns: int = _DEFAULT_CONTEXT_TURNS):
+        self.client = create_openai_client(
             api_key=api_key,
             base_url=base_url,
             max_retries=0,  # 禁用自动重试，由上层统一处理
@@ -90,6 +91,65 @@ class LLMClient:
         if hasattr(response, 'usage') and response.usage:
             self.total_prompt_tokens += getattr(response.usage, 'prompt_tokens', 0) or 0
             self.total_completion_tokens += getattr(response.usage, 'completion_tokens', 0) or 0
+
+    def _extract_response_content(self, response: Any) -> str:
+        """Extract message content from SDK objects or gateway string responses."""
+        if response is None:
+            return ""
+        if isinstance(response, str):
+            sse_content = self._extract_sse_content(response)
+            if sse_content:
+                return sse_content
+            return response
+        if isinstance(response, bytes):
+            return response.decode("utf-8", errors="replace")
+        if isinstance(response, dict):
+            choices = response.get("choices") or []
+            if choices:
+                message = choices[0].get("message", {})
+                if isinstance(message, dict):
+                    return message.get("content", "") or ""
+                if isinstance(message, str):
+                    return message
+            return response.get("content", "") or response.get("output_text", "") or ""
+
+        choices = getattr(response, "choices", None) or []
+        if choices:
+            message = getattr(choices[0], "message", None)
+            content = getattr(message, "content", None)
+            if content is not None:
+                return content
+            if isinstance(message, str):
+                return message
+        return getattr(response, "content", None) or getattr(response, "output_text", "") or ""
+
+    def _extract_sse_content(self, text: str) -> str:
+        """Extract concatenated delta content from SSE-formatted response text."""
+        if "data:" not in text:
+            return ""
+
+        chunks = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+
+            payload = line.removeprefix("data:").strip()
+            if not payload or payload == "[DONE]":
+                continue
+
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+
+            for choice in data.get("choices", []):
+                delta = choice.get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    chunks.append(content)
+
+        return "".join(chunks)
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """
@@ -206,7 +266,7 @@ class LLMClient:
         try:
             logger.info("[Task Analysis] 输入: %s", _truncate_for_log(user_input, 80))
             response = await self._call_with_retry(messages, timeout=_LLM_SHORT_TIMEOUT)
-            content = response.choices[0].message.content
+            content = self._extract_response_content(response)
 
             data = self._extract_json(content)
             if data:
@@ -272,7 +332,7 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ], timeout=_LLM_SHORT_TIMEOUT)
-            content = response.choices[0].message.content
+            content = self._extract_response_content(response)
 
             data = self._extract_json(content)
             if data:
@@ -311,7 +371,7 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ], timeout=_LLM_SHORT_TIMEOUT)
-            content = response.choices[0].message.content
+            content = self._extract_response_content(response)
 
             data = self._extract_json(content)
             if data:

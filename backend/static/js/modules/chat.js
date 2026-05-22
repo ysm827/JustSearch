@@ -1,6 +1,8 @@
 import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './state.js';
 import { createCopyButton } from './utils.js';
-import { createDynamicLogContainer, renderWithCitations, scrollToBottom, appendMessage, updateActiveHistoryItem, renderMessages, showConfirm } from './ui.js';
+import { updateActiveHistoryItem } from './history-view.js';
+import { createDynamicLogContainer, scrollToBottom, appendMessage, renderMessages, showConfirm } from './ui.js';
+import { renderWithCitations } from './source-renderer.js';
 import { showToast } from './toast.js';
 import * as API from './api.js';
 
@@ -67,7 +69,9 @@ export function setupChatHandler(elements, renderHistory) {
         elements.heroSection.style.display = 'none';
 
         const sendBtnIcon = elements.sendBtn.querySelector('.material-symbols-rounded');
-        sendBtnIcon.textContent = 'stop_circle';
+        if (sendBtnIcon) {
+            sendBtnIcon.textContent = 'stop_circle';
+        }
         elements.sendBtn.classList.remove('inactive', 'active');
         elements.sendBtn.classList.add('processing');
 
@@ -269,7 +273,9 @@ export function setupChatHandler(elements, renderHistory) {
             const totalElapsed = ((Date.now() - searchStartTime) / 1000).toFixed(1);
             setIsProcessing(false);
             setAbortController(null);
-            sendBtnIcon.textContent = 'send';
+            if (sendBtnIcon) {
+                sendBtnIcon.textContent = 'send';
+            }
             elements.sendBtn.classList.remove('processing');
             updateSendButtonState();
             spinner.classList.remove('rotating');
@@ -391,5 +397,112 @@ export function setupChatHandler(elements, renderHistory) {
         });
     }
 
+    // Quick settings toolbar interaction
+    const quickEngineBtn = document.getElementById('quick-engine-btn');
+    const quickEngineDropdown = document.getElementById('quick-engine-dropdown');
+    
+    if (quickEngineBtn && quickEngineDropdown) {
+        quickEngineBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            quickEngineDropdown.classList.toggle('active');
+        });
+        
+        document.addEventListener('click', (e) => {
+            if (!quickEngineBtn.contains(e.target) && !quickEngineDropdown.contains(e.target)) {
+                quickEngineDropdown.classList.remove('active');
+            }
+        });
+        
+        const dropdownItems = quickEngineDropdown.querySelectorAll('.quick-dropdown-item');
+        dropdownItems.forEach(item => {
+            item.addEventListener('click', async () => {
+                const newEngine = item.getAttribute('data-value');
+                quickEngineDropdown.classList.remove('active');
+                
+                if (state.settings) {
+                    state.settings.search_engine = newEngine;
+                    
+                    const modalSelect = document.getElementById('engine-select');
+                    if (modalSelect) {
+                        modalSelect.value = newEngine;
+                    }
+                    
+                    await API.saveSettingsAPI(state.settings);
+                    syncQuickSettingsFromState();
+                    showToast(`搜索引擎已切换为 ${item.textContent}`, 'success');
+                }
+            });
+        });
+    }
+
+    const quickInteractiveBtn = document.getElementById('quick-interactive-btn');
+    if (quickInteractiveBtn) {
+        quickInteractiveBtn.addEventListener('click', async () => {
+            if (state.settings) {
+                const currentVal = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
+                const newVal = !currentVal;
+                state.settings.interactive_search = newVal;
+                
+                const modalCheckbox = document.getElementById('interactive-search-input');
+                if (modalCheckbox) {
+                    modalCheckbox.checked = newVal;
+                }
+                
+                await API.saveSettingsAPI(state.settings);
+                syncQuickSettingsFromState();
+                
+                const status = newVal ? '已开启' : '已关闭';
+                showToast(`深度搜索${status}`, 'info');
+            }
+        });
+    }
+
+    syncQuickSettingsFromState();
+
     return { loadChat, deleteChat };
+}
+
+export function syncQuickSettingsFromState() {
+    const quickEngineName = document.getElementById('quick-engine-name');
+    const quickEngineDropdown = document.getElementById('quick-engine-dropdown');
+    const quickInteractiveBtn = document.getElementById('quick-interactive-btn');
+    
+    if (!state.settings) return;
+    
+    const engine = state.settings.search_engine || 'duckduckgo';
+    const engineNames = {
+        'duckduckgo': 'DuckDuckGo',
+        'google': 'Google',
+        'bing': 'Bing',
+        'sogou': '搜狗 (Sogou)',
+        'brave': 'Brave Search',
+        'searxng': 'SearXNG'
+    };
+    if (quickEngineName) {
+        quickEngineName.textContent = engineNames[engine] || engine;
+    }
+    
+    if (quickEngineDropdown) {
+        const dropdownItems = quickEngineDropdown.querySelectorAll('.quick-dropdown-item');
+        let activeSvg = null;
+        dropdownItems.forEach(item => {
+            const itemVal = item.getAttribute('data-value');
+            const isActive = itemVal === engine;
+            item.classList.toggle('active', isActive);
+            if (isActive) {
+                activeSvg = item.querySelector('svg');
+            }
+        });
+        
+        const iconContainer = document.getElementById('quick-engine-icon-container');
+        if (iconContainer && activeSvg) {
+            iconContainer.innerHTML = '';
+            iconContainer.appendChild(activeSvg.cloneNode(true));
+        }
+    }
+    
+    const interactive = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
+    if (quickInteractiveBtn) {
+        quickInteractiveBtn.classList.toggle('active', interactive);
+    }
 }

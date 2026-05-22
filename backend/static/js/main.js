@@ -1,555 +1,179 @@
-import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './modules/state.js';
-import { authFetch, buildAuthenticatedUrl, buildBrowserWebSocketUrl, initializeAuth, normalizeSettings } from './modules/auth.js';
-import { createCopyButton } from './modules/utils.js';
-import { initUI, elements, renderHistory, renderMessages, appendMessage, scrollToBottom, updateActiveHistoryItem, showConfirm, getCachedHistory } from './modules/ui.js';
-import { showToast } from './modules/toast.js';
-import { setupChatHandler } from './modules/chat.js';
+import { initializeAuth, normalizeSettings } from './modules/auth.js';
+import { state, setCurrentSessionId } from './modules/state.js';
+import { initUI, elements } from './modules/ui.js';
+import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js';
+import { setupBrowserModal } from './modules/browser-modal.js';
+import { renderHistory, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js';
+import { setupSettingsModal } from './modules/settings-modal.js';
+import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js';
+import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js';
 import * as API from './modules/api.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     initUI();
     initializeAuth();
+    initCustomModelSelect();
 
-    // --- Initialization ---
     const settings = normalizeSettings(await API.fetchSettings());
     updateModelSelector(settings.model_id || '');
+
     const chatHistory = await API.fetchHistory();
-
     const { loadChat, deleteChat } = setupChatHandler(elements, renderHistory);
+    const historyCallbacks = { onSelect: loadChat, onDelete: deleteChat };
 
-    renderHistory(chatHistory, state.currentSessionId, {
-        onSelect: loadChat,
-        onDelete: deleteChat
+    renderHistory(chatHistory, state.currentSessionId, historyCallbacks);
+    restoreSessionFromUrl(chatHistory, loadChat);
+
+    window.addEventListener('popstate', (event) => {
+        if (event.state && event.state.sessionId) {
+            loadChat(event.state.sessionId);
+        } else {
+            showHomeState();
+        }
     });
 
-    // --- URL 路由：从地址栏恢复对话 ---
+    setupSidebar(loadChat);
+    setupSettingsModal({ 
+        updateModelSelector, 
+        historyCallbacks, 
+        onSettingsSaved: syncQuickSettingsFromState 
+    });
+    setupBrowserModal();
+    setupHistorySearch(historyCallbacks);
+    setupSystemThemeListener();
+    setupPwaInstallPrompt();
+    setupSuggestionChips();
+    setupKeyboardShortcuts();
+    setupContextMenuSuppression();
+});
+
+function updateModelSelector(modelString) {
+    const select = document.getElementById('model-select');
+    if (!select) return;
+
+    const currentVal = select.value;
+    select.innerHTML = '';
+
+    const models = (modelString || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (models.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Default';
+        select.appendChild(option);
+        syncCustomModelSelect();
+        return;
+    }
+
+    const cleanModelIds = [];
+
+    models.forEach(model => {
+        const option = document.createElement('option');
+        let val = model;
+        let displayName = model;
+        const colonIdx = model.indexOf(':');
+        if (colonIdx !== -1) {
+            val = model.substring(0, colonIdx).trim();
+            displayName = model.substring(colonIdx + 1).trim();
+        } else {
+            displayName = val.includes('/') ? val.split('/').pop() : val;
+        }
+        option.value = val;
+        option.textContent = displayName;
+        option.title = val;
+        select.appendChild(option);
+        cleanModelIds.push(val);
+    });
+
+    select.value = cleanModelIds.includes(currentVal) ? currentVal : cleanModelIds[0];
+    syncCustomModelSelect();
+}
+
+function restoreSessionFromUrl(chatHistory, loadChat) {
     const pathMatch = window.location.pathname.match(/^\/c\/([a-zA-Z0-9_-]+)/);
-    if (pathMatch) {
-        const urlSessionId = pathMatch[1];
-        // 确保该会话存在于历史中
-        const exists = chatHistory.some(h => h.id === urlSessionId);
-        if (exists) {
-            loadChat(urlSessionId);
-        } else {
-            // 会话不存在，回到首页
-            window.history.replaceState(null, '', '/');
-        }
+    if (!pathMatch) return;
+
+    const urlSessionId = pathMatch[1];
+    const exists = chatHistory.some(h => h.id === urlSessionId);
+    if (exists) {
+        loadChat(urlSessionId);
+    } else {
+        window.history.replaceState(null, '', '/');
     }
+}
 
-    // 浏览器前进/后退时恢复对应对话
-    window.addEventListener('popstate', (e) => {
-        if (e.state && e.state.sessionId) {
-            loadChat(e.state.sessionId);
-        } else {
-            // 回到首页状态
-            setCurrentSessionId(null);
-            elements.chatContainer.innerHTML = '';
-            elements.heroSection.style.display = 'block';
-            elements.chatContainer.appendChild(elements.heroSection);
-            updateActiveHistoryItem(null);
-        }
-    });
+function showHomeState() {
+    setCurrentSessionId(null);
+    elements.chatContainer.innerHTML = '';
+    elements.heroSection.style.display = 'block';
+    elements.chatContainer.appendChild(elements.heroSection);
+    updateActiveHistoryItem(null);
+}
 
-    function updateModelSelector(modelString) {
-        const select = document.getElementById('model-select');
-        if (!select) return;
-
-        const currentVal = select.value;
-        select.innerHTML = '';
-
-        if (!modelString) {
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = 'Default';
-            select.appendChild(option);
-            return;
-        }
-
-        const models = modelString.split(',').map(s => s.trim()).filter(s => s);
-
-        if (models.length === 0) {
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = 'Default';
-            select.appendChild(option);
-            return;
-        }
-
-        models.forEach(model => {
-            const option = document.createElement('option');
-            option.value = model;
-            // 友好短名：取斜杠后最后一段
-            const shortName = model.includes('/') ? model.split('/').pop() : model;
-            option.textContent = shortName;
-            option.title = model; // 完整名称在 tooltip
-            select.appendChild(option);
-        });
-
-        // Restore selection if possible, otherwise first
-        if (models.includes(currentVal)) {
-            select.value = currentVal;
-        } else {
-            select.value = models[0];
-        }
-    }
-
-    // Initialize Sidebar State
-    const isMobile = window.innerWidth <= 768;
-    if (!isMobile) {
-        const sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
-        if (sidebarCollapsed) {
-            elements.sidebar.classList.add('collapsed');
-        }
-    }
-
-    // --- Event Listeners ---
-    setupEventListeners();
-
-    // --- Functions ---
-    function setupEventListeners() {
-        // Sidebar
-        const toggleSidebar = () => {
-            if (window.innerWidth <= 768) {
-                elements.sidebar.classList.add('mobile-open');
-                elements.mobileOverlay.classList.add('active');
-            } else {
-                elements.sidebar.classList.toggle('collapsed');
-                localStorage.setItem('sidebarCollapsed', elements.sidebar.classList.contains('collapsed'));
-            }
-        };
-
-        if (elements.expandSidebarBtn) {
-            elements.expandSidebarBtn.addEventListener('click', toggleSidebar);
-        }
-
-        if (elements.collapseSidebarBtn) {
-            elements.collapseSidebarBtn.addEventListener('click', toggleSidebar);
-        }
-
-        elements.closeSidebarBtn.addEventListener('click', () => {
-            elements.sidebar.classList.remove('mobile-open');
-            elements.mobileOverlay.classList.remove('active');
-        });
-
-        elements.mobileOverlay.addEventListener('click', () => {
-            elements.sidebar.classList.remove('mobile-open');
-            elements.mobileOverlay.classList.remove('active');
-        });
-
-        window.addEventListener('resize', () => {
-            if (window.innerWidth > 768) {
-                elements.sidebar.classList.remove('mobile-open');
-                elements.mobileOverlay.classList.remove('active');
-            }
-        });
-
-        // Export all chats button
-        const exportAllBtn = document.getElementById('export-all-btn');
-        if (exportAllBtn) {
-            exportAllBtn.addEventListener('click', async () => {
-                window.open(buildAuthenticatedUrl('/api/history/export/all?format=markdown'), '_blank');
-            });
-        }
-
-        elements.newChatBtn.addEventListener('click', () => {
-            setCurrentSessionId(null);
-            elements.chatContainer.innerHTML = '';
-            elements.heroSection.style.display = 'block';
-            elements.chatContainer.appendChild(elements.heroSection);
-            updateActiveHistoryItem(null);
-            elements.userInput.value = '';
-            elements.userInput.style.height = '40px';
-            elements.userInput.style.overflowY = 'hidden';
-            elements.userInput.focus();
-            // 回到首页 URL
-            if (window.location.pathname !== '/') {
-                window.history.pushState(null, '', '/');
-            }
-        });
-
-        setupSettingsModal();
-        setupPasswordToggle();
-        setupBrowserModal();
-        setupHistorySearch();
-    }
-
-    function setupHistorySearch() {
-        const searchInput = document.getElementById('history-search-input');
-        if (!searchInput) return;
-
-        let searchTimeout;
-        searchInput.addEventListener('input', () => {
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => {
-                // Use cached history instead of re-fetching from server
-                renderHistory(getCachedHistory(), state.currentSessionId, {
-                    onSelect: loadChat,
-                    onDelete: deleteChat
-                });
-            }, 200);
-        });
-    }
-
-    function setupPasswordToggle() {
-        const toggleBtn = document.getElementById('toggle-api-key-btn');
-        const apiKeyInput = document.getElementById('api-key-input');
-
-        if (toggleBtn && apiKeyInput) {
-            toggleBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                const type = apiKeyInput.getAttribute('type') === 'password' ? 'text' : 'password';
-                apiKeyInput.setAttribute('type', type);
-
-                const icon = toggleBtn.querySelector('.material-symbols-rounded');
-                if (icon) {
-                    icon.textContent = type === 'password' ? 'visibility' : 'visibility_off';
-                }
-            });
-        }
-
-        // Validate API key button
-        const validateBtn = document.getElementById('validate-key-btn');
-        if (validateBtn) {
-            validateBtn.addEventListener('click', async (e) => {
-                e.preventDefault();
-                const apiKey = document.getElementById('api-key-input').value.trim();
-                const baseUrl = document.getElementById('base-url-input').value.trim();
-                const modelId = document.getElementById('model-input').value.trim();
-                if (!apiKey || apiKey.includes('****')) {
-                    showToast('请先输入 API 密钥', 'warning');
-                    return;
-                }
-                validateBtn.disabled = true;
-                validateBtn.querySelector('.material-symbols-rounded').textContent = 'progress_activity';
-                try {
-                    const res = await authFetch('/api/settings/validate-key', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            api_key: apiKey,
-                            base_url: baseUrl,
-                            model_id: modelId.split(',')[0].trim(),
-                        }),
-                    });
-                    const data = await res.json();
-                    if (data.valid) {
-                        showToast('API 密钥验证通过', 'success');
-                    } else {
-                        showToast(data.error || '验证失败', 'error');
-                    }
-                } catch (err) {
-                    showToast('验证请求失败', 'error');
-                } finally {
-                    validateBtn.disabled = false;
-                    validateBtn.querySelector('.material-symbols-rounded').textContent = 'verified';
-                }
-            });
-        }
-    }
-
-    function setupSettingsModal() {
-        const settingsBtn = document.getElementById('settings-btn');
-        const closeBtn = document.querySelector('.close-btn');
-        const saveSettingsBtn = document.getElementById('save-settings-btn');
-        const resetSettingsBtn = document.getElementById('reset-settings-btn');
-        const clearHistoryBtn = document.getElementById('clear-history-btn');
-
-        settingsBtn.addEventListener('click', async () => {
-            elements.settingsModal.classList.add('active');
-            
-            // Load and display version + memory info
-            const versionEl = document.getElementById('version-display');
-            if (versionEl) {
-                try {
-                    const healthRes = await authFetch('/api/health');
-                    if (healthRes.ok) {
-                        const health = await healthRes.json();
-                        versionEl.textContent = `v${health.version || '?.?.?'}`;
-                        // Show memory usage if available
-                        if (health.memory_mb) {
-                            versionEl.title = `Memory: ${health.memory_mb} MB`;
-                        }
-                    }
-                } catch (e) { /* ignore */ }
-            }
-            
-            document.getElementById('theme-select').value = state.settings.theme || 'light';
-            document.getElementById('engine-select').value = state.settings.search_engine || 'duckduckgo';
-            document.getElementById('max-results-input').value = state.settings.max_results || 8;
-            document.getElementById('max-iterations-input').value = state.settings.max_iterations || 5;
-            document.getElementById('api-key-input').value = state.settings.api_key || '';
-            document.getElementById('api-key-input').placeholder = state.settings.api_key ? '已配置 (留空保持不变)' : '输入 API Key';
-            document.getElementById('base-url-input').value = state.settings.base_url || '';
-            document.getElementById('model-input').value = state.settings.model_id || '';
-            document.getElementById('interactive-search-input').checked = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
-            document.getElementById('max-concurrent-pages-input').value = state.settings.max_concurrent_pages || 10;
-            document.getElementById('max-context-turns-input').value = state.settings.max_context_turns || 6;
-
-            const starsCountElement = document.getElementById('github-stars-count');
-            if (starsCountElement) {
-                const stats = await API.fetchGitHubStats();
-                if (stats && stats.stars !== undefined) {
-                    starsCountElement.textContent = stats.stars;
-                }
-            }
-        });
-
-        closeBtn.addEventListener('click', () => {
-            elements.settingsModal.classList.remove('active');
-        });
-
-        window.onclick = (event) => {
-            if (event.target === elements.settingsModal) {
-                elements.settingsModal.classList.remove('active');
-            }
-        };
-
-        saveSettingsBtn.addEventListener('click', async () => {
-             const apiKeyInput = document.getElementById('api-key-input');
-             let apiKeyValue = apiKeyInput.value.trim();
-
-             if (apiKeyValue && apiKeyValue.includes('****')) {
-                 apiKeyValue = '';
-             }
-
-             const newSettings = {
-                theme: document.getElementById('theme-select').value,
-                search_engine: document.getElementById('engine-select').value,
-                max_results: parseInt(document.getElementById('max-results-input').value) || 8,
-                max_iterations: parseInt(document.getElementById('max-iterations-input').value) || 5,
-                api_key: apiKeyValue,
-                base_url: document.getElementById('base-url-input').value,
-                model_id: document.getElementById('model-input').value,
-                interactive_search: document.getElementById('interactive-search-input').checked,
-                max_concurrent_pages: parseInt(document.getElementById('max-concurrent-pages-input').value) || 10,
-                max_context_turns: parseInt(document.getElementById('max-context-turns-input').value) || 6,
-            };
-
-            if (await API.saveSettingsAPI(newSettings)) {
-                updateModelSelector(newSettings.model_id);
-                elements.settingsModal.classList.remove('active');
-                showToast('设置已保存', 'success');
-            } else {
-                showToast('保存设置失败', 'error');
-            }
-        });
-
-        resetSettingsBtn.addEventListener('click', async () => {
-            if (!(await showConfirm('您确定要恢复默认设置吗？', '恢复默认设置'))) return;
-            const defaults = await API.restoreDefaultSettingsAPI();
-            if (defaults) {
-                document.getElementById('theme-select').value = defaults.theme || 'light';
-                document.getElementById('engine-select').value = defaults.search_engine || 'duckduckgo';
-                document.getElementById('max-results-input').value = defaults.max_results || 8;
-                document.getElementById('max-iterations-input').value = defaults.max_iterations || 5;
-                document.getElementById('api-key-input').value = defaults.api_key || '';
-                document.getElementById('base-url-input').value = defaults.base_url || '';
-                document.getElementById('model-input').value = defaults.model_id || '';
-                document.getElementById('interactive-search-input').checked = defaults.interactive_search !== undefined ? defaults.interactive_search : true;
-                document.getElementById('max-concurrent-pages-input').value = defaults.max_concurrent_pages || 10;
-                document.getElementById('max-context-turns-input').value = defaults.max_context_turns || 6;
-                showToast('已恢复默认设置', 'success');
-            } else {
-                showToast('加载默认设置失败', 'error');
-            }
-        });
-
-        clearHistoryBtn.addEventListener('click', async () => {
-            if (!(await showConfirm('确定要清除所有对话历史吗？此操作不可撤销。', '清除历史记录'))) return;
-            if (await API.clearHistoryAPI()) {
-                 setCurrentSessionId(null);
-                 elements.historyList.innerHTML = '';
-                 elements.chatContainer.innerHTML = '';
-                 elements.heroSection.style.display = 'block';
-                 elements.chatContainer.appendChild(elements.heroSection);
-                 updateActiveHistoryItem(null);
-                 elements.settingsModal.classList.remove('active');
-                 showToast('历史记录已清除', 'success');
-            } else {
-                showToast('清除历史记录失败', 'error');
-            }
-        });
-
-        const clearCacheBtn = document.getElementById('clear-cache-btn');
-        if (clearCacheBtn) {
-            clearCacheBtn.addEventListener('click', async () => {
-                if (!(await showConfirm('此操作将清除所有聊天记录、浏览器缓存（Cookies 等）并重置设置为默认值。确定要继续吗？此操作不可撤销。', '清除全部缓存'))) return;
-                if (await API.clearCacheAPI()) {
-                    setCurrentSessionId(null);
-                    elements.historyList.innerHTML = '';
-                    elements.chatContainer.innerHTML = '';
-                    elements.heroSection.style.display = 'block';
-                    elements.chatContainer.appendChild(elements.heroSection);
-                    updateActiveHistoryItem(null);
-                    elements.settingsModal.classList.remove('active');
-                    showToast('全部缓存已清除，页面即将刷新', 'success');
-                    setTimeout(() => window.location.reload(), 1500);
-                } else {
-                    showToast('清除缓存失败', 'error');
-                }
-            });
-        }
-    }
-
-    function setupBrowserModal() {
-        const modal = document.getElementById('browser-modal');
-        const closeBtn = document.getElementById('browser-close-btn');
-        const completeBtn = document.getElementById('browser-complete-btn');
-        const img = document.getElementById('browser-viewport');
-        const status = document.querySelector('.browser-status-overlay');
-
-        if (!modal) return;
-
-        let ws = null;
-
-        closeBtn.addEventListener('click', () => {
-            modal.classList.remove('active');
-            if (ws) {
-                ws.close();
-                ws = null;
-            }
-        });
-
-        completeBtn.addEventListener('click', () => {
-            if (ws) {
-                ws.send(JSON.stringify({ action: 'complete' }));
-                completeBtn.disabled = true;
-                completeBtn.textContent = '正在提交...';
-            }
-        });
-
-        img.addEventListener('mousedown', (e) => {
-            if (!ws || img.style.display === 'none') return;
-            const rect = img.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * (img.naturalWidth / rect.width);
-            const y = (e.clientY - rect.top) * (img.naturalHeight / rect.height);
-            ws.send(JSON.stringify({ action: 'click', x, y }));
-        });
-
-        img.addEventListener('wheel', (e) => {
-            if (!ws || img.style.display === 'none') return;
-            e.preventDefault();
-            ws.send(JSON.stringify({ action: 'scroll', dy: e.deltaY }));
-        }, { passive: false });
-
-        img.addEventListener('keydown', (e) => {
-            if (!ws || img.style.display === 'none') return;
-            ws.send(JSON.stringify({ action: 'key', key: e.key }));
-        });
-        img.tabIndex = 0;
-
-        state.openBrowserModal = (sessionId) => {
-            modal.classList.add('active');
-            status.style.display = 'block';
-            status.textContent = '正在连接浏览器...';
-            img.style.display = 'none';
-            completeBtn.disabled = false;
-            completeBtn.textContent = '完成验证，继续执行';
-
-            const wsUrl = buildBrowserWebSocketUrl(window.location, sessionId);
-
-            if (ws) ws.close();
-            ws = new WebSocket(wsUrl);
-
-            ws.onopen = () => {
-                status.textContent = '已连接。等待画面...';
-                img.focus();
-            };
-
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.type === 'frame') {
-                    status.style.display = 'none';
-                    img.style.display = 'block';
-                    img.src = `data:image/jpeg;base64,${data.image}`;
-                } else if (data.type === 'status') {
-                     if (data.msg === 'Completed') {
-                         modal.classList.remove('active');
-                         if (ws) {
-                             ws.close();
-                             ws = null;
-                         }
-                     }
-                }
-            };
-
-            ws.onclose = () => {
-                if (modal.classList.contains('active')) {
-                    if (completeBtn.textContent !== '正在提交...') {
-                        status.style.display = 'block';
-                        status.textContent = '连接已断开 (会话可能已结束)';
-                    }
-                }
-            };
-
-            ws.onerror = (e) => {
-                console.error("WS Error", e);
-                status.textContent = '连接错误';
-            };
-        };
-    }
-    // --- Listen for system theme changes (when set to 'auto') ---
+function setupSystemThemeListener() {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if ((state.settings.theme || 'light') === 'auto') {
             import('./modules/utils.js').then(m => m.applyTheme('auto'));
         }
     });
+}
 
-    // --- PWA Install Prompt ---
-    let deferredPrompt;
-    window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        deferredPrompt = e;
-        // Could show an install button here
+function setupPwaInstallPrompt() {
+    window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
     });
+}
 
-    // --- Suggestion Chips ---
+function setupSuggestionChips() {
     document.querySelectorAll('.suggestion-chip').forEach(chip => {
         chip.addEventListener('click', () => {
             const query = chip.dataset.query;
-            if (query) {
-                elements.userInput.value = query;
-                elements.userInput.dispatchEvent(new Event('input'));
-                // Auto-send
-                const sendBtn = document.getElementById('send-btn');
-                if (sendBtn) sendBtn.click();
-            }
+            if (!query) return;
+
+            elements.userInput.value = query;
+            elements.userInput.dispatchEvent(new Event('input'));
+            elements.sendBtn.click();
         });
     });
+}
 
-    // --- Keyboard Shortcuts ---
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            const activeModal = document.querySelector('.modal.active');
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            const activeModals = document.querySelectorAll('.modal.active');
+            const activeModal = activeModals[activeModals.length - 1];
             if (activeModal) {
                 activeModal.classList.remove('active');
             }
         }
-        if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
-            e.preventDefault();
+
+        if ((event.ctrlKey || event.metaKey) && event.key === 'n') {
+            event.preventDefault();
             elements.newChatBtn.click();
         }
-        // Ctrl/Cmd+K to focus search input
-        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-            e.preventDefault();
-            const searchInput = document.getElementById('history-search-input');
-            if (searchInput) {
-                searchInput.focus();
-            }
+
+        if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+            event.preventDefault();
+            elements.historySearchInput?.focus();
         }
-        // Ctrl/Cmd+/ to toggle sidebar
-        if ((e.ctrlKey || e.metaKey) && e.key === '/') {
-            e.preventDefault();
-            const sidebar = document.getElementById('sidebar');
-            if (sidebar) {
-                if (window.innerWidth <= 768) {
-                    sidebar.classList.toggle('mobile-open');
-                    document.getElementById('mobile-overlay').classList.toggle('active');
-                } else {
-                    sidebar.classList.toggle('collapsed');
-                    localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
-                }
-            }
+
+        if ((event.ctrlKey || event.metaKey) && event.key === '/') {
+            event.preventDefault();
+            toggleSidebarFromShortcut();
         }
     });
-});
+}
+
+function setupContextMenuSuppression() {
+    document.addEventListener('contextmenu', (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+
+        if (target.closest('input, textarea, select, [contenteditable="true"]')) {
+            return;
+        }
+
+        if (target.closest('.hero-header, .hero-brand-logo, .hero-container, #main, #sidebar, #mobile-overlay, .modal')) {
+            event.preventDefault();
+        }
+    }, { capture: true });
+}

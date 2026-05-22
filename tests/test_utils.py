@@ -5,27 +5,8 @@ Run with: python -m pytest tests/ -v
 
 import pytest
 
-
-def _smart_truncate(text: str, max_chars: int = 8000) -> str:
-    """Inline copy for testing without project dependencies."""
-    if not text or len(text) <= max_chars:
-        return text or ""
-    truncated = text[:max_chars]
-    last_paragraph = truncated.rfind('\n\n')
-    if last_paragraph > max_chars * 0.5:
-        return truncated[:last_paragraph].rstrip() + "\n\n[... 内容已截取]"
-    last_newline = truncated.rfind('\n')
-    if last_newline > max_chars * 0.5:
-        return truncated[:last_newline].rstrip() + "\n[... 内容已截取]"
-    last_sentence = max(
-        truncated.rfind('。'), truncated.rfind('.'),
-        truncated.rfind('！'), truncated.rfind('!'),
-        truncated.rfind('？'), truncated.rfind('?'),
-        truncated.rfind('；'), truncated.rfind(';'),
-    )
-    if last_sentence > max_chars * 0.5:
-        return truncated[:last_sentence + 1] + "[... 内容已截取]"
-    return truncated + "[... 内容已截取]"
+from backend.app.llm_client import _smart_truncate
+from backend.app.llm_client import LLMClient
 
 
 class TestSmartTruncate:
@@ -95,3 +76,57 @@ class TestRateLimiter:
 
         allowed, _ = limiter.check("test_key")
         assert allowed is True
+
+
+class TestLLMResponseParsing:
+    def test_extract_response_content_accepts_sse_text_response(self):
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+
+        response = (
+            'data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"{\\"type\\":\\"search\\","},"finish_reason":null}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"\\"queries\\":[\\"MDN delete\\"]}"},"finish_reason":null}]}\n\n'
+            "data: [DONE]\n\n"
+        )
+
+        assert client._extract_response_content(response) == (
+            '{"type":"search","queries":["MDN delete"]}'
+        )
+
+    def test_analyze_task_accepts_plain_string_response(self):
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+
+        async def fake_call(*args, **kwargs):
+            return '{"type": "search", "queries": ["URLSearchParams delete MDN"]}'
+
+        client._call_with_retry = fake_call
+
+        import asyncio
+        result = asyncio.run(client.analyze_task("what does URLSearchParams.delete do"))
+
+        assert result == {
+            "type": "search",
+            "queries": ["URLSearchParams delete MDN"],
+        }
+
+    def test_assess_relevance_accepts_plain_string_response(self):
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+
+        async def fake_call(*args, **kwargs):
+            return '{"relevant_ids": [2, 4]}'
+
+        client._call_with_retry = fake_call
+
+        import asyncio
+        result = asyncio.run(
+            client.assess_relevance(
+                "FastAPI CORS",
+                [
+                    {"id": 1, "title": "Generic FastAPI", "snippet": "..."},
+                    {"id": 2, "title": "FastAPI CORS", "snippet": "..."},
+                    {"id": 4, "title": "CORSMiddleware", "snippet": "..."},
+                ],
+            )
+        )
+
+        assert result == [2, 4]

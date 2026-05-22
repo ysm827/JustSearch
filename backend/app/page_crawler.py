@@ -1,228 +1,27 @@
 import asyncio
-import base64
-import ipaddress
 import json
 import logging
 import os
 import random
 import re
-import socket
-import urllib.parse
 
 from playwright.async_api import Page
 from playwright_stealth import Stealth
 
 from .browser_context import get_new_page, release_page, get_context_pool_status
+from .crawler.content import (
+    extract_og_metadata,
+    extract_page_content,
+    install_resource_blocker,
+)
+from .crawler.redirects import resolve_redirect_url
+from .crawler.security import is_private_url
 from .interaction import register_interaction_session, remove_interaction_session
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# DOM-density content extraction script (runs in browser context)
-# Replaces raw document.body.innerText with a smarter extractor that:
-#   1. Removes noise (nav, footer, sidebar, ads, comments, etc.)
-#   2. Finds the highest text-density container (article/main/.content/...)
-#   3. Falls back to cleaned body if no good candidate found
-# ---------------------------------------------------------------------------
-_JS_EXTRACT_CONTENT = """() => {
-    const NOISE = [
-        'nav','footer','aside','header',
-        '[role="navigation"]','[role="banner"]','[role="contentinfo"]',
-        '.sidebar','.nav-bar','.footer','.site-header',
-        '.ad','.ads','.advertisement','.sponsor','.promoted',
-        '.cookie-banner','.cookie-notice','.popup','.modal-overlay',
-        '.social-share','.share-buttons','.related-posts','.related-articles',
-        '.comments','#comments','.comment-section',
-        '.breadcrumb','.pagination','.pager',
-        'iframe','script','style','noscript','svg'
-    ];
-
-    const clone = document.body.cloneNode(true);
-    NOISE.forEach(sel => {
-        try { clone.querySelectorAll(sel).forEach(el => el.remove()); } catch(e) {}
-    });
-
-    function textLen(el) { return (el.innerText || '').replace(/\\s+/g,'').length; }
-    function tagCount(el) { return el.getElementsByTagName('*').length; }
-    function density(el) { return textLen(el) / (tagCount(el) + 1); }
-
-    const candidates = clone.querySelectorAll(
-        'article, main, [role="main"], .content, .post-content, .entry-content, ' +
-        '.article-content, .post-body, #content, #main, .main-content, .page-content, ' +
-        '.text-content, .detail-content, .news-content, .article-body, .post-text, ' +
-        '#article-content, .article_detail, .content-body, .RichText, .rich_media_content, ' +
-        '#js_content, .topic-richtext, .Post-RichTextContainer'
-    );
-
-    let best = clone, bestD = density(clone);
-    candidates.forEach(el => {
-        const d = density(el);
-        if (d > bestD) { bestD = d; best = el; }
-    });
-
-    let text = (best.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim();
-
-    // Minimum content threshold — fall back to cleaned body
-    if (text.replace(/\\s+/g,'').length < 200) {
-        text = (clone.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim();
-    }
-
-    // Collect downloadable links (dmg, exe, zip, pkg, etc.)
-    // and links whose visible text suggests a download
-    const downloadExts = ['.dmg', '.exe', '.zip', '.pkg', '.deb', '.rpm', '.apk', '.msix', '.tar.gz', '.tar.xz', '.7z', '.iso', '.appx'];
-    const downloadKeywords = /download|下载|安装包|installer|离线/i;
-    const collectedLinks = [];
-    const seenUrls = new Set();
-
-    best.querySelectorAll('a[href]').forEach(a => {
-        const href = a.getAttribute('href');
-        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
-        const linkText = (a.innerText || '').trim();
-
-        const isDownloadUrl = downloadExts.some(ext => href.toLowerCase().includes(ext));
-        const isDownloadText = downloadKeywords.test(linkText);
-
-        if (isDownloadUrl || isDownloadText) {
-            if (!seenUrls.has(href)) {
-                seenUrls.add(href);
-                const label = linkText || href;
-                collectedLinks.push({ text: label.substring(0, 80), url: href });
-            }
-        }
-    });
-
-    // Append collected download links if found
-    if (collectedLinks.length > 0) {
-        text += '\\n\\n--- 页面中的下载链接 ---';
-        for (const link of collectedLinks) {
-            text += '\\n[' + link.text + '](' + link.url + ')';
-        }
-    }
-
-    return text;
-}"""
-
-# Private network ranges to block
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fe80::/10"),
-]
-
 # PDF URL pattern
 _PDF_PATTERN = re.compile(r'\.pdf(\?.*)?$', re.IGNORECASE)
-
-# Maximum extracted content length (chars) to prevent memory bloat
-_MAX_CONTENT_LENGTH = 200_000
-
-
-def is_private_url(url: str) -> bool:
-    """Check if a URL points to a private/internal network address."""
-    try:
-        parsed = urllib.parse.urlparse(url)
-        hostname = parsed.hostname
-        if not hostname:
-            return True  # No hostname = invalid
-
-        # Block localhost variants
-        if hostname in ("localhost", "localhost.localdomain"):
-            return True
-
-        # Block IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1)
-        if hostname.startswith("::ffff:"):
-            mapped_ipv4 = hostname[7:]
-            try:
-                ip = ipaddress.ip_address(mapped_ipv4)
-                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                    return True
-            except ValueError:
-                pass
-
-        # Try to resolve hostname and check if IP is private
-        addrinfo = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        for family, _, _, _, sockaddr in addrinfo:
-            ip = ipaddress.ip_address(sockaddr[0])
-            # 跳过代理/VPN 虚拟 IP 段 (198.18.0.0/15)
-            # 本地代理工具（Surge/Clash等）会劫持 DNS 将域名解析到此段
-            if ip in ipaddress.ip_network("198.18.0.0/15"):
-                continue
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return True
-    except (socket.gaierror, ValueError, OSError):
-        # DNS 解析失败时拒绝，因为无法确定目标是否安全
-        return True
-
-    return False
-
-
-async def resolve_redirect_url(url: str, log_func=None) -> str:
-    """Resolve search engine redirect URLs (DuckDuckGo/Bing/Google) to final URLs."""
-    final_url = url
-    if "bing.com/ck/a" not in url and "google.com/url" not in url and "duckduckgo.com/l/" not in url:
-        return final_url
-
-    if log_func:
-        log_func("浏览器: 检测到重定向 URL，正在尝试提取目标...")
-
-    # Handle DuckDuckGo
-    if "duckduckgo.com/l/" in url:
-        try:
-            parsed = urllib.parse.urlparse(url)
-            params = urllib.parse.parse_qs(parsed.query)
-            if 'uddg' in params:
-                final_url = params['uddg'][0]
-                if log_func:
-                    log_func(f"浏览器: 提取 DuckDuckGo 重定向 URL 成功: {final_url}")
-        except Exception as e:
-            if log_func:
-                log_func(f"浏览器: 提取 DuckDuckGo 重定向 URL 失败: {e}")
-
-    # For Bing, the 'u' parameter is often base64 encoded with 'a1' prefix
-    elif "bing.com/ck/a" in url:
-        parsed = urllib.parse.urlparse(url)
-        params = urllib.parse.parse_qs(parsed.query)
-        if 'u' in params:
-            u_val = params['u'][0]
-            if u_val.startswith('a1'):
-                try:
-                    b64_part = u_val[2:]
-                    b64_part += "=" * ((4 - len(b64_part) % 4) % 4)
-                    decoded = base64.b64decode(b64_part).decode('utf-8')
-                    final_url = decoded
-                    if log_func:
-                        log_func(f"浏览器: 提取 Bing 重定向 URL 成功: {final_url}")
-                except Exception as e:
-                    if log_func:
-                        log_func(f"浏览器: 提取 Bing 重定向 URL 失败: {e}")
-
-    return final_url
-
-
-async def _extract_og_metadata(page: Page) -> dict:
-    """Extract OpenGraph metadata from page for better source previews."""
-    try:
-        return await page.evaluate(r"""() => {
-            const getMeta = (name) => {
-                const el = document.querySelector(`meta[property="${name}"]`) ||
-                           document.querySelector(`meta[name="${name}"]`);
-                return el ? el.content : '';
-            };
-            return {
-                og_title: getMeta('og:title'),
-                og_description: getMeta('og:description'),
-                og_image: getMeta('og:image'),
-                og_site_name: getMeta('og:site_name'),
-                author: getMeta('author'),
-                published_time: getMeta('article:published_time'),
-            };
-        }""")
-    except Exception:
-        return {}
 
 
 async def crawl_github_api(page: Page, url: str, log_func=None) -> str | None:
@@ -411,43 +210,6 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
             log_func("浏览器: 未找到显著的可交互元素。")
 
 
-async def extract_page_content(page: Page, url: str) -> str:
-    """Extract main content from a page using DOM-density algorithm with retry logic."""
-    for attempt in range(3):
-        try:
-            content = await page.evaluate(_JS_EXTRACT_CONTENT)
-            # Truncate oversized content to prevent memory bloat
-            if content and len(content) > _MAX_CONTENT_LENGTH:
-                logger.warning("[Crawler] Content too large (%d chars), truncating: %s", len(content), url[:80])
-                content = content[:_MAX_CONTENT_LENGTH] + "\n\n[... 内容过长，已截取]"
-            return content
-        except Exception as e:
-            if "Execution context was destroyed" in str(e) or "Cannot find context" in str(e):
-                if attempt < 2:
-                    try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=5000)
-                    except Exception:
-                        await asyncio.sleep(2)
-                    continue
-            logger.error("Extraction error on %s: %s", url, e)
-            break
-    return ""
-
-
-# Resource types to block during content crawling (speeds up page load significantly)
-_BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet", "websocket", "manifest", "texttrack"}
-
-
-async def _install_resource_blocker(page: Page):
-    """Abort requests for non-essential resources (images, fonts, media, CSS)."""
-    await page.route(
-        "**/*",
-        lambda route: route.abort()
-        if route.request.resource_type in _BLOCKED_RESOURCE_TYPES
-        else route.continue_(),
-    )
-
-
 async def crawl_page(url: str, stealth: Stealth, log_func=None,
                      interactive_mode: bool = False, query: str = None,
                      llm_client=None, session_id: str = None) -> str:
@@ -476,7 +238,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
     page = await get_new_page()
     await stealth.apply_stealth_async(page)
     # Block non-essential resources to speed up crawling
-    await _install_resource_blocker(page)
+    await install_resource_blocker(page)
 
     try:
         if log_func:
@@ -956,7 +718,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         content = await extract_page_content(page, url)
 
         # Extract OpenGraph metadata for better context
-        og = await _extract_og_metadata(page)
+        og = await extract_og_metadata(page)
         if og and any(og.values()):
             meta_lines = []
             if og.get('og_description'):

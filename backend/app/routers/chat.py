@@ -20,7 +20,7 @@ from ..database import (
     delete_message,
 )
 from ..workflow import SearchWorkflow
-from ..browser_manager import get_interaction_session, mark_interaction_completed
+from ..interaction import get_interaction_session, mark_interaction_completed
 from ..rate_limiter import chat_limiter
 from ..logging_utils import set_request_id
 
@@ -179,6 +179,9 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
             model = models_list[0] if models_list else default_model
         else:
             model = default_model
+
+    if isinstance(model, str) and ":" in model:
+        model = model.split(":")[0].strip()
 
     search_engine = request.search_engine or defaults.get("search_engine", "duckduckgo")
     max_results = request.max_results or defaults.get("max_results", 8)

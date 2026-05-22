@@ -11,6 +11,7 @@ services:
       - HEADLESS=${HEADLESS:-true}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - MAX_CONCURRENT_PAGES=${MAX_CONCURRENT_PAGES:-10}
+      - JUSTSEARCH_AUTH_ENABLED=${JUSTSEARCH_AUTH_ENABLED:-true}
     env_file:
       - path: .env
         required: false

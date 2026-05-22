@@ -10,9 +10,9 @@
     "categories": ["productivity", "utilities"],
     "icons": [
         {
-            "src": "/static/favicon.svg",
-            "sizes": "any",
-            "type": "image/svg+xml",
+            "src": "/static/assets/justsearch-favicon.png",
+            "sizes": "512x512",
+            "type": "image/png",
             "purpose": "any"
         }
     ]

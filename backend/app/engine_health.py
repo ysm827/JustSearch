@@ -10,11 +10,20 @@ from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
+_FALLBACK_PRIORITY = [
+    "duckduckgo",
+    "bing",
+    "brave",
+    "sogou",
+    "google",
+    "searxng",
+]
+
 
 class EngineHealthMonitor:
     """Track search engine success/failure rates for auto-fallback."""
 
-    def __init__(self, window_seconds: int = 300, max_failures: int = 5):
+    def __init__(self, window_seconds: int = 300, max_failures: int = 2):
         self.window_seconds = window_seconds
         self.max_failures = max_failures
         self._results: Dict[str, list] = defaultdict(list)
@@ -42,7 +51,16 @@ class EngineHealthMonitor:
         if self.is_healthy(preferred):
             return preferred
 
-        for engine in available:
+        priority = [
+            engine for engine in _FALLBACK_PRIORITY
+            if engine in available and engine != preferred
+        ]
+        priority.extend(
+            engine for engine in available
+            if engine not in priority and engine != preferred
+        )
+
+        for engine in priority:
             if engine != preferred and self.is_healthy(engine):
                 logger.warning(
                     "Engine %s unhealthy, falling back to %s",

@@ -20,6 +20,13 @@ def get_auth_token_path() -> Path:
     return Path(__file__).resolve().parents[1] / ".auth_token"
 
 
+def is_auth_enabled() -> bool:
+    val = os.getenv("JUSTSEARCH_AUTH_ENABLED", "").strip().lower()
+    if val in ("false", "0", "no", "off"):
+        return False
+    return True
+
+
 def is_loopback_host(host: str | None) -> bool:
     if not host:
         return False
@@ -85,6 +92,8 @@ def is_http_request_authorized(
     request: Request,
     token_provider: Callable[[], str] = get_auth_token,
 ) -> bool:
+    if not is_auth_enabled():
+        return True
     client_host = request.client.host if request.client else None
     if is_loopback_host(client_host):
         return is_trusted_loopback_origin(request.headers.get("origin"))
@@ -98,6 +107,8 @@ async def authorize_websocket(
     websocket: WebSocket,
     token_provider: Callable[[], str] = get_auth_token,
 ) -> bool:
+    if not is_auth_enabled():
+        return True
     client_host = websocket.client.host if websocket.client else None
     if is_loopback_host(client_host):
         return is_trusted_loopback_origin(websocket.headers.get("origin"))
@@ -112,6 +123,11 @@ async def authorize_websocket(
 
 
 def build_html_bootstrap_payload(request: Request) -> dict:
+    if not is_auth_enabled():
+        return {
+            "authEnabled": False,
+            "clientIsLoopback": False,
+        }
     client_host = request.client.host if request.client else None
     loopback_client = is_loopback_host(client_host)
     payload = {
@@ -152,12 +168,14 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
         return False
 
     async def dispatch(self, request: Request, call_next):
+        if not is_auth_enabled():
+            return await call_next(request)
+
         if request.method == "OPTIONS" or not self._is_protected_path(request.url.path):
             return await call_next(request)
 
         if is_http_request_authorized(request, self.token_provider):
             return await call_next(request)
-
         return JSONResponse(
             {"detail": "Unauthorized. Provide a valid Bearer token."},
             status_code=401,

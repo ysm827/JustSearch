@@ -15,6 +15,7 @@ from ..database import (
     load_settings, save_settings, delete_all_chats,
     DEFAULT_SETTINGS, mask_api_key, get_chat_path, load_chat_history,
 )
+from ..openai_client import create_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +99,14 @@ async def update_settings_endpoint(settings: SettingsModel):
 async def validate_api_key_endpoint(body: dict = Body(...)):
     """Validate an API key by making a test request to the model endpoint."""
     api_key = body.get("api_key", "").strip()
+    if api_key and "****" in api_key:
+        settings = await load_settings()
+        api_key = settings.get("api_key", "").strip()
+
     base_url = body.get("base_url", "").strip() or "https://api.openai.com/v1"
     model_id = body.get("model_id", "").strip()
+    if model_id and ":" in model_id:
+        model_id = model_id.split(":")[0].strip()
 
     if not api_key:
         return {"valid": False, "error": "API key is empty"}
@@ -108,8 +115,7 @@ async def validate_api_key_endpoint(body: dict = Body(...)):
         return {"valid": False, "error": "Model ID is empty"}
 
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        client = create_openai_client(api_key=api_key, base_url=base_url)
         # Make a minimal request to validate
         response = await asyncio.wait_for(
             client.chat.completions.create(

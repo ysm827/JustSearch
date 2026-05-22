@@ -81,8 +81,8 @@ chmod +x deploy.sh
     - 如果需要从其他设备访问，请在目标 URL 后带上 `?token=<backend/.auth_token 中的值>`。
 2. 点击页面左下角的 **设置** ⚙️ 按钮。
 3. 输入您的 `API Key` 和 `Base URL`。
-    - 默认配置为 NVIDIA NIM API（点击设置中的"获取 NVIDIA NIM API 密钥"链接即可申请免费 Key）。
-    - 也支持 DeepSeek、OpenAI、任何兼容 OpenAI 协议的 API 服务。
+    - 默认配置为 DeepSeek API（`https://api.deepseek.com/v1`，模型 `deepseek-v4-pro`）。
+    - 也支持 OpenAI、NVIDIA NIM、Claude、任何兼容 OpenAI 协议的 API 服务。
     - **💡 提示**：`API Key` 支持输入多个（用英文逗号分隔），程序会自动轮询使用，适合多 Key 负载均衡。
 4. 在 `模型 ID` 中填入模型名称，支持多个模型（逗号分隔），保存后可在对话界面顶部下拉切换。
 4. 开始提问！
@@ -119,7 +119,7 @@ python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `HEADLESS` | `true` | 浏览器无头模式（`false` 显示浏览器窗口，便于调试） |
-| `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000` | 允许的 CORS 来源（逗号分隔） |
+| `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000,http://localhost,http://127.0.0.1` | 允许的 CORS 来源（逗号分隔） |
 | `MAX_CONCURRENT_PAGES` | `10` | 最大并发浏览器页面数，防止内存溢出 |
 | `OPENAI_API_KEY` | - | API Key 环境变量回退（优先使用设置面板中的配置） |
 
@@ -152,7 +152,7 @@ git pull
 ```bash
 docker-compose up -d --build
 ```
-> **注意**：使用 `--build` 参数确保 Docker 重新构建镜像以应用最新的代码和依赖变更。您的配置 (`settings.json`) 和聊天记录 (`chats/`) 将会被保留。
+> **注意**：使用 `--build` 参数确保 Docker 重新构建镜像以应用最新的代码和依赖变更。运行数据保存在 `data/` 和 `user_data/` 中，会通过 Docker volume 保留。
 
 #### 本地 Python 用户
 ```bash
@@ -204,47 +204,38 @@ JustSearch/
 │   │   ├── main.py              # FastAPI 入口，路由定义
 │   │   ├── workflow.py          # 搜索工作流引擎（迭代式搜索核心）
 │   │   ├── llm_client.py        # LLM 客户端（任务分析/评估/生成/交互决策）
+│   │   ├── openai_client.py     # OpenAI 兼容客户端构造
 │   │   ├── browser_manager.py   # 浏览器搜索引擎封装
 │   │   ├── browser_context.py   # 全局浏览器生命周期与并发控制
-│   │   ├── page_crawler.py      # 页面爬取（SSRF 防护/重定向解析/GitHub 优化）
+│   │   ├── page_crawler.py      # 页面正文爬取与 GitHub 页面优化
+│   │   ├── crawler/             # URL 安全校验与搜索引擎重定向解析
+│   │   ├── search_result_cleanup.py # 搜索结果标题/内部页过滤
+│   │   ├── engine_health.py     # 搜索引擎健康度与自动降级
 │   │   ├── interaction.py       # 用户交互会话管理（验证码等）
-│   │   ├── chat_manager.py      # 对话历史持久化
-│   │   ├── settings_manager.py  # 设置管理（API Key 轮换/Token 认证）
+│   │   ├── database.py          # SQLite 模型、对话历史、设置持久化
+│   │   ├── legacy_migration.py  # 旧 JSON 数据一次性迁移
+│   │   ├── auth.py              # Token 认证与 HTML 启动参数注入
+│   │   ├── routers/             # API 路由（chat/history/settings/stats）
 │   │   ├── prompts.py           # LLM Prompt 模板
 │   │   └── search_engine.py     # 搜索引擎 CSS 选择器配置加载
-│   ├── chats/                   # 对话历史存储 (自动创建)
 │   ├── static/
-│   │   ├── css/style.css        # UI 样式（亮/暗双主题）
+│   │   ├── css/style.css        # 样式入口，按顺序导入 sections/
+│   │   ├── css/sections/        # base/sidebar/chat/modal/markdown/responsive 等样式分层
 │   │   ├── js/
-│   │   │   ├── main.js          # 入口
-│   │   │   └── modules/         # 模块化 JS（api/chat/ui/state/toast/utils）
+│   │   │   ├── main.js          # 前端启动编排
+│   │   │   └── modules/         # api/auth/chat/history/sidebar/settings/browser/source-renderer.js/ui 等模块
 │   │   └── index.html
 │   ├── settings.json.example    # 配置模板
 │   └── requirements.txt
+├── data/                        # SQLite 数据库运行目录（自动创建）
 ├── tools/
 │   └── manual_login.py          # 手动登录脚本（保存 Cookies）
-├── benchmark_freshqa.py         # FreshQA 基准测试脚本
 ├── user_data/                   # 浏览器持久化数据 (自动创建)
 ├── Dockerfile                   # Docker 构建文件
 ├── docker-compose.yml
 ├── deploy.sh / deploy.bat       # 一键部署脚本 (推荐)
 └── run.sh                       # 本地启动脚本
 ```
-
----
-
-## 📊 Benchmark
-
-项目内置了基于 [FreshQA](https://github.com/freshbench/freshqa) 的评测脚本，用于测试快速变化类事实问题的回答质量：
-
-```bash
-# 确保服务已启动
-python benchmark_freshqa.py
-```
-
-结果保存在 `benchmark_results/` 目录下（JSON + 日志）。脚本支持断点续跑。
-
----
 
 ## 🤝 贡献
 
@@ -263,7 +254,7 @@ python benchmark_freshqa.py
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `HEADLESS` | `true` | 浏览器无头模式 |
-| `CORS_ORIGINS` | `*` | CORS 允许的源（逗号分隔） |
+| `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000,http://localhost,http://127.0.0.1` | CORS 允许的源（逗号分隔） |
 | `MAX_CONCURRENT_PAGES` | `10` | 最大并发页面数 |
 | `OPENAI_API_KEY` | — | 备用 API Key |
 

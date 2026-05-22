@@ -1,0 +1,454 @@
+/* ========================================
+   Keyboard Shortcut Hints
+   ======================================== */
+.kbd {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-family: 'Inter', sans-serif;
+    color: var(--text-muted);
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 1px 0 var(--border);
+    line-height: 1.4;
+}
+
+/* ========================================
+   UI Polishing overrides
+   ======================================== */
+.message-content {
+    line-height: 1.75;
+    font-size: 15.5px;
+    letter-spacing: 0.2px;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.message.user .message-content {
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+/* Message timestamps — show on hover */
+.message-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-align: right;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.message:hover .message-time {
+    opacity: 1;
+}
+
+[data-theme="dark"] .message.user .message-content {
+    box-shadow: 0 4px 12px rgba(96, 165, 250, 0.15);
+}
+
+.code-block-header {
+    background-color: var(--bg);
+}
+
+[data-theme="dark"] .code-block-header {
+    background-color: #0d0d15;
+    border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .code-block-wrapper {
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.markdown-body pre {
+    border: 1px solid var(--border);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="dark"] .markdown-body pre {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.code-block-lang {
+    flex-grow: 1;
+    text-align: left;
+}
+
+/* Improve modal animations and layout */
+.modal {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+.modal-content {
+    border-radius: var(--radius-xl);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: var(--shadow-xl), 0 0 0 1px var(--border);
+}
+
+#settings-modal .settings-modal-content {
+    border: 1px solid var(--border);
+    border-radius: var(--amc-radius-lg);
+}
+
+@media (max-width: 760px) {
+    #settings-modal .settings-modal-content {
+        width: 100vw;
+        height: 100dvh;
+        max-width: 100vw;
+        max-height: 100dvh;
+        margin: 0;
+        border-radius: 0;
+    }
+}
+
+
+.markdown-body th {
+    background-color: var(--bg-elevated);
+}
+
+.markdown-body tr:nth-child(even) td {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="dark"] .markdown-body tr:nth-child(even) td {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Update copy code button styles */
+.code-copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    font-weight: 500;
+}
+
+.code-copy-btn span:not(.material-symbols-rounded) {
+    display: inline-block;
+}
+
+@media (max-width: 480px) {
+    .code-copy-btn span:not(.material-symbols-rounded) {
+        display: none;
+    }
+}
+
+/* Log Status Animations */
+@keyframes pulseDot {
+    0% { transform: scale(0.8); opacity: 0.5; }
+    50% { transform: scale(1.2); opacity: 1; }
+    100% { transform: scale(0.8); opacity: 0.5; }
+}
+
+.log-spinner {
+    font-size: 18px;
+    transition: color var(--transition-smooth);
+}
+
+.log-summary {
+    position: relative;
+    overflow: hidden;
+}
+
+.log-summary::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    background: var(--primary);
+    width: 0;
+    transition: width 0.3s ease;
+}
+
+.log-container:not(.completed) .log-summary::after {
+    width: 100%;
+    animation: loadingBar 2s ease infinite;
+    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+}
+
+@keyframes loadingBar {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+/* Citation favicon */
+.citation-favicon {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    vertical-align: middle;
+    flex-shrink: 0;
+    object-fit: contain;
+}
+
+/* Assistant Message padding fix for Markdown */
+.message.assistant .message-content {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+.message.assistant .message-content p {
+    margin-bottom: 14px;
+}
+
+/* Source references block at the bottom */
+.references-block {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-light);
+    font-size: 13px;
+}
+
+.references-block ol {
+    counter-reset: ref-counter;
+    list-style: none;
+    padding-left: 0;
+    margin: 12px 0 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.references-block li {
+    counter-increment: ref-counter;
+    margin-bottom: 0;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    position: relative;
+    transition: all var(--transition-smooth);
+    box-shadow: var(--shadow-xs);
+    cursor: pointer;
+    overflow: hidden;
+    height: 100%;
+}
+
+.references-block li:hover {
+    background-color: var(--primary-light);
+    border-color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm);
+}
+
+.references-block li::before {
+    content: counter(ref-counter);
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 9px;
+    font-weight: 700;
+    width: 15px;
+    height: 15px;
+    background-color: var(--border);
+    color: var(--text-secondary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+}
+
+.references-block li:hover::before {
+    background-color: var(--primary);
+    color: var(--text-inverse);
+}
+
+.ref-favicon {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    object-fit: contain;
+}
+
+.references-block a {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 1.4;
+    text-decoration: none;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    margin-right: 14px;
+    margin-top: auto;
+    flex: 1;
+}
+
+.references-block a:hover {
+    text-decoration: none;
+}
+
+/* Additional Refinements */
+.citation-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.citation-group .citation-link {
+    margin: 0;
+    padding: 0 5px;
+    height: 18px;
+    line-height: 18px;
+    display: inline-block;
+}
+
+
+
+/* Button Pulse/Shadow on Active */
+.primary-btn {
+    transition: all var(--transition-smooth);
+}
+
+.primary-btn:active {
+    transform: scale(0.97);
+}
+
+
+/* Fix user message overlap with absolute copy-btn */
+.message.user .message-content {
+    padding-right: 44px; /* leave room for absolute copy button */
+    min-width: 60px;
+}
+
+/* Ensure copy button in user message is correctly aligned */
+.message.user .message-content .copy-btn {
+    top: 50%;
+    transform: translateY(-50%);
+    right: 12px;
+}
+
+/* Typography line heights */
+.hero-title {
+    letter-spacing: -1.5px;
+}
+
+.hero-subtitle {
+    letter-spacing: -0.2px;
+    line-height: 1.6;
+}
+
+.hero-hints {
+    margin-top: 16px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.hero-suggestions {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.hint-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+
+
+.char-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    position: absolute;
+    bottom: 6px;
+    right: 60px;
+    pointer-events: none;
+}
+
+.input-box:focus-within .char-count {
+    display: block !important;
+}
+
+.hint-item kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-size: 11px;
+    font-family: 'Inter', sans-serif;
+    color: var(--text-secondary);
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 1px 0 var(--border);
+    line-height: 1.4;
+}
+
+.suggestion-chip {
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    cursor: pointer;
+    transition: all var(--transition-smooth);
+    white-space: nowrap;
+    box-shadow: var(--shadow-xs);
+}
+
+.suggestion-chip:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: var(--primary-light);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-sm), 0 0 0 2.5px var(--primary-light);
+}
+/* Dark mode progress bar */
+[data-theme="dark"] .search-progress-bar .progress-fill {
+    background: linear-gradient(90deg, #60a5fa, #a78bfa, #60a5fa);
+    background-size: 200% 100%;
+}
+
+/* Force dark mode code copy button visibility fix */
+[data-theme="dark"] .code-copy-btn {
+    color: var(--text-muted);
+}
+[data-theme="dark"] .code-copy-btn:hover {
+    color: var(--text-inverse);
+    background-color: var(--primary);
+}
+
+/* Ensure smooth sidebar animation on mobile */
+#sidebar {
+    /* will-change already set on line 206 */
+}
+
+/* Chat container flex bottom padding for input area shadow */
+#chat-container {
+    padding-bottom: 24px;
+}
+
+/* User inputs better wrapping */
+#user-input {
+    word-break: break-word;
+}
+
+/* Main Header Polishing */
+.main-header {
+    border-bottom: none;
+    box-shadow: none;
+}
+
+[data-theme="dark"] .main-header {
+    border-bottom: none;
+    box-shadow: none;
+}
