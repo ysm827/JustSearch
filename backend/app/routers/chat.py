@@ -5,7 +5,6 @@ Chat router – /api/chat and /ws/browser/{session_id}
 import asyncio
 import json
 import logging
-import os
 import base64
 from datetime import datetime
 from typing import Optional
@@ -19,6 +18,7 @@ from ..database import (
     load_settings, save_chat_history, load_chat_history, get_chat_path, get_next_api_key,
     delete_message,
 )
+from ..providers import first_model_id, get_provider_by_id
 from ..workflow import SearchWorkflow
 from ..interaction import get_interaction_session, mark_interaction_completed
 from ..rate_limiter import chat_limiter
@@ -36,13 +36,13 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     query: str
+    provider_id: str
     session_id: Optional[str] = None
     model: Optional[str] = None
-    base_url: Optional[str] = None
     search_engine: Optional[str] = None
-    max_results: Optional[int] = 50
-    max_iterations: Optional[int] = 5
-    interactive_search: Optional[bool] = True
+    max_results: Optional[int] = None
+    max_iterations: Optional[int] = None
+    interactive_search: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
@@ -164,24 +164,18 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         )
 
     defaults = await load_settings()
-    api_key = defaults.get("api_key", "")
+    provider_id = request.provider_id.strip()
+    provider = get_provider_by_id(defaults, provider_id)
+    if not provider:
+        raise HTTPException(status_code=400, detail=f"未找到 provider: {provider_id}")
+
+    api_key = provider.get("api_key", "")
 
     if api_key:
         api_key = await get_next_api_key(api_key)
 
-    base_url = request.base_url or defaults.get("base_url")
-
-    model = request.model
-    if not model:
-        default_model = defaults.get("model_id", "")
-        if isinstance(default_model, str) and "," in default_model:
-            models_list = [m.strip() for m in default_model.split(",") if m.strip()]
-            model = models_list[0] if models_list else default_model
-        else:
-            model = default_model
-
-    if isinstance(model, str) and ":" in model:
-        model = model.split(":")[0].strip()
+    base_url = provider.get("base_url")
+    model = first_model_id(request.model or provider.get("model_id", ""))
 
     search_engine = request.search_engine or defaults.get("search_engine", "duckduckgo")
     max_results = request.max_results or defaults.get("max_results", 50)
@@ -194,19 +188,17 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     max_context_turns = defaults.get("max_context_turns", 6)
 
     if not api_key:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(
-                status_code=400,
-                detail="请先在设置中配置 API 密钥。点击左上角 ⚙️ 设置按钮，填入 API Key 后保存。",
-            )
+        raise HTTPException(
+            status_code=400,
+            detail=f"请先在设置中配置 provider「{provider.get('name') or provider_id}」的 API 密钥。",
+        )
 
     session_id = request.session_id
     if not session_id:
         session_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
 
-    logger.info("[Chat] New request: session=%s, query='%s', engine=%s, model=%s",
-                session_id, request.query[:80], search_engine, model)
+    logger.info("[Chat] New request: session=%s, provider=%s, query='%s', engine=%s, model=%s",
+                session_id, provider_id, request.query[:80], search_engine, model)
 
     try:
         workflow = SearchWorkflow(
@@ -223,7 +215,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     context_messages = chat_history_data.get("messages", []) if chat_history_data else []
 
     async def event_generator():
-        yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'model': model})}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'provider_id': provider_id, 'model': model})}\n\n"
 
         queue = asyncio.Queue()
         logs = []

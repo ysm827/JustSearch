@@ -3,8 +3,8 @@ import { state, setCurrentSessionId } from './modules/state.js';
 import { initUI, elements } from './modules/ui.js';
 import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js';
 import { setupBrowserModal } from './modules/browser-modal.js';
-import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js';
-import { setupSettingsModal } from './modules/settings-modal.js';
+import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=10';
+import { setupSettingsModal } from './modules/settings-modal.js?v=12';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js';
 import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js';
 import * as API from './modules/api.js';
@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initCustomModelSelect();
 
     const settings = normalizeSettings(await API.fetchSettings());
-    updateModelSelector(settings.model_id || '');
+    updateModelSelector(settings);
 
     const [chatHistory, chatGroups] = await Promise.all([
         API.fetchHistory(),
@@ -51,44 +51,64 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupContextMenuSuppression();
 });
 
-function updateModelSelector(modelString) {
+function updateModelSelector(settings) {
     const select = document.getElementById('model-select');
     if (!select) return;
 
-    const currentVal = select.value;
+    const selectedOption = select.options[select.selectedIndex];
+    const currentKey = selectedOption
+        ? `${selectedOption.dataset.providerId || ''}:${selectedOption.value}`
+        : '';
     select.innerHTML = '';
 
-    const models = (modelString || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (models.length === 0) {
+    const providers = Array.isArray(settings?.providers) ? settings.providers : [];
+    if (providers.length === 0) {
         const option = document.createElement('option');
         option.value = '';
         option.textContent = 'Default';
+        option.dataset.providerId = '';
         select.appendChild(option);
         syncCustomModelSelect();
         return;
     }
 
-    const cleanModelIds = [];
+    providers.forEach(provider => {
+        const providerId = String(provider.id || '').trim();
+        if (!providerId) return;
 
-    models.forEach(model => {
-        const option = document.createElement('option');
-        let val = model;
-        let displayName = model;
-        const colonIdx = model.indexOf(':');
-        if (colonIdx !== -1) {
-            val = model.substring(0, colonIdx).trim();
-            displayName = model.substring(colonIdx + 1).trim();
-        } else {
-            displayName = val.includes('/') ? val.split('/').pop() : val;
-        }
-        option.value = val;
-        option.textContent = displayName;
-        option.title = val;
-        select.appendChild(option);
-        cleanModelIds.push(val);
+        const models = String(provider.model_id || '').split(',').map(s => s.trim()).filter(Boolean);
+        models.forEach(model => {
+            const option = document.createElement('option');
+            let val = model;
+            let displayName = model;
+            const colonIdx = model.indexOf(':');
+            if (colonIdx !== -1) {
+                val = model.substring(0, colonIdx).trim();
+                displayName = model.substring(colonIdx + 1).trim();
+            } else {
+                displayName = val.includes('/') ? val.split('/').pop() : val;
+            }
+            option.value = val;
+            option.textContent = `${displayName} · ${provider.name || providerId}`;
+            option.title = `${providerId} / ${val}`;
+            option.dataset.providerId = providerId;
+            option.dataset.providerName = provider.name || providerId;
+            select.appendChild(option);
+        });
     });
 
-    select.value = cleanModelIds.includes(currentVal) ? currentVal : cleanModelIds[0];
+    const preferredProviderId = settings?.default_provider_id || providers[0]?.id || '';
+    let selected = Array.from(select.options).find(
+        option => `${option.dataset.providerId || ''}:${option.value}` === currentKey
+    );
+    if (!selected) {
+        selected = Array.from(select.options).find(
+            option => option.dataset.providerId === preferredProviderId
+        );
+    }
+    if (selected) {
+        selected.selected = true;
+    }
     syncCustomModelSelect();
 }
 

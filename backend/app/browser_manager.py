@@ -30,8 +30,35 @@ from .search_result_cleanup import (
 # Simple search result cache: query -> (results, timestamp)
 _search_cache: dict = {}
 _SEARCH_CACHE_TTL = 300  # 5 minutes
+_RESULTS_WAIT_TIMEOUT_MS = 15000
 
 logger = logging.getLogger(__name__)
+
+
+def _search_failure_reason(error: Exception | str) -> str:
+    """Classify search failures for engine health scoring."""
+    text = str(error).lower()
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    return "other"
+
+
+def _blocked_search_reason(content: str, current_url: str = "") -> str:
+    """Return a reason when a search page is an anti-bot/error interstitial."""
+    text = f"{current_url}\n{content}".lower()
+    blocked_markers = (
+        "static-pages/418.html",
+        "unexpected error. please try again",
+        "pow-captcha",
+        "verifying your request",
+        "正在验证您不是机器人",
+        "在您继续搜索之前进行快速检查",
+        "quick check before you continue searching",
+        "sorry this pages exist in order to keep the service usable",
+    )
+    if any(marker in text for marker in blocked_markers):
+        return "blocked"
+    return ""
 
 
 class BrowserManager:
@@ -59,24 +86,12 @@ class BrowserManager:
         session_id: str = None,
         allow_fallback: bool = True,
         use_cache: bool = True,
+        health_batch_id: str | None = None,
     ) -> List[Dict]:
         """
         Concurrent Web Search - scrapes search results for the query.
         Automatically falls back to a healthy engine if the preferred one is unhealthy.
         """
-        # Check cache first
-        cache_key = f"{self.engine}:{query}"
-        cached = _search_cache.get(cache_key) if use_cache else None
-        if cached and time.time() - cached[1] < _SEARCH_CACHE_TTL:
-            if log_func:
-                log_func(f"浏览器: 使用缓存搜索结果: '{_truncate_for_log(query)}'")
-            return cached[0]
-
-        pool = get_context_pool_status()
-        if pool["active_contexts"] == 0:
-            await self.start()
-
-        # Auto-fallback: if preferred engine is unhealthy, switch to best available
         available_engines = list(self.engine_config.keys())
         actual_engine = (
             engine_health.get_fallback(self.engine, available_engines)
@@ -86,6 +101,22 @@ class BrowserManager:
         if actual_engine != self.engine:
             if log_func:
                 log_func(f"浏览器: {self.engine.capitalize()} 不稳定，自动切换到 {actual_engine.capitalize()}")
+
+        cache_key = f"{actual_engine}:{query}"
+        cached = _search_cache.get(cache_key) if use_cache else None
+        if cached and time.time() - cached[1] < _SEARCH_CACHE_TTL:
+            if log_func:
+                log_func(f"浏览器: 使用缓存搜索结果: '{_truncate_for_log(query)}'")
+            engine_health.record(
+                actual_engine,
+                success=True,
+                batch_id=health_batch_id,
+            )
+            return cached[0]
+
+        pool = get_context_pool_status()
+        if pool["active_contexts"] == 0:
+            await self.start()
 
         config = self.engine_config.get(actual_engine, self.current_engine_config)
         engine_name = actual_engine.capitalize()
@@ -121,6 +152,12 @@ class BrowserManager:
                 except Exception as e:
                     if log_func:
                         log_func(f"浏览器: 搜索页面加载失败: {e}")
+                    engine_health.record(
+                        actual_engine,
+                        success=False,
+                        reason=_search_failure_reason(e),
+                        batch_id=health_batch_id,
+                    )
                     return []
 
             # Check for CAPTCHA
@@ -128,6 +165,7 @@ class BrowserManager:
                 content = await page.content()
             except Exception:
                 content = ""
+            current_url = getattr(page, "url", "")
 
             detected_captcha = False
             for check in config["captcha_check"]:
@@ -144,6 +182,12 @@ class BrowserManager:
 
             if detected_captcha:
                 logger.warning("CAPTCHA detected on %s!", engine_name)
+                engine_health.record(
+                    actual_engine,
+                    success=False,
+                    reason="captcha",
+                    batch_id=health_batch_id,
+                )
                 if log_func:
                     log_func("浏览器: 检测到验证码！等待手动解决...")
 
@@ -165,17 +209,24 @@ class BrowserManager:
                     finally:
                         remove_interaction_session(session_id)
                 else:
-                    try:
-                        await page.wait_for_selector(config["wait_selector"], timeout=60000)
-                        if log_func:
-                            log_func("浏览器: 验证码已解决，继续...")
-                    except asyncio.TimeoutError:
-                        if log_func:
-                            log_func("浏览器: 验证码未及时解决。")
+                    return []
+
+            blocked_reason = _blocked_search_reason(content, current_url)
+            if blocked_reason:
+                logger.warning("Search blocked on %s: %s", engine_name, blocked_reason)
+                engine_health.record(
+                    actual_engine,
+                    success=False,
+                    reason=blocked_reason,
+                    batch_id=health_batch_id,
+                )
+                if log_func:
+                    log_func(f"浏览器: {engine_name} 返回验证/错误页面，跳过该引擎。")
+                return []
 
             # Wait for results
             try:
-                await page.wait_for_selector(config["wait_selector"], timeout=30000)
+                await page.wait_for_selector(config["wait_selector"], timeout=_RESULTS_WAIT_TIMEOUT_MS)
                 await asyncio.sleep(1.0)
             except Exception as e:
                 msg = f"等待结果容器 ({config['wait_selector']}) 超时。"
@@ -188,11 +239,20 @@ class BrowserManager:
                 if results:
                     if log_func:
                         log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
-                    engine_health.record(actual_engine, success=True)
+                    engine_health.record(
+                        actual_engine,
+                        success=True,
+                        batch_id=health_batch_id,
+                    )
                     if use_cache:
                         _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
                     return results
-                engine_health.record(actual_engine, success=False)
+                engine_health.record(
+                    actual_engine,
+                    success=False,
+                    reason="selector",
+                    batch_id=health_batch_id,
+                )
                 return []
 
             if log_func:
@@ -283,15 +343,32 @@ class BrowserManager:
 
             if log_func:
                 log_func(f"浏览器: 成功解析 {len(results)} 个结果。")
-            engine_health.record(actual_engine, success=True)
+            if results:
+                engine_health.record(
+                    actual_engine,
+                    success=True,
+                    batch_id=health_batch_id,
+                )
+            else:
+                engine_health.record(
+                    actual_engine,
+                    success=False,
+                    reason="selector",
+                    batch_id=health_batch_id,
+                )
             # Cache results (use actual engine in key for consistency)
-            if use_cache:
+            if results and use_cache:
                 _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
             return results
         except Exception as e:
             msg = f"搜索错误: {e}"
             logger.error(msg)
-            engine_health.record(actual_engine, success=False)
+            engine_health.record(
+                actual_engine,
+                success=False,
+                reason=_search_failure_reason(e),
+                batch_id=health_batch_id,
+            )
             if log_func:
                 log_func(f"浏览器错误: {msg}")
             return []

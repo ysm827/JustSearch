@@ -67,7 +67,10 @@ export function setupChatHandler(elements, renderHistory) {
 
         lastUserMessage = text;
 
-        const selectedModel = document.getElementById('model-select').value;
+        const modelSelect = document.getElementById('model-select');
+        const selectedModelOption = modelSelect?.options[modelSelect.selectedIndex] || null;
+        const selectedModel = selectedModelOption ? selectedModelOption.value : '';
+        const selectedProviderId = selectedModelOption?.dataset.providerId || state.settings.default_provider_id || '';
 
         elements.userInput.value = '';
         resetInputHeight();
@@ -158,6 +161,7 @@ export function setupChatHandler(elements, renderHistory) {
         try {
             await API.streamChat(text, {
                 model: selectedModel,
+                providerId: selectedProviderId,
                 signal: controller.signal,
                 onMeta: (meta) => {
                     const sessionId = typeof meta === 'string' ? meta : meta.session_id;
@@ -387,7 +391,8 @@ export function setupChatHandler(elements, renderHistory) {
     const modelSelect = document.getElementById('model-select');
     if (modelSelect) {
         modelSelect.addEventListener('change', () => {
-            const shortName = modelSelect.value.includes('/') ? modelSelect.value.split('/').pop() : modelSelect.value;
+            const selectedOption = modelSelect.options[modelSelect.selectedIndex];
+            const shortName = selectedOption ? selectedOption.textContent : modelSelect.value;
             showToast(`已切换至 ${shortName}`, 'info');
         });
     }

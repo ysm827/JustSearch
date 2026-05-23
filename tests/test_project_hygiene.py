@@ -365,7 +365,8 @@ def test_frontend_relative_imports_resolve_to_files():
             if not import_path.startswith("."):
                 continue
 
-            resolved = (source_path.parent / import_path).resolve()
+            import_file_path = import_path.split("?", 1)[0].split("#", 1)[0]
+            resolved = (source_path.parent / import_file_path).resolve()
             candidates = [resolved]
             if resolved.suffix == "":
                 candidates.append(resolved.with_suffix(".js"))
@@ -410,6 +411,26 @@ def test_settings_history_reset_uses_history_renderer_cache_path():
     assert "renderHistory" in source
     assert "renderHistory([], state.currentSessionId" in source
     assert "historyList.innerHTML = ''" not in source
+
+
+def test_settings_system_panel_exposes_history_import_export_controls():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    settings_source = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    api_source = (
+        PROJECT_ROOT / "backend/static/js/modules/api.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'id="import-history-btn"' in index_source
+    assert 'id="export-history-btn"' in index_source
+    assert 'id="history-import-input"' in index_source
+    assert "importHistoryAPI" in settings_source
+    assert "exportHistoryAPI" in api_source
+    assert "/api/history/import" in api_source
+    assert "/api/history/export/all?format=json" in api_source
 
 
 def test_settings_modal_closes_mobile_sidebar_before_opening():
@@ -535,6 +556,58 @@ def test_validate_api_key_button_shows_loading_state():
     assert ".password-toggle-btn.is-validating span" in settings_css
 
 
+def test_provider_cards_are_collapsible_in_settings_modal():
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    settings_css = (
+        PROJECT_ROOT / "backend/static/css/sections/input-modal.css"
+    ).read_text(encoding="utf-8")
+
+    assert "provider-collapse-btn" in settings_js
+    assert "provider-card-body" in settings_js
+    assert "aria-expanded" in settings_js
+    assert "provider-card collapsed" in settings_js
+    assert ".provider-card.collapsed .provider-card-body" in settings_css
+    assert ".provider-collapse-btn" in settings_css
+
+
+def test_provider_cards_show_summary_and_fold_model_list():
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    settings_css = (
+        PROJECT_ROOT / "backend/static/css/sections/input-modal.css"
+    ).read_text(encoding="utf-8")
+
+    expected_js_tokens = [
+        "provider-summary-row",
+        "provider-summary-base-url",
+        "provider-summary-model-count",
+        "provider-summary-key-status",
+        "formatProviderSummary",
+        "updateProviderSummary",
+        "model-panel-toggle",
+        "model-panel-summary",
+        "setModelPanelCollapsed",
+        "updateModelPanelSummary",
+    ]
+    for token in expected_js_tokens:
+        assert token in settings_js
+
+    expected_css_tokens = [
+        ".provider-summary-row",
+        ".provider-summary-pill",
+        ".provider-card.collapsed .provider-summary-row",
+        ".model-panel-header",
+        ".model-panel-toggle",
+        ".model-panel-summary",
+        ".model-settings-group.collapsed .model-list-container",
+    ]
+    for token in expected_css_tokens:
+        assert token in settings_css
+
+
 def test_settings_modal_has_search_engine_availability_check():
     index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
         encoding="utf-8"
@@ -588,7 +661,7 @@ def test_default_max_search_results_is_fifty_across_app():
     )
 
     assert '"max_results": "50"' in database_source
-    assert "max_results: Optional[int] = 50" in chat_source
+    assert "max_results: Optional[int] = None" in chat_source
     assert 'defaults.get("max_results", 50)' in chat_source
     assert "max_results: Optional[int] = 50" in settings_source
     assert 'min(50, int(update["max_results"]))' in settings_source
@@ -695,9 +768,15 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     style_source = (
         PROJECT_ROOT / "backend/static/css/style.css"
     ).read_text(encoding="utf-8")
+    main_source = (
+        PROJECT_ROOT / "backend/static/js/main.js"
+    ).read_text(encoding="utf-8")
 
-    assert 'href="/static/css/style.css?v=9"' in index_source
-    assert "@import url('./sections/sidebar.css?v=8');" in style_source
+    assert 'href="/static/css/style.css?v=12"' in index_source
+    assert 'src="/static/js/main.js?v=12"' in index_source
+    assert "@import url('./sections/sidebar.css?v=10');" in style_source
+    assert "@import url('./sections/input-modal.css?v=12');" in style_source
+    assert "from './modules/settings-modal.js?v=12'" in main_source
 
 
 def test_history_rename_updates_cached_history_source():
@@ -748,6 +827,54 @@ def test_sidebar_history_groups_have_frontend_controls():
     assert "data-group-id" in history_source
     assert ".chat-group-header" in sidebar_css
     assert ".chat-group-drop-target" in sidebar_css
+
+
+def test_sidebar_custom_groups_render_sessions_by_date():
+    history_source = (
+        PROJECT_ROOT / "backend/static/js/modules/history-view.js"
+    ).read_text(encoding="utf-8")
+    sidebar_css = (
+        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
+    ).read_text(encoding="utf-8")
+
+    render_date_signature = re.search(
+        r"function renderDateGroups\((?P<args>[^)]*)\)",
+        history_source,
+    )
+    chat_group_render = history_source.split(
+        "function renderChatGroups",
+        1,
+    )[1].split("function renderDateGroups", 1)[0]
+
+    assert render_date_signature is not None
+    assert "target = elements.historyList" in render_date_signature.group("args")
+    assert "renderDateGroups(sessions, currentSessionId, callbacks, list)" in chat_group_render
+    assert "sessions.forEach(chat => list.appendChild(createHistoryItem" not in chat_group_render
+    assert ".chat-group-session-list .history-group" in sidebar_css
+    assert ".chat-group-session-list .history-group-header" in sidebar_css
+
+
+def test_history_api_timestamps_include_utc_timezone():
+    database_source = (PROJECT_ROOT / "backend/app/database.py").read_text(
+        encoding="utf-8"
+    )
+    history_router_source = (
+        PROJECT_ROOT / "backend/app/routers/history.py"
+    ).read_text(encoding="utf-8")
+
+    assert "timezone" in database_source
+    assert "def _format_utc_timestamp" in database_source
+    assert "datetime.fromisoformat" in database_source
+    assert "value.replace(tzinfo=timezone.utc)" in database_source
+    assert ".isoformat().replace('+00:00', 'Z')" in database_source
+    assert "value[:-1] + '+00:00'" in database_source
+    assert "msg_dict[\"timestamp\"] = _format_utc_timestamp(m.created_at)" in database_source
+    assert "\"timestamp\": _format_utc_timestamp(sess.updated_at)" in database_source
+    assert "\"timestamp\": _format_utc_timestamp(s.updated_at)" in database_source
+    assert "\"timestamp\": _format_utc_timestamp(group.updated_at)" in database_source
+    assert "from ..database import (" in history_router_source
+    assert "_format_utc_timestamp" in history_router_source
+    assert "\"timestamp\": _format_utc_timestamp(row[3])" in history_router_source
 
 
 def test_sidebar_search_action_matches_amc_layout():

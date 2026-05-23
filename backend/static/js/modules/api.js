@@ -26,7 +26,7 @@ export async function saveSettingsAPI(newSettings) {
         });
         if (res.ok) {
             const data = await res.json();
-            // Update state with server response (contains masked api_key)
+            // Update state with server response (contains masked provider api keys)
             if (data.settings) {
                 setSettings(data.settings);
                 applyTheme(data.settings.theme);
@@ -190,6 +190,53 @@ export async function clearHistoryAPI() {
     }
 }
 
+export async function exportHistoryAPI() {
+    try {
+        const res = await authFetch('/api/history/export/all?format=json');
+        if (!res.ok) {
+            return false;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        link.href = url;
+        link.download = `justsearch-history-${today}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return true;
+    } catch (e) {
+        console.error("Failed to export history", e);
+        return false;
+    }
+}
+
+export async function importHistoryAPI(payload) {
+    try {
+        const res = await authFetch('/api/history/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            return await res.json();
+        }
+        let detail = '导入失败';
+        try {
+            const data = await res.json();
+            detail = data.detail || detail;
+        } catch (e) {
+            // Keep generic error.
+        }
+        return { status: 'error', detail };
+    } catch (e) {
+        console.error("Failed to import history", e);
+        return { status: 'error', detail: '导入请求失败' };
+    }
+}
+
 export async function deleteMessageAPI(sessionId, messageIndex) {
     try {
         const res = await authFetch('/api/chat/message', {
@@ -267,7 +314,7 @@ export async function fetchGitHubStats() {
 }
 
 export async function streamChat(query, callbacks) {
-    const { onLog, onAnswerChunk, onAnswer, onSources, onStats, onError, onDone, onMeta, signal, model } = callbacks;
+    const { onLog, onAnswerChunk, onAnswer, onSources, onStats, onError, onDone, onMeta, signal, model, providerId } = callbacks;
 
     const MAX_RETRIES = 2;
     const RETRY_DELAYS = [2000, 5000]; // 渐进式重试延迟
@@ -280,8 +327,8 @@ export async function streamChat(query, callbacks) {
                 body: JSON.stringify({
                     query: query,
                     session_id: state.currentSessionId,
-                    base_url: state.settings.base_url,
-                    model: model || state.settings.model_id,
+                    provider_id: providerId || state.settings.default_provider_id,
+                    model: model,
                     search_engine: state.settings.search_engine,
                     max_results: state.settings.max_results,
                     max_iterations: state.settings.max_iterations,

@@ -2,11 +2,14 @@ import asyncio
 import base64
 import json
 import logging
+import uuid
 from typing import List, Dict, Callable, Any, Optional
 from .llm_client import LLMClient
 from .browser_manager import BrowserManager
+from .engine_health import engine_health
 
 logger = logging.getLogger(__name__)
+_SEARCH_BATCH_TIMEOUT_SECONDS = 60.0
 
 class SearchWorkflow:
     def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "duckduckgo", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_context_turns: int = 6, max_concurrent_pages: int = 3):
@@ -147,15 +150,38 @@ class SearchWorkflow:
         if valid_queries:
             progress_callback(f"阶段 II: 在 {engine_name} 上搜索: {', '.join(valid_queries)}...")
             logger.info("[Workflow] 搜索引擎: %s, 查询: %s", engine_name, valid_queries)
+            batch_id = f"{self.session_id or 'session'}:{iteration}:{uuid.uuid4().hex[:8]}"
+            batch_engine = engine_health.get_fallback(
+                self.browser.engine,
+                list(self.browser.engine_config.keys()),
+            )
             
             # [03] Web Search (Parallel) with timeout and retry
-            search_tasks = [self.browser.search_web(q, log_func=progress_callback, session_id=self.session_id) for q in valid_queries]
+            search_tasks = [
+                self.browser.search_web(
+                    q,
+                    log_func=progress_callback,
+                    session_id=self.session_id if self.interactive_search else None,
+                    health_batch_id=batch_id,
+                )
+                for q in valid_queries
+            ]
             
             # First attempt with shorter timeout
             try:
-                results_list = await asyncio.wait_for(asyncio.gather(*search_tasks, return_exceptions=True), timeout=60.0)
+                results_list = await asyncio.wait_for(
+                    asyncio.gather(*search_tasks, return_exceptions=True),
+                    timeout=_SEARCH_BATCH_TIMEOUT_SECONDS,
+                )
             except asyncio.TimeoutError:
                 progress_callback("搜索超时（60秒），使用已获取的结果...")
+                for _query in valid_queries:
+                    engine_health.record(
+                        batch_engine,
+                        success=False,
+                        reason="timeout",
+                        batch_id=batch_id,
+                    )
                 results_list = [[] for _ in search_tasks]
             
             # Handle exceptions from individual searches
@@ -197,6 +223,24 @@ class SearchWorkflow:
         # [04] Relevance Assessment
         relevant_ids = await self.llm.assess_relevance(user_input, search_results)
         progress_callback(f"选定进行深度爬取的 ID: {relevant_ids}")
+
+        relevant_id_set = set()
+        for item_id in relevant_ids:
+            try:
+                relevant_id_set.add(int(item_id))
+            except (TypeError, ValueError):
+                continue
+
+        valid_result_ids = {res['id'] for res in search_results}
+        if not relevant_id_set.intersection(valid_result_ids):
+            engine_health.record(
+                batch_engine,
+                success=False,
+                reason="low_quality",
+                batch_id=batch_id,
+            )
+            progress_callback("相关性评估未选中可用结果，跳过偏题搜索结果。")
+            return [], source_id_counter, len(search_results)
         
         # [05] Admission Filter — 优先未访问的 URL，如果都访问过则选次优结果
         to_crawl = []
@@ -204,7 +248,7 @@ class SearchWorkflow:
         already_visited = []
 
         for res in search_results:
-            if res['id'] in relevant_ids:
+            if res['id'] in relevant_id_set:
                 if res['url'] not in visited_urls and res['url'] not in seen_urls_in_batch:
                     to_crawl.append(res)
                     seen_urls_in_batch.add(res['url'])
@@ -215,7 +259,7 @@ class SearchWorkflow:
         if not to_crawl:
             # 先尝试已访问的 URL 对应的搜索结果页面中是否有其他候选
             for res in search_results:
-                if res['url'] not in visited_urls and res['url'] not in seen_urls_in_batch and res['id'] not in relevant_ids:
+                if res['url'] not in visited_urls and res['url'] not in seen_urls_in_batch and res['id'] not in relevant_id_set:
                     to_crawl.append(res)
                     seen_urls_in_batch.add(res['url'])
                     if len(to_crawl) >= 3:

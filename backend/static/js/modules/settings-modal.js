@@ -13,6 +13,9 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
     const resetSettingsBtn = document.getElementById('reset-settings-btn');
     const clearHistoryBtn = document.getElementById('clear-history-btn');
     const clearCacheBtn = document.getElementById('clear-cache-btn');
+    const exportHistoryBtn = document.getElementById('export-history-btn');
+    const importHistoryBtn = document.getElementById('import-history-btn');
+    const historyImportInput = document.getElementById('history-import-input');
 
     // Tab Switching Logic
     const tabs = elements.settingsModal.querySelectorAll('.settings-tab-btn');
@@ -84,7 +87,7 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         saveSettingsBtn.addEventListener('click', async () => {
             const newSettings = collectSettingsForm();
             if (await API.saveSettingsAPI(newSettings)) {
-                updateModelSelector(newSettings.model_id);
+                updateModelSelector(state.settings);
                 if (typeof onSettingsSaved === 'function') {
                     onSettingsSaved();
                 }
@@ -121,6 +124,33 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         }
     });
 
+    if (exportHistoryBtn) {
+        exportHistoryBtn.addEventListener('click', async () => {
+            exportHistoryBtn.disabled = true;
+            try {
+                if (await API.exportHistoryAPI()) {
+                    showToast('聊天记录已导出', 'success');
+                } else {
+                    showToast('导出聊天记录失败', 'error');
+                }
+            } finally {
+                exportHistoryBtn.disabled = false;
+            }
+        });
+    }
+
+    if (importHistoryBtn && historyImportInput) {
+        importHistoryBtn.addEventListener('click', () => {
+            historyImportInput.click();
+        });
+        historyImportInput.addEventListener('change', async () => {
+            const file = historyImportInput.files?.[0];
+            historyImportInput.value = '';
+            if (!file) return;
+            await importHistoryFile(file, historyCallbacks, importHistoryBtn);
+        });
+    }
+
     if (clearCacheBtn) {
         clearCacheBtn.addEventListener('click', async () => {
             if (!(await showConfirm('此操作将清除所有聊天记录、浏览器缓存（Cookies 等）并重置设置为默认值。确定要继续吗？此操作不可撤销。', '清除全部缓存'))) return;
@@ -135,9 +165,8 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         });
     }
 
-    setupPasswordControls();
     setupEngineCheckControls();
-    initModelListUI();
+    initProviderListUI();
 
     // Auto-save logic
     let saveTimeout = null;
@@ -146,7 +175,7 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         saveTimeout = setTimeout(async () => {
             const newSettings = collectSettingsForm();
             if (await API.saveSettingsAPI(newSettings)) {
-                updateModelSelector(newSettings.model_id);
+                updateModelSelector(state.settings);
                 if (typeof onSettingsSaved === 'function') {
                     onSettingsSaved();
                 }
@@ -161,9 +190,6 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         'engine-select',
         'max-results-input',
         'max-iterations-input',
-        'api-key-input',
-        'base-url-input',
-        'model-input',
         'interactive-search-input',
         'max-concurrent-pages-input',
         'max-context-turns-input'
@@ -176,6 +202,43 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
             el.addEventListener(eventType, triggerAutoSave);
         }
     });
+}
+
+async function importHistoryFile(file, historyCallbacks, importHistoryBtn) {
+    if (!file.name.toLowerCase().endsWith('.json')) {
+        showToast('请选择 JSON 文件', 'warning');
+        return;
+    }
+
+    importHistoryBtn.disabled = true;
+    try {
+        const text = await file.text();
+        let payload;
+        try {
+            payload = JSON.parse(text);
+        } catch (e) {
+            showToast('JSON 文件格式不正确', 'error');
+            return;
+        }
+
+        const result = await API.importHistoryAPI(payload);
+        if (!result || result.status !== 'ok') {
+            showToast(result?.detail || '导入聊天记录失败', 'error');
+            return;
+        }
+
+        const [history, groups] = await Promise.all([
+            API.fetchHistory(),
+            API.fetchChatGroups(),
+        ]);
+        renderHistory(history, state.currentSessionId, historyCallbacks, groups);
+        showToast(
+            `已导入 ${result.imported_sessions || 0} 个对话，跳过 ${result.skipped_sessions || 0} 个重复对话`,
+            'success',
+        );
+    } finally {
+        importHistoryBtn.disabled = false;
+    }
 }
 
 async function updateVersionDisplay() {
@@ -234,64 +297,26 @@ function fillSettingsForm(settings) {
     document.getElementById('engine-select').value = settings.search_engine || 'duckduckgo';
     document.getElementById('max-results-input').value = settings.max_results || 50;
     document.getElementById('max-iterations-input').value = settings.max_iterations || 5;
-    document.getElementById('api-key-input').value = settings.api_key || '';
-    document.getElementById('api-key-input').placeholder = settings.api_key ? '已配置 (留空保持不变)' : '输入 API Key';
-    document.getElementById('base-url-input').value = settings.base_url || '';
-    document.getElementById('model-input').value = settings.model_id || '';
-    
-    const modelInput = document.getElementById('model-input');
-    if (modelInput && typeof modelInput.renderModelRows === 'function') {
-        modelInput.renderModelRows();
-    }
-
+    renderProviderList(settings.providers || [], settings.default_provider_id || '');
     document.getElementById('interactive-search-input').checked = settings.interactive_search !== undefined ? settings.interactive_search : true;
     document.getElementById('max-concurrent-pages-input').value = settings.max_concurrent_pages || 10;
     document.getElementById('max-context-turns-input').value = settings.max_context_turns || 6;
 }
 
 function collectSettingsForm() {
-    const apiKeyInput = document.getElementById('api-key-input');
-    let apiKeyValue = apiKeyInput.value.trim();
-
-    if (apiKeyValue && apiKeyValue.includes('****')) {
-        apiKeyValue = '';
-    }
-
+    const providers = collectProvidersForm();
+    const defaultProvider = document.querySelector('input[name="default-provider-radio"]:checked');
     return {
         theme: document.getElementById('theme-select').value,
         search_engine: document.getElementById('engine-select').value,
         max_results: parseInt(document.getElementById('max-results-input').value) || 50,
         max_iterations: parseInt(document.getElementById('max-iterations-input').value) || 5,
-        api_key: apiKeyValue,
-        base_url: document.getElementById('base-url-input').value,
-        model_id: document.getElementById('model-input').value,
+        default_provider_id: defaultProvider?.value || providers[0]?.id || '',
+        providers,
         interactive_search: document.getElementById('interactive-search-input').checked,
         max_concurrent_pages: parseInt(document.getElementById('max-concurrent-pages-input').value) || 10,
         max_context_turns: parseInt(document.getElementById('max-context-turns-input').value) || 6,
     };
-}
-
-function setupPasswordControls() {
-    const toggleBtn = document.getElementById('toggle-api-key-btn');
-    const apiKeyInput = document.getElementById('api-key-input');
-
-    if (toggleBtn && apiKeyInput) {
-        toggleBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const type = apiKeyInput.getAttribute('type') === 'password' ? 'text' : 'password';
-            apiKeyInput.setAttribute('type', type);
-
-            const icon = toggleBtn.querySelector('.material-symbols-rounded');
-            if (icon) {
-                icon.textContent = type === 'password' ? 'visibility' : 'visibility_off';
-            }
-        });
-    }
-
-    const validateBtn = document.getElementById('validate-key-btn');
-    if (validateBtn) {
-        validateBtn.addEventListener('click', validateApiKey);
-    }
 }
 
 function setupEngineCheckControls() {
@@ -403,9 +428,11 @@ function getEngineDisplayName(engine) {
 async function validateApiKey(e) {
     e.preventDefault();
     const validateBtn = e.currentTarget;
-    const apiKey = document.getElementById('api-key-input').value.trim();
-    const baseUrl = document.getElementById('base-url-input').value.trim();
-    const modelId = document.getElementById('model-input').value.trim();
+    const providerCard = validateBtn.closest('.provider-card');
+    const apiKey = providerCard.querySelector('.provider-api-key-input').value.trim();
+    const baseUrl = providerCard.querySelector('.provider-base-url-input').value.trim();
+    const modelId = providerCard.querySelector('.provider-model-input').value.trim();
+    const providerId = providerCard.querySelector('.provider-id-input').value.trim();
     if (!apiKey) {
         showToast('请先输入 API 密钥', 'warning');
         return;
@@ -422,6 +449,7 @@ async function validateApiKey(e) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                provider_id: providerId,
                 api_key: apiKey,
                 base_url: baseUrl,
                 model_id: (() => {
@@ -458,37 +486,189 @@ function resetConversationView(historyCallbacks) {
     elements.chatContainer.appendChild(elements.heroSection);
 }
 
-function initModelListUI() {
-    const container = document.getElementById('model-list-container');
-    const addButton = document.getElementById('add-model-btn');
-    const hiddenInput = document.getElementById('model-input');
-    if (!container || !addButton || !hiddenInput) return;
+function initProviderListUI() {
+    const addButton = document.getElementById('add-provider-btn');
+    if (!addButton) return;
+
+    addButton.addEventListener('click', () => {
+        const providers = collectProvidersForm();
+        providers.push(createEmptyProvider(providers.length + 1));
+        renderProviderList(providers, providers[0]?.id || '');
+    });
+}
+
+function renderProviderList(providers, defaultProviderId) {
+    const container = document.getElementById('provider-list-container');
+    if (!container) return;
+
+    const items = Array.isArray(providers) && providers.length > 0
+        ? providers
+        : [createEmptyProvider(1)];
+    const fallbackDefault = defaultProviderId || items[0]?.id || '';
+
+    container.innerHTML = '';
+    items.forEach((provider, index) => {
+        container.appendChild(createProviderCard(provider, fallbackDefault, index));
+    });
+}
+
+function createProviderCard(provider, defaultProviderId, index) {
+    const card = document.createElement('div');
+    card.className = 'provider-card collapsed';
+    const providerId = provider.id || `provider-${index + 1}`;
+    const radioId = `default-provider-${index}`;
+    const providerSummary = formatProviderSummary(provider);
+    card.innerHTML = `
+        <div class="provider-card-header">
+            <button type="button" class="provider-collapse-btn" aria-expanded="false">
+                <span class="provider-collapse-copy">
+                    <span class="provider-card-name">${escapeHtml(provider.name || providerId)}</span>
+                    <span class="provider-card-subtitle">${escapeHtml(providerId)}</span>
+                    <span class="provider-summary-row" aria-hidden="true">
+                        <span class="provider-summary-pill provider-summary-base-url">${escapeHtml(providerSummary.baseUrl)}</span>
+                        <span class="provider-summary-pill provider-summary-model-count">${escapeHtml(providerSummary.modelCount)}</span>
+                        <span class="provider-summary-pill provider-summary-key-status">${escapeHtml(providerSummary.keyStatus)}</span>
+                    </span>
+                </span>
+                <span class="material-symbols-rounded provider-collapse-icon">expand_more</span>
+            </button>
+            <div class="provider-card-actions">
+                <label class="provider-default-label" for="${radioId}">
+                    <input type="radio" id="${radioId}" name="default-provider-radio" value="${escapeHtml(providerId)}" ${providerId === defaultProviderId ? 'checked' : ''}>
+                    <span>默认</span>
+                </label>
+                <button type="button" class="remove-provider-btn" title="删除 Provider">
+                    <span class="material-symbols-rounded">delete</span>
+                </button>
+            </div>
+        </div>
+        <div class="provider-card-body">
+            <div class="provider-grid">
+                <div class="form-group">
+                    <label>Provider ID</label>
+                    <input type="text" class="provider-id-input" value="${escapeHtml(providerId)}" placeholder="openai">
+                </div>
+                <div class="form-group">
+                    <label>显示名称</label>
+                    <input type="text" class="provider-name-input" value="${escapeHtml(provider.name || providerId)}" placeholder="OpenAI">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>API 密钥</label>
+                <div class="password-input-wrapper">
+                    <input type="password" class="provider-api-key-input" autocomplete="new-password" value="${escapeHtml(provider.api_key || '')}" placeholder="sk-..., sk-...">
+                    <div class="password-actions-wrapper">
+                        <button type="button" class="password-toggle-btn provider-toggle-key-btn" title="显示/隐藏密钥">
+                            <span class="material-symbols-rounded">visibility</span>
+                        </button>
+                        <button type="button" class="password-toggle-btn provider-validate-key-btn" title="验证 API 密钥">
+                            <span class="material-symbols-rounded">verified</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>API 基础地址</label>
+                <input type="text" class="provider-base-url-input" value="${escapeHtml(provider.base_url || '')}" placeholder="https://api.openai.com/v1">
+            </div>
+            <div class="form-group model-settings-group">
+                <div class="model-panel-header">
+                    <button type="button" class="model-panel-toggle" aria-expanded="false">
+                        <span class="model-panel-title">模型列表</span>
+                        <span class="model-panel-summary">${escapeHtml(providerSummary.modelCount)}</span>
+                        <span class="material-symbols-rounded model-panel-icon">expand_more</span>
+                    </button>
+                </div>
+                <div class="model-list-container"></div>
+                <button type="button" class="add-model-btn provider-add-model-btn">
+                    <span class="material-symbols-rounded">add</span>
+                    <span>添加模型</span>
+                </button>
+                <input type="hidden" class="provider-model-input" value="${escapeHtml(provider.model_id || '')}">
+            </div>
+        </div>
+    `;
+
+    const idInput = card.querySelector('.provider-id-input');
+    const radio = card.querySelector('input[name="default-provider-radio"]');
+    idInput.addEventListener('input', () => {
+        radio.value = idInput.value.trim();
+        const displayName = card.querySelector('.provider-name-input').value.trim() || idInput.value.trim();
+        card.querySelector('.provider-card-name').textContent = displayName;
+        card.querySelector('.provider-card-subtitle').textContent = idInput.value.trim();
+        updateProviderSummary(card);
+    });
+    card.querySelector('.provider-name-input').addEventListener('input', () => {
+        const displayName = card.querySelector('.provider-name-input').value.trim() || idInput.value.trim();
+        card.querySelector('.provider-card-name').textContent = displayName;
+        updateProviderSummary(card);
+    });
+
+    const collapseBtn = card.querySelector('.provider-collapse-btn');
+    const setCollapsed = (collapsed) => {
+        card.classList.toggle('collapsed', collapsed);
+        collapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        const icon = collapseBtn.querySelector('.provider-collapse-icon');
+        if (icon) {
+            icon.textContent = collapsed ? 'expand_more' : 'expand_less';
+        }
+    };
+    collapseBtn.addEventListener('click', (event) => {
+        setCollapsed(!card.classList.contains('collapsed'));
+    });
+    if (providerId === defaultProviderId) {
+        setCollapsed(false);
+    }
+
+    card.querySelector('.provider-toggle-key-btn').addEventListener('click', (event) => {
+        event.preventDefault();
+        const input = card.querySelector('.provider-api-key-input');
+        const type = input.getAttribute('type') === 'password' ? 'text' : 'password';
+        input.setAttribute('type', type);
+        const icon = event.currentTarget.querySelector('.material-symbols-rounded');
+        if (icon) {
+            icon.textContent = type === 'password' ? 'visibility' : 'visibility_off';
+        }
+    });
+
+    card.querySelector('.provider-validate-key-btn').addEventListener('click', validateApiKey);
+    card.querySelector('.provider-api-key-input').addEventListener('input', () => updateProviderSummary(card));
+    card.querySelector('.provider-base-url-input').addEventListener('input', () => updateProviderSummary(card));
+    card.querySelector('.remove-provider-btn').addEventListener('click', () => {
+        const providers = collectProvidersForm().filter(item => item.id !== idInput.value.trim());
+        renderProviderList(providers.length > 0 ? providers : [createEmptyProvider(1)], providers[0]?.id || '');
+    });
+    setupProviderModelList(card);
+    return card;
+}
+
+function setupProviderModelList(providerCard) {
+    const container = providerCard.querySelector('.model-list-container');
+    const addButton = providerCard.querySelector('.provider-add-model-btn');
+    const hiddenInput = providerCard.querySelector('.provider-model-input');
+    const modelGroup = providerCard.querySelector('.model-settings-group');
+    const toggleButton = providerCard.querySelector('.model-panel-toggle');
 
     function render() {
         container.innerHTML = '';
-        const value = hiddenInput.value || '';
-        const items = value.split(',').map(s => s.trim()).filter(Boolean);
-        
+        const items = (hiddenInput.value || '').split(',').map(s => s.trim()).filter(Boolean);
         if (items.length === 0) {
             addModelRow('', '');
-            return;
+        } else {
+            items.forEach(item => {
+                const colonIdx = item.indexOf(':');
+                addModelRow(
+                    colonIdx === -1 ? item : item.substring(0, colonIdx).trim(),
+                    colonIdx === -1 ? '' : item.substring(colonIdx + 1).trim(),
+                );
+            });
         }
-
-        items.forEach(item => {
-            let id = item;
-            let name = '';
-            const colonIdx = item.indexOf(':');
-            if (colonIdx !== -1) {
-                id = item.substring(0, colonIdx).trim();
-                name = item.substring(colonIdx + 1).trim();
-            }
-            addModelRow(id, name);
-        });
+        updateModelPanelSummary(providerCard);
+        updateProviderSummary(providerCard);
     }
 
     function serialize() {
-        const rows = container.querySelectorAll('.model-row');
-        const serialized = Array.from(rows)
+        hiddenInput.value = Array.from(container.querySelectorAll('.model-row'))
             .map(row => {
                 const id = row.querySelector('.model-id-input').value.trim();
                 const name = row.querySelector('.model-name-input').value.trim();
@@ -497,8 +677,8 @@ function initModelListUI() {
             })
             .filter(Boolean)
             .join(', ');
-        hiddenInput.value = serialized;
-        hiddenInput.dispatchEvent(new Event('input'));
+        updateModelPanelSummary(providerCard);
+        updateProviderSummary(providerCard);
     }
 
     function addModelRow(id = '', name = '') {
@@ -511,10 +691,8 @@ function initModelListUI() {
                 <span class="material-symbols-rounded">delete</span>
             </button>
         `;
-
         row.querySelector('.model-id-input').addEventListener('input', serialize);
         row.querySelector('.model-name-input').addEventListener('input', serialize);
-
         row.querySelector('.remove-model-btn').addEventListener('click', () => {
             row.remove();
             serialize();
@@ -522,17 +700,109 @@ function initModelListUI() {
                 addModelRow('', '');
             }
         });
-
         container.appendChild(row);
     }
 
+    function setModelPanelCollapsed(collapsed) {
+        modelGroup.classList.toggle('collapsed', collapsed);
+        toggleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        const icon = toggleButton.querySelector('.model-panel-icon');
+        if (icon) {
+            icon.textContent = collapsed ? 'expand_more' : 'expand_less';
+        }
+    }
+
+    toggleButton.addEventListener('click', () => {
+        setModelPanelCollapsed(!modelGroup.classList.contains('collapsed'));
+    });
+
     addButton.addEventListener('click', () => {
+        setModelPanelCollapsed(false);
         addModelRow('', '');
         serialize();
     });
+    render();
+    setModelPanelCollapsed(true);
+}
 
-    hiddenInput.addEventListener('change', render);
-    hiddenInput.renderModelRows = render;
+function formatProviderSummary(provider) {
+    const modelCount = getModelItems(provider.model_id).length;
+    const baseUrl = String(provider.base_url || '').trim() || '未设置 API 地址';
+    const apiKey = String(provider.api_key || '').trim();
+    return {
+        baseUrl,
+        modelCount: `${modelCount || 0} 个模型`,
+        keyStatus: apiKey ? '已配置密钥' : '未配置密钥',
+    };
+}
+
+function updateProviderSummary(providerCard) {
+    const summary = formatProviderSummary({
+        api_key: providerCard.querySelector('.provider-api-key-input')?.value || '',
+        base_url: providerCard.querySelector('.provider-base-url-input')?.value || '',
+        model_id: providerCard.querySelector('.provider-model-input')?.value || '',
+    });
+    const baseUrlEl = providerCard.querySelector('.provider-summary-base-url');
+    const modelCountEl = providerCard.querySelector('.provider-summary-model-count');
+    const keyStatusEl = providerCard.querySelector('.provider-summary-key-status');
+    if (baseUrlEl) baseUrlEl.textContent = summary.baseUrl;
+    if (modelCountEl) modelCountEl.textContent = summary.modelCount;
+    if (keyStatusEl) {
+        keyStatusEl.textContent = summary.keyStatus;
+        keyStatusEl.classList.toggle('is-empty', summary.keyStatus === '未配置密钥');
+    }
+}
+
+function updateModelPanelSummary(providerCard) {
+    const summaryEl = providerCard.querySelector('.model-panel-summary');
+    if (!summaryEl) return;
+    const hiddenInput = providerCard.querySelector('.provider-model-input');
+    const items = getModelItems(hiddenInput?.value || '');
+    if (items.length === 0) {
+        summaryEl.textContent = '0 个模型';
+        return;
+    }
+    const first = getModelDisplayName(items[0]);
+    summaryEl.textContent = `${first} · ${items.length} 个模型`;
+}
+
+function getModelItems(modelId) {
+    return String(modelId || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function getModelDisplayName(modelValue) {
+    const raw = String(modelValue || '').trim();
+    const colonIdx = raw.indexOf(':');
+    if (colonIdx !== -1) {
+        return raw.substring(colonIdx + 1).trim() || raw.substring(0, colonIdx).trim();
+    }
+    return raw.includes('/') ? raw.split('/').pop() : raw;
+}
+
+function collectProvidersForm() {
+    return Array.from(document.querySelectorAll('.provider-card'))
+        .map((card) => {
+            const apiKeyInput = card.querySelector('.provider-api-key-input');
+            let apiKey = apiKeyInput.value.trim();
+            return {
+                id: card.querySelector('.provider-id-input').value.trim(),
+                name: card.querySelector('.provider-name-input').value.trim(),
+                api_key: apiKey,
+                base_url: card.querySelector('.provider-base-url-input').value.trim(),
+                model_id: card.querySelector('.provider-model-input').value.trim(),
+            };
+        })
+        .filter(provider => provider.id || provider.base_url || provider.model_id || provider.api_key);
+}
+
+function createEmptyProvider(index) {
+    return {
+        id: index === 1 ? 'deepseek' : `provider-${index}`,
+        name: index === 1 ? 'DeepSeek' : `Provider ${index}`,
+        api_key: '',
+        base_url: index === 1 ? 'https://api.deepseek.com/v1' : 'https://api.openai.com/v1',
+        model_id: index === 1 ? 'deepseek-v4-pro' : '',
+    };
 }
 
 function escapeHtml(str) {

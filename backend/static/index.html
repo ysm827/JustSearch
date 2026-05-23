@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
     <link rel="preconnect" href="https://www.google.com">
-    <link rel="stylesheet" href="/static/css/style.css?v=9">
+    <link rel="stylesheet" href="/static/css/style.css?v=12">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet">
@@ -354,37 +354,11 @@
                                 <div class="panel-header-title">API 设置</div>
                             </div>
                             <div class="settings-card api-settings-card">
-                                <div class="form-group">
-                                    <label class="api-label-row" for="api-key-input">
-                                        <span>OpenAI API 密钥</span>
-                                    </label>
-                                    <div class="password-input-wrapper">
-                                        <input type="password" id="api-key-input" autocomplete="new-password" placeholder="sk-..., sk-... (支持多个，用逗号分隔)">
-                                        <div class="password-actions-wrapper">
-                                            <button type="button" id="toggle-api-key-btn" class="password-toggle-btn" title="显示/隐藏密钥">
-                                                <span class="material-symbols-rounded">visibility</span>
-                                            </button>
-                                            <button type="button" id="validate-key-btn" class="password-toggle-btn" title="验证 API 密钥">
-                                                <span class="material-symbols-rounded">verified</span>
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <label for="base-url-input">API 基础地址</label>
-                                    <input type="text" id="base-url-input" placeholder="https://api.openai.com/v1">
-                                </div>
-                                 <div class="form-group model-settings-group">
-                                     <label class="model-list-label">自定义模型列表</label>
-                                     <div id="model-list-container" class="model-list-container">
-                                         <!-- Rows will be added dynamically here -->
-                                     </div>
-                                     <button type="button" id="add-model-btn" class="add-model-btn">
-                                         <span class="material-symbols-rounded">add</span>
-                                         <span>添加模型</span>
-                                     </button>
-                                     <input type="hidden" id="model-input">
-                                 </div>
+                                <div id="provider-list-container" class="provider-list-container"></div>
+                                <button type="button" id="add-provider-btn" class="add-model-btn">
+                                    <span class="material-symbols-rounded">add</span>
+                                    <span>添加 Provider</span>
+                                </button>
                             </div>
                         </div>
 
@@ -393,6 +367,29 @@
                             <div class="settings-section-heading">
                                 <div class="settings-section-kicker">Data</div>
                                 <div class="panel-header-title">系统维护</div>
+                            </div>
+                            <div class="settings-card history-transfer-card">
+                                <div class="maintenance-card">
+                                    <div class="maintenance-info">
+                                        <div class="maintenance-title">导出聊天记录</div>
+                                        <div class="maintenance-desc">将所有聊天会话和分组导出为 JSON 文件。</div>
+                                    </div>
+                                    <button type="button" id="export-history-btn" class="secondary-btn">
+                                        <span class="material-symbols-rounded">download</span>
+                                        <span>导出</span>
+                                    </button>
+                                </div>
+                                <div class="maintenance-card">
+                                    <div class="maintenance-info">
+                                        <div class="maintenance-title">导入聊天记录</div>
+                                        <div class="maintenance-desc">从 JustSearch 或 AMC 的历史 JSON 文件导入，重复会话会跳过。</div>
+                                    </div>
+                                    <input type="file" id="history-import-input" accept="application/json,.json" hidden>
+                                    <button type="button" id="import-history-btn" class="secondary-btn">
+                                        <span class="material-symbols-rounded">upload</span>
+                                        <span>导入</span>
+                                    </button>
+                                </div>
                             </div>
                             <div class="settings-danger-zone">
                                 <div class="settings-danger-header">
@@ -513,6 +510,6 @@
         </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=9"></script>
+    <script type="module" src="/static/js/main.js?v=12"></script>
 </body>
 </html>

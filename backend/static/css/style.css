@@ -1,7 +1,7 @@
 @import url('./sections/base.css');
-@import url('./sections/sidebar.css?v=8');
+@import url('./sections/sidebar.css?v=10');
 @import url('./sections/chat.css');
-@import url('./sections/input-modal.css');
+@import url('./sections/input-modal.css?v=12');
 @import url('./sections/markdown.css');
 @import url('./sections/overlays.css');
 @import url('./sections/responsive.css');

@@ -9,7 +9,7 @@ import os
 import re
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -20,6 +20,65 @@ from sqlalchemy.sql import func
 from .legacy_migration import migrate_legacy_data
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> datetime:
+    """Return a naive UTC datetime for SQLite storage."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _format_utc_timestamp(value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, str):
+        value = value.strip()
+        if value.endswith("Z"):
+            value = value[:-1] + '+00:00'
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    if not isinstance(value, datetime):
+        return str(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace('+00:00', 'Z')
+
+
+def _parse_imported_timestamp(value, fallback: Optional[datetime] = None) -> datetime:
+    """Parse imported ISO or millisecond timestamps into naive UTC datetimes."""
+    if value is None or value == "":
+        return fallback or _utc_now()
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp = timestamp / 1000
+        try:
+            return datetime.fromtimestamp(timestamp, timezone.utc).replace(tzinfo=None)
+        except (OverflowError, OSError, ValueError):
+            return fallback or _utc_now()
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(raw)
+            if parsed.tzinfo is None:
+                return parsed
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        except ValueError:
+            return fallback or _utc_now()
+
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+    return fallback or _utc_now()
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -267,14 +326,14 @@ async def load_chat_history(session_id_or_path: str) -> Optional[Dict[str, Any]]
             if m.stats:
                 msg_dict["stats"] = m.stats
             if m.created_at:
-                msg_dict["timestamp"] = m.created_at.isoformat() if hasattr(m.created_at, 'isoformat') else str(m.created_at)
+                msg_dict["timestamp"] = _format_utc_timestamp(m.created_at)
             messages.append(msg_dict)
 
         return {
             "id": sess.id,
             "title": sess.title,
             "group_id": sess.group_id,
-            "timestamp": sess.updated_at.isoformat() if sess.updated_at else "",
+            "timestamp": _format_utc_timestamp(sess.updated_at),
             "messages": messages,
         }
 
@@ -294,7 +353,7 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
             select(ChatSession).where(ChatSession.id == session_id)
         )).scalar_one_or_none()
 
-        now = datetime.now()
+        now = _utc_now()
 
         if sess is None:
             if not title:
@@ -355,7 +414,7 @@ async def list_chats(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
                 "id": s.id,
                 "title": s.title,
                 "group_id": s.group_id,
-                "timestamp": s.updated_at.isoformat() if s.updated_at else "",
+                "timestamp": _format_utc_timestamp(s.updated_at),
             }
             for s in sessions
         ]
@@ -366,7 +425,7 @@ def _group_to_dict(group: ChatGroup) -> Dict[str, Any]:
         "id": group.id,
         "title": group.title,
         "is_expanded": bool(group.is_expanded),
-        "timestamp": group.updated_at.isoformat() if group.updated_at else "",
+        "timestamp": _format_utc_timestamp(group.updated_at),
     }
 
 
@@ -382,7 +441,7 @@ async def list_chat_groups() -> List[Dict[str, Any]]:
 
 async def create_chat_group(title: str) -> Dict[str, Any]:
     title = title.strip() or "新分组"
-    now = datetime.now()
+    now = _utc_now()
     group = ChatGroup(
         id=f"group-{int(now.timestamp() * 1000)}-{uuid.uuid4().hex[:8]}",
         title=title,
@@ -413,7 +472,7 @@ async def update_chat_group(
             group.title = title.strip()
         if is_expanded is not None:
             group.is_expanded = bool(is_expanded)
-        group.updated_at = datetime.now()
+        group.updated_at = _utc_now()
 
         await session.commit()
         await session.refresh(group)
@@ -490,6 +549,171 @@ async def delete_all_chats():
         await session.commit()
 
 
+async def export_history_package() -> Dict[str, Any]:
+    """Return a portable JSON package containing all chats and chat groups."""
+    groups = await list_chat_groups()
+    summaries = await list_chats(limit=100000)
+    history = []
+    for summary in summaries:
+        chat = await load_chat_history(summary["id"])
+        if chat:
+            history.append(chat)
+    return {
+        "type": "JustSearch-History",
+        "version": 1,
+        "history": history,
+        "groups": groups,
+    }
+
+
+def _normalize_imported_group(group: dict) -> Optional[Dict[str, Any]]:
+    group_id = str(group.get("id", "")).strip()
+    if not group_id:
+        return None
+    timestamp = _parse_imported_timestamp(group.get("timestamp"))
+    return {
+        "id": group_id,
+        "title": str(group.get("title", "")).strip() or "导入分组",
+        "is_expanded": group.get("is_expanded") if isinstance(group.get("is_expanded"), bool) else True,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+
+def _normalize_imported_message(message: dict, index: int, session_time: datetime) -> Dict[str, Any]:
+    message_time = _parse_imported_timestamp(
+        message.get("timestamp"),
+        session_time + timedelta(microseconds=index),
+    )
+    role = str(message.get("role", "user")).strip() or "user"
+    if role == "model":
+        role = "assistant"
+    if role not in {"user", "assistant", "system", "error"}:
+        role = "assistant" if role in {"ai", "bot"} else "user"
+    return {
+        "role": role,
+        "content": str(message.get("content", "")),
+        "logs": message.get("logs") if isinstance(message.get("logs"), list) else [],
+        "sources": message.get("sources") if isinstance(message.get("sources"), list) else [],
+        "stats": message.get("stats") if isinstance(message.get("stats"), dict) else {},
+        "created_at": message_time,
+    }
+
+
+def _normalize_imported_chat(chat: dict) -> Optional[Dict[str, Any]]:
+    session_id = str(chat.get("id", "")).strip()
+    messages = chat.get("messages")
+    if not session_id or not isinstance(messages, list) or not messages:
+        return None
+    session_time = _parse_imported_timestamp(chat.get("timestamp"))
+    return {
+        "id": session_id,
+        "title": str(chat.get("title", "")).strip() or _extract_title(str(messages[0].get("content", ""))),
+        "group_id": chat.get("group_id") or chat.get("groupId") or None,
+        "created_at": session_time,
+        "updated_at": session_time,
+        "messages": [
+            _normalize_imported_message(message, index, session_time)
+            for index, message in enumerate(messages)
+            if isinstance(message, dict)
+        ],
+    }
+
+
+def _normalize_history_import_payload(payload: dict) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+    if not isinstance(payload, dict):
+        raise ValueError("导入文件必须是 JSON 对象")
+
+    package_type = payload.get("type")
+    if package_type not in {"JustSearch-History", "AllModelChat-History"}:
+        raise ValueError("导入文件类型不正确")
+
+    raw_history = payload.get("history")
+    if not isinstance(raw_history, list):
+        raise ValueError("导入文件缺少 history 数组")
+
+    groups = []
+    for group in payload.get("groups") or []:
+        if isinstance(group, dict):
+            normalized = _normalize_imported_group(group)
+            if normalized:
+                groups.append(normalized)
+
+    chats = []
+    for chat in raw_history:
+        if isinstance(chat, dict):
+            normalized = _normalize_imported_chat(chat)
+            if normalized and normalized["messages"]:
+                chats.append(normalized)
+
+    return chats, groups
+
+
+async def import_history_package(payload: dict) -> Dict[str, int]:
+    """Import a JustSearch/AMC history package, skipping existing IDs."""
+    chats, groups = _normalize_history_import_payload(payload)
+    imported_sessions = 0
+    skipped_sessions = 0
+    imported_groups = 0
+    skipped_groups = 0
+
+    async with await get_session() as session:
+        existing_group_ids = {
+            row[0]
+            for row in (
+                await session.execute(select(ChatGroup.id))
+            ).all()
+        }
+        for group in groups:
+            if group["id"] in existing_group_ids:
+                skipped_groups += 1
+                continue
+            session.add(ChatGroup(**group))
+            existing_group_ids.add(group["id"])
+            imported_groups += 1
+
+        existing_session_ids = {
+            row[0]
+            for row in (
+                await session.execute(select(ChatSession.id))
+            ).all()
+        }
+        for chat in chats:
+            if chat["id"] in existing_session_ids:
+                skipped_sessions += 1
+                continue
+
+            group_id = chat["group_id"] if chat["group_id"] in existing_group_ids else None
+            session.add(ChatSession(
+                id=chat["id"],
+                title=chat["title"],
+                group_id=group_id,
+                created_at=chat["created_at"],
+                updated_at=chat["updated_at"],
+            ))
+            for message in chat["messages"]:
+                session.add(ChatMessage(
+                    session_id=chat["id"],
+                    role=message["role"],
+                    content=message["content"],
+                    logs=message["logs"],
+                    sources=message["sources"],
+                    stats=message["stats"],
+                    created_at=message["created_at"],
+                ))
+            existing_session_ids.add(chat["id"])
+            imported_sessions += 1
+
+        await session.commit()
+
+    return {
+        "imported_sessions": imported_sessions,
+        "skipped_sessions": skipped_sessions,
+        "imported_groups": imported_groups,
+        "skipped_groups": skipped_groups,
+    }
+
+
 def get_chat_path(session_id: str) -> str:
     """
     Legacy compatibility: no longer returns a real file path.
@@ -504,9 +728,16 @@ def get_chat_path(session_id: str) -> str:
 
 DEFAULT_SETTINGS = {
     "theme": "light",
-    "api_key": "",
-    "base_url": "https://api.deepseek.com/v1",
-    "model_id": "deepseek-v4-pro",
+    "default_provider_id": "deepseek",
+    "providers": [
+        {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "api_key": "",
+            "base_url": "https://api.deepseek.com/v1",
+            "model_id": "deepseek-v4-pro",
+        }
+    ],
     "search_engine": "duckduckgo",
     "max_results": "50",
     "max_iterations": "5",
@@ -586,6 +817,7 @@ async def load_settings() -> dict:
     settings = DEFAULT_SETTINGS.copy()
     for row in rows:
         settings[row.key] = _parse_setting_value(row.value)
+    settings = _normalize_loaded_settings(settings)
     return settings
 
 
@@ -610,3 +842,25 @@ async def save_settings(settings: dict) -> bool:
     except Exception as e:
         logger.error("Error saving settings: %s", e)
         return False
+
+
+def _normalize_loaded_settings(settings: dict) -> dict:
+    """Return settings in the current provider-list shape."""
+    result = settings.copy()
+    if isinstance(result.get("providers"), list) and result["providers"]:
+        if not result.get("default_provider_id"):
+            first = result["providers"][0]
+            if isinstance(first, dict):
+                result["default_provider_id"] = first.get("id", "")
+        return result
+
+    legacy_provider = {
+        "id": result.get("default_provider_id") or "default",
+        "name": "Default",
+        "api_key": result.get("api_key", ""),
+        "base_url": result.get("base_url", "https://api.openai.com/v1"),
+        "model_id": result.get("model_id", ""),
+    }
+    result["default_provider_id"] = legacy_provider["id"]
+    result["providers"] = [legacy_provider]
+    return result

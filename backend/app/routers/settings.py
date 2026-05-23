@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import shutil
+import time
 
 from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel
@@ -13,26 +14,48 @@ from typing import Optional
 
 from ..database import (
     load_settings, save_settings, delete_all_chats,
-    DEFAULT_SETTINGS, mask_api_key, get_chat_path, load_chat_history,
+    DEFAULT_SETTINGS, get_chat_path, load_chat_history,
 )
 from ..browser_manager import BrowserManager
+from ..engine_health import engine_health
 from ..openai_client import create_openai_client
+from ..providers import (
+    ensure_default_provider_id,
+    get_provider_by_id,
+    mask_provider_secrets,
+    normalize_providers,
+)
 from ..search_engine import get_all_engines
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_SENSITIVE_FIELDS = {"api_key"}
 _ENGINE_CHECK_QUERY = "JustSearch test"
 _ENGINE_CHECK_TIMEOUT_SECONDS = 75.0
+_ENGINE_FAILURE_MESSAGES = {
+    "batch_soft_timeout": "批次内部分查询超时",
+    "selector": "结果选择器未匹配",
+    "low_quality": "结果相关性过低",
+    "timeout": "检测超时",
+    "blocked": "验证/反爬页面",
+    "captcha": "检测到验证码",
+    "other": "检测失败",
+}
+
+
+class ProviderModel(BaseModel):
+    id: str
+    name: Optional[str] = ""
+    api_key: Optional[str] = ""
+    base_url: str
+    model_id: str
 
 
 class SettingsModel(BaseModel):
     theme: Optional[str] = "light"
-    api_key: Optional[str] = ""
-    base_url: Optional[str] = ""
-    model_id: Optional[str] = ""
+    default_provider_id: Optional[str] = None
+    providers: Optional[list[ProviderModel]] = None
     search_engine: Optional[str] = "duckduckgo"
     max_results: Optional[int] = 50
     max_iterations: Optional[int] = 5
@@ -48,19 +71,13 @@ class EngineCheckRequest(BaseModel):
 @router.get("/api/settings")
 async def get_settings_endpoint():
     settings = await load_settings()
-    for field in _SENSITIVE_FIELDS:
-        if field in settings and settings[field]:
-            settings[field] = mask_api_key(settings[field])
-    return settings
+    return mask_provider_secrets(settings)
 
 
 @router.get("/api/settings/default")
 def get_default_settings_endpoint():
     settings = DEFAULT_SETTINGS.copy()
-    for field in _SENSITIVE_FIELDS:
-        if field in settings and settings[field]:
-            settings[field] = mask_api_key(settings[field])
-    return settings
+    return mask_provider_secrets(settings)
 
 
 @router.post("/api/settings")
@@ -70,9 +87,25 @@ async def update_settings_endpoint(settings: SettingsModel):
 
     update = {}
     for k, v in new_settings.items():
-        if v == "":
+        if v == "" and k != "default_provider_id":
             continue
         update[k] = v
+
+    if "providers" in update:
+        providers = normalize_providers(
+            update["providers"],
+            current_providers=current.get("providers", []),
+        )
+        update["providers"] = providers
+        update["default_provider_id"] = ensure_default_provider_id(
+            providers,
+            update.get("default_provider_id") or current.get("default_provider_id"),
+        )
+    elif "default_provider_id" in update:
+        update["default_provider_id"] = ensure_default_provider_id(
+            current.get("providers", []),
+            update["default_provider_id"],
+        )
 
     # Validate numeric ranges
     if "max_results" in update:
@@ -89,22 +122,16 @@ async def update_settings_endpoint(settings: SettingsModel):
     if "search_engine" in update and update["search_engine"] not in valid_engines:
         raise HTTPException(status_code=400, detail=f"不支持的搜索引擎。可选: {', '.join(valid_engines)}")
 
-    incoming_key = new_settings.get("api_key", "")
-    if incoming_key and "****" in incoming_key:
-        update["api_key"] = current.get("api_key", "")
-
     current.update(update)
 
     if await save_settings(current):
-        for field in _SENSITIVE_FIELDS:
-            if field in current and current[field]:
-                current[field] = mask_api_key(current[field])
-        return {"status": "ok", "settings": current}
+        return {"status": "ok", "settings": mask_provider_secrets(current)}
     raise HTTPException(status_code=500, detail="Failed to save settings")
 
 
 async def _check_single_engine(engine: str, query: str) -> dict:
     manager = BrowserManager(engine=engine, max_results=3)
+    started_at = time.time()
     try:
         results = await asyncio.wait_for(
             manager.search_web(
@@ -115,25 +142,37 @@ async def _check_single_engine(engine: str, query: str) -> dict:
             timeout=_ENGINE_CHECK_TIMEOUT_SECONDS,
         )
         result_count = len(results)
+        reason = "" if result_count > 0 else engine_health.get_latest_failure_reason(
+            engine,
+            since=started_at,
+        )
         return {
             "engine": engine,
             "available": result_count > 0,
             "result_count": result_count,
-            "error": "" if result_count > 0 else "未解析到搜索结果",
+            "reason": reason,
+            "error": "" if result_count > 0 else _ENGINE_FAILURE_MESSAGES.get(
+                reason,
+                "未解析到搜索结果",
+            ),
         }
     except asyncio.TimeoutError:
+        engine_health.record(engine, success=False, reason="timeout")
         return {
             "engine": engine,
             "available": False,
             "result_count": 0,
+            "reason": "timeout",
             "error": "检测超时",
         }
     except Exception as e:
         logger.warning("Search engine check failed for %s: %s", engine, e)
+        engine_health.record(engine, success=False, reason="other")
         return {
             "engine": engine,
             "available": False,
             "result_count": 0,
+            "reason": "other",
             "error": str(e)[:200] or "检测失败",
         }
 
@@ -154,8 +193,10 @@ async def validate_api_key_endpoint(body: dict = Body(...)):
     """Validate an API key by making a test request to the model endpoint."""
     api_key = body.get("api_key", "").strip()
     if api_key and "****" in api_key:
+        provider_id = body.get("provider_id", "").strip()
         settings = await load_settings()
-        api_key = settings.get("api_key", "").strip()
+        provider = get_provider_by_id(settings, provider_id) if provider_id else None
+        api_key = (provider or {}).get("api_key", "").strip()
 
     base_url = body.get("base_url", "").strip() or "https://api.openai.com/v1"
     model_id = body.get("model_id", "").strip()

@@ -301,7 +301,7 @@ function renderChatGroups(groups, groupedSessions, currentSessionId, callbacks, 
             empty.textContent = '拖入对话到此分组';
             list.appendChild(empty);
         } else {
-            sessions.forEach(chat => list.appendChild(createHistoryItem(chat, currentSessionId, callbacks)));
+            renderDateGroups(sessions, currentSessionId, callbacks, list);
         }
 
         groupEl.appendChild(list);
@@ -309,7 +309,7 @@ function renderChatGroups(groups, groupedSessions, currentSessionId, callbacks, 
     });
 }
 
-function renderDateGroups(history, currentSessionId, callbacks) {
+function renderDateGroups(history, currentSessionId, callbacks, target = elements.historyList) {
     const groups = groupChatsByDate(history);
     const groupOrder = ['今天', '昨天', '本周', '更早'];
 
@@ -329,7 +329,7 @@ function renderDateGroups(history, currentSessionId, callbacks) {
             group.appendChild(createHistoryItem(chat, currentSessionId, callbacks));
         });
 
-        elements.historyList.appendChild(group);
+        target.appendChild(group);
     });
 }
 

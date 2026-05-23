@@ -73,7 +73,15 @@ export function initCustomModelSelect() {
         if (index >= 0 && index < items.length) {
             const targetItem = items[index];
             const val = targetItem.dataset.value;
-            nativeSelect.value = val;
+            const providerId = targetItem.dataset.providerId || '';
+            const targetOption = Array.from(nativeSelect.options).find(
+                (opt) => opt.value === val && (opt.dataset.providerId || '') === providerId
+            );
+            if (targetOption) {
+                targetOption.selected = true;
+            } else {
+                nativeSelect.value = val;
+            }
             nativeSelect.dispatchEvent(new Event('change'));
             syncCustomModelSelect();
             closeDropdown();
@@ -163,6 +171,7 @@ export function syncCustomModelSelect() {
         const item = document.createElement('div');
         item.className = 'model-dropdown-item';
         item.dataset.value = opt.value;
+        item.dataset.providerId = opt.dataset.providerId || '';
         item.setAttribute('role', 'option');
         item.setAttribute('tabindex', '-1');
 
@@ -188,7 +197,7 @@ export function syncCustomModelSelect() {
 
         const idDiv = document.createElement('div');
         idDiv.className = 'model-item-id';
-        idDiv.textContent = opt.value;
+        idDiv.textContent = opt.title || opt.value;
         detailsDiv.appendChild(idDiv);
 
         leftDiv.appendChild(detailsDiv);
@@ -216,7 +225,7 @@ export function syncCustomModelSelect() {
         // Click handler
         item.addEventListener('click', (e) => {
             e.stopPropagation();
-            nativeSelect.value = opt.value;
+            opt.selected = true;
             nativeSelect.dispatchEvent(new Event('change'));
             syncCustomModelSelect();
             // Close dropdown

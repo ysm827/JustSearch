@@ -680,6 +680,16 @@
     padding-left: 12px;
 }
 
+.chat-group-session-list .history-group {
+    margin-bottom: 8px;
+}
+
+.chat-group-session-list .history-group-header {
+    margin: 4px 0 4px;
+    padding-left: 4px;
+    font-size: 10px;
+}
+
 .chat-group-empty {
     margin: 2px 0 6px 28px;
     padding: 6px 8px;

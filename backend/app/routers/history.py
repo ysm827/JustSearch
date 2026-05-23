@@ -3,7 +3,6 @@ History router – /api/history endpoints
 """
 
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException, Body, Query
 from sqlalchemy import text as sql_text
@@ -12,7 +11,8 @@ from ..database import (
     list_chats, load_chat_history, save_chat_history,
     delete_chat, get_chat_path, delete_all_chats, get_session,
     list_chat_groups, create_chat_group, update_chat_group,
-    delete_chat_group, move_chat_to_group,
+    delete_chat_group, move_chat_to_group, _format_utc_timestamp,
+    export_history_package, import_history_package,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=2
                     "id": row[0],
                     "title": row[1],
                     "group_id": row[2],
-                    "timestamp": row[3].isoformat() if row[3] else "",
+                    "timestamp": _format_utc_timestamp(row[3]),
                 }
                 for row in rows
             ]
@@ -115,12 +115,7 @@ async def export_all_chats(format: str = "markdown"):
     date_str = _dt.datetime.now().strftime("%Y%m%d")
 
     if format.lower() == "json":
-        # Export all as JSON
-        export_data = []
-        for chat_summary in all_chats:
-            chat_data = await load_chat_history(chat_summary["id"])
-            if chat_data:
-                export_data.append(chat_data)
+        export_data = await export_history_package()
         content = json.dumps(export_data, ensure_ascii=False, indent=2)
         return Response(
             content=content,
@@ -150,6 +145,16 @@ async def export_all_chats(format: str = "markdown"):
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="justsearch-export-{date_str}.md"'},
     )
+
+
+@router.post("/api/history/import")
+async def import_history_endpoint(body: dict = Body(...)):
+    """导入聊天记录 JSON 包。重复的会话和分组会跳过，不覆盖现有数据。"""
+    try:
+        summary = await import_history_package(body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"status": "ok", **summary}
 
 
 @router.get("/api/history/{session_id}")
