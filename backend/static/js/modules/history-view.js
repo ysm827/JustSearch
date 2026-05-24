@@ -10,7 +10,7 @@ import {
 } from './api.js';
 import { state } from './state.js';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js';
+import { elements, showConfirm } from './ui.js?v=2';
 
 let _fullHistory = [];
 let _chatGroups = [];

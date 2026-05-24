@@ -18,7 +18,12 @@ from ..database import (
     load_settings, save_chat_history, load_chat_history, get_chat_path, get_next_api_key,
     delete_message,
 )
-from ..providers import first_model_id, get_provider_by_id
+from ..providers import (
+    WORKFLOW_MODEL_STEP_IDS,
+    first_model_id,
+    get_provider_by_id,
+    is_unsupported_model_id,
+)
 from ..workflow import SearchWorkflow
 from ..interaction import get_interaction_session, mark_interaction_completed
 from ..rate_limiter import chat_limiter
@@ -43,6 +48,58 @@ class ChatRequest(BaseModel):
     max_results: Optional[int] = None
     max_iterations: Optional[int] = None
     interactive_search: Optional[bool] = None
+
+
+async def _resolve_workflow_step_models(
+    settings: dict,
+    fallback_provider_id: str,
+    fallback_api_key: str,
+    fallback_model: str,
+) -> dict[str, dict[str, str]]:
+    step_settings = settings.get("workflow_step_models") or {}
+    provider_key_cache: dict[str, str] = {fallback_provider_id: fallback_api_key}
+    resolved: dict[str, dict[str, str]] = {}
+
+    for step_id in WORKFLOW_MODEL_STEP_IDS:
+        raw_step = step_settings.get(step_id) if isinstance(step_settings, dict) else {}
+        if not isinstance(raw_step, dict):
+            raw_step = {}
+
+        provider_id = str(raw_step.get("provider_id") or fallback_provider_id).strip()
+        provider = get_provider_by_id(settings, provider_id)
+        if not provider:
+            raise HTTPException(status_code=400, detail=f"步骤 {step_id} 的 provider 不存在: {provider_id}")
+
+        model = first_model_id(raw_step.get("model_id") or fallback_model or provider.get("model_id", ""))
+        if not model:
+            raise HTTPException(status_code=400, detail=f"步骤 {step_id} 缺少模型配置")
+
+        if provider_id not in provider_key_cache:
+            raw_api_key = str(provider.get("api_key", "")).strip()
+            if raw_api_key:
+                raw_api_key = await get_next_api_key(raw_api_key)
+            provider_key_cache[provider_id] = raw_api_key
+
+        api_key = provider_key_cache[provider_id]
+
+        resolved[step_id] = {
+            "provider_id": provider_id,
+            "api_key": api_key,
+            "base_url": provider.get("base_url", ""),
+            "model": model,
+        }
+
+    return resolved
+
+
+def _safe_step_model_meta(step_model_configs: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    return {
+        step_id: {
+            "provider_id": config.get("provider_id", ""),
+            "model": config.get("model", ""),
+        }
+        for step_id, config in step_model_configs.items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +233,9 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
 
     base_url = provider.get("base_url")
     model = first_model_id(request.model or provider.get("model_id", ""))
+    if is_unsupported_model_id(model):
+        raise HTTPException(status_code=400, detail="Gemini 2.5 系列模型不再支持")
+    workflow_step_models = await _resolve_workflow_step_models(defaults, provider_id, api_key, model)
 
     search_engine = request.search_engine or defaults.get("search_engine", "duckduckgo")
     max_results = request.max_results or defaults.get("max_results", 50)
@@ -185,14 +245,6 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         if request.interactive_search is not None
         else defaults.get("interactive_search", True)
     )
-    max_context_turns = defaults.get("max_context_turns", 6)
-
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail=f"请先在设置中配置 provider「{provider.get('name') or provider_id}」的 API 密钥。",
-        )
-
     session_id = request.session_id
     if not session_id:
         session_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
@@ -204,8 +256,9 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         workflow = SearchWorkflow(
             api_key, base_url, model, search_engine, max_results,
             max_iterations, interactive_search,
-            session_id=session_id, max_context_turns=max_context_turns,
+            session_id=session_id,
             max_concurrent_pages=int(defaults.get("max_concurrent_pages", 3)),
+            step_model_configs=workflow_step_models,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -215,7 +268,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     context_messages = chat_history_data.get("messages", []) if chat_history_data else []
 
     async def event_generator():
-        yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'provider_id': provider_id, 'model': model})}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'provider_id': provider_id, 'model': model, 'step_models': _safe_step_model_meta(workflow_step_models)})}\n\n"
 
         queue = asyncio.Queue()
         logs = []

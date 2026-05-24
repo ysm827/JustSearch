@@ -1,24 +1,20 @@
 // 初始化 markdown-it with highlight.js
 const mdInstance = window.markdownit({
-    html: false,
+    html: true,
     linkify: true,
     typographer: true,
     highlight: function (str, lang) {
         if (lang && window.hljs && hljs.getLanguage(lang)) {
             try {
-                return '<pre class="hljs"><code class="hljs language-' + lang + '">' +
-                    hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
-                    '</code></pre>';
+                return hljs.highlight(str, { language: lang, ignoreIllegals: true }).value;
             } catch (__) {}
         }
         if (window.hljs) {
             try {
-                return '<pre class="hljs"><code class="hljs">' +
-                    hljs.highlightAuto(str).value +
-                    '</code></pre>';
+                return hljs.highlightAuto(str).value;
             } catch (__) {}
         }
-        return '<pre class="hljs"><code>' + mdInstance.utils.escapeHtml(str) + '</code></pre>';
+        return mdInstance.utils.escapeHtml(str);
     }
 });
 
@@ -28,20 +24,30 @@ export const md = {
         const sanitized = window.DOMPurify.sanitize(rawHtml, {
             ADD_ATTR: ['target'],
             FORBID_TAGS: ['style', 'form', 'input'],
-            FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
+            FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick', 'onmouseover'],
         });
         // 为所有链接添加 target="_blank"，在新标签页打开
         const withTarget = sanitized.replace(/<a /g, '<a target="_blank" rel="noopener noreferrer" ');
         // 为代码块添加包装器（不含 onclick，用事件委托处理复制）
         return withTarget.replace(/<pre><code([^>]*)>/g, (match, attrs) => {
-            return `<pre class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${extractLangFromAttrs(attrs)}</span><button class="code-copy-btn" data-action="copy-code" title="复制代码"><span class="material-symbols-rounded">content_copy</span><span>复制</span></button></div><code${attrs}>`;
+            return `<pre class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${escapeHtml(extractLangFromAttrs(attrs))}</span><button class="code-copy-btn" data-action="copy-code" title="复制代码"><span class="material-symbols-rounded">content_copy</span><span>复制</span></button></div><code${attrs}>`;
         });
     }
 };
 
 function extractLangFromAttrs(attrs) {
-    const m = attrs.match(/class="language-(\w+)"/);
+    const m = attrs.match(/class="[^"]*language-([^"\s]+)[^"]*"/);
     return m ? m[1] : 'TEXT';
+}
+
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[char]));
 }
 
 // 全局事件委托：处理代码块复制按钮

@@ -5,35 +5,36 @@ Run with: python -m pytest tests/ -v
 
 import pytest
 
-from backend.app.llm_client import _smart_truncate
 from backend.app.llm_client import LLMClient
+from backend.app.openai_client import LOCAL_PROVIDER_API_KEY, create_openai_client
 
 
-class TestSmartTruncate:
-    def test_short_text_unchanged(self):
-        text = "Hello world"
-        assert _smart_truncate(text, max_chars=100) == text
+def test_openai_client_uses_placeholder_for_empty_local_api_key():
+    client = create_openai_client(
+        api_key="",
+        base_url="http://host.docker.internal:11434/v1",
+    )
 
-    def test_empty_text(self):
-        assert _smart_truncate("", max_chars=100) == ""
-        assert _smart_truncate(None, max_chars=100) == ""
+    assert client.api_key == LOCAL_PROVIDER_API_KEY
 
-    def test_truncation_at_paragraph(self):
-        text = "A" * 5000 + "\n\n" + "B" * 5000
-        result = _smart_truncate(text, max_chars=6000)
-        assert len(result) < 6100
-        assert "[... 内容已截取]" in result
 
-    def test_truncation_at_sentence(self):
-        text = "这是一段很长的中文文本。" * 1000
-        result = _smart_truncate(text, max_chars=5000)
-        assert len(result) < 5100
-        assert "[... 内容已截取]" in result
+class TestLLMContextMessages:
+    def test_full_history_and_assistant_content_are_preserved(self):
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        long_answer = "这是一段很长的 assistant 内容。" * 300
+        history = [
+            {"role": "user", "content": "第一轮"},
+            {"role": "assistant", "content": long_answer},
+            {"role": "user", "content": "第二轮"},
+            {"role": "assistant", "content": "短回复"},
+            {"role": "user", "content": "第三轮"},
+        ]
 
-    def test_chinese_semicolon_boundary(self):
-        text = "第一部分内容；第二部分内容" * 500
-        result = _smart_truncate(text, max_chars=3000)
-        assert "[... 内容已截取]" in result
+        context = client._build_context_messages(history)
+
+        assert context == history
+        assert context[1]["content"] == long_answer
+        assert "答案已截断" not in context[1]["content"]
 
 
 class TestRateLimiter:

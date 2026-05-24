@@ -389,11 +389,15 @@
    ======================================== */
 .message {
     display: flex;
-    gap: 16px;
-    max-width: 820px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    max-width: 920px;
     width: 100%;
     margin-left: auto;
     margin-right: auto;
+    padding-inline: 42px;
+    position: relative;
     animation: messageIn 0.3s ease;
 }
 
@@ -409,78 +413,138 @@
 }
 
 .message.user {
-    justify-content: flex-end;
+    align-items: flex-end;
+}
+
+.message.assistant {
+    align-items: stretch;
 }
 
 .message-content {
-    padding: 12px 16px;
-    border-radius: var(--radius-lg);
-    line-height: 1.65;
-    font-size: 15px;
     position: relative;
+    min-width: 0;
+    max-width: 100%;
+    padding: 12px 16px;
+    border: 1px solid transparent;
+    border-radius: 16px;
+    color: var(--amc-message-model-text);
+    line-height: 1.8;
+    font-size: 15px;
+    letter-spacing: 0;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.message-content-container {
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 /* --- Copy Button --- */
-.copy-btn {
+.copy-btn,
+.regenerate-btn,
+.msg-delete-btn {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    background-color: var(--bg-elevated);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
+    top: 2px;
+    width: 28px;
+    height: 28px;
+    background-color: var(--amc-message-action-bg);
+    border: 0;
+    color: var(--amc-message-action-text);
     cursor: pointer;
-    padding: 4px;
-    border-radius: var(--radius-sm);
-    display: none;
+    padding: 0;
+    border-radius: 8px;
+    display: flex;
     align-items: center;
     justify-content: center;
-    transition: all var(--transition-fast);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(4px);
+    transition: opacity 0.2s ease, transform 0.2s ease, background-color var(--transition-fast), color var(--transition-fast);
     z-index: 10;
-    box-shadow: var(--shadow-sm);
+    box-shadow: none;
 }
 
-.message-content:hover .copy-btn {
-    display: flex;
+.message:hover .copy-btn,
+.message:hover .regenerate-btn,
+.message:hover .msg-delete-btn,
+.message:focus-within .copy-btn,
+.message:focus-within .regenerate-btn,
+.message:focus-within .msg-delete-btn {
+    opacity: 0.8;
+    pointer-events: auto;
+    transform: translateY(0);
 }
 
-.copy-btn:hover {
-    color: var(--primary);
-    border-color: var(--primary);
+.copy-btn:hover,
+.regenerate-btn:hover,
+.msg-delete-btn:hover {
+    background-color: var(--amc-message-action-hover-bg);
+    color: var(--text-primary);
+    opacity: 1;
 }
 
-.copy-btn span {
+.msg-delete-btn:hover {
+    color: var(--amc-message-action-danger);
+    background-color: var(--error-light);
+}
+
+.copy-btn span,
+.regenerate-btn span,
+.msg-delete-btn span {
     font-size: 16px;
+}
+
+.message.assistant .copy-btn,
+.message.assistant .regenerate-btn,
+.message.assistant .msg-delete-btn {
+    left: -36px;
+}
+
+.message.assistant .regenerate-btn,
+.message.assistant .msg-delete-btn {
+    top: 36px;
+}
+
+.message.assistant .regenerate-btn + .msg-delete-btn {
+    top: 70px;
+}
+
+.message.user .copy-btn,
+.message.user .msg-delete-btn {
+    right: -36px;
+}
+
+.message.user .msg-delete-btn {
+    top: 36px;
 }
 
 /* --- User Message --- */
 .message.user .message-content {
-    background: linear-gradient(135deg, var(--primary), var(--primary-hover));
-    color: var(--text-inverse);
-    border-radius: 20px 20px 4px 20px;
+    width: fit-content;
     max-width: 80%;
-    font-weight: 450;
-}
-
-.message.user .message-content .copy-btn {
-    background-color: rgba(255, 255, 255, 0.2);
-    border-color: rgba(255, 255, 255, 0.15);
-    color: rgba(255, 255, 255, 0.8);
-}
-
-.message.user .message-content .copy-btn:hover {
-    background-color: rgba(255, 255, 255, 0.3);
-    color: white;
+    padding: 12px 16px;
+    background: var(--amc-message-user-bg);
+    color: var(--amc-message-user-text);
+    border-color: transparent;
+    border-radius: 16px;
+    border-top-right-radius: 2px;
+    box-shadow: var(--shadow-sm);
+    font-weight: 400;
+    line-height: 1.65;
+    white-space: pre-wrap;
 }
 
 /* --- Assistant Message --- */
-.message.assistant {
-    flex-direction: column;
-}
-
 .message.assistant .message-content {
-    background-color: transparent;
+    background-color: var(--amc-message-model-bg);
     width: 100%;
-    padding: 8px 4px;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 /* ========================================
@@ -491,37 +555,46 @@
 }
 
 .log-container {
-    margin-bottom: 12px;
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+    border: 0;
+    border-radius: 12px;
     overflow: hidden;
-    max-width: 820px;
+    max-width: 100%;
     width: 100%;
-    margin-left: auto;
-    margin-right: auto;
-    background-color: var(--bg-secondary);
+    background-color: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
+    box-shadow: none;
+    transition: background-color var(--transition-smooth), box-shadow var(--transition-smooth);
+}
+
+.log-container:not(.completed),
+.log-container:has(.log-details.open) {
+    background-color: color-mix(in srgb, var(--bg-secondary) 84%, transparent);
     box-shadow: var(--shadow-xs);
-    transition: all var(--transition-smooth);
 }
 
 .log-summary {
-    padding: 10px 14px;
-    background-color: var(--bg-secondary);
+    padding: 8px 12px;
+    background-color: transparent;
     cursor: pointer;
-    font-size: 13.5px;
+    font-size: 14px;
     color: var(--text-primary);
     display: flex;
     align-items: center;
     justify-content: space-between;
     user-select: none;
-    transition: all var(--transition-fast);
-    border-bottom: 1px solid transparent;
+    transition: background-color var(--transition-fast);
     font-weight: 500;
-    border-radius: var(--radius-md);
+    border-radius: 12px;
+    min-height: 44px;
 }
 
 .log-summary:hover {
-    background-color: var(--primary-light);
+    background-color: color-mix(in srgb, var(--bg-input) 42%, transparent);
+}
+
+.log-summary:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: -2px;
 }
 
 .log-status-left {
@@ -534,9 +607,15 @@
 }
 
 .log-spinner {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font-size: 20px;
     color: var(--primary);
     flex-shrink: 0;
+    transition: color var(--transition-smooth);
 }
 
 .log-spinner.completed {
@@ -547,9 +626,10 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-weight: 500;
-    font-size: 13.5px;
+    font-weight: 650;
+    font-size: 14px;
     color: var(--text-secondary);
+    line-height: 1.35;
 }
 
 .expand-icon {
@@ -564,7 +644,7 @@
 }
 
 .log-details {
-    background-color: var(--bg);
+    background-color: transparent;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     font-size: 12px;
     color: var(--text-secondary);
@@ -572,31 +652,34 @@
     overflow-y: auto;
     overflow-x: hidden;
     transition: all var(--transition-smooth);
-    padding: 0 16px;
+    padding: 0 12px;
     opacity: 0;
 }
 
 .log-details.open {
-    padding: 12px 16px;
+    padding: 10px 12px 12px;
     max-height: 400px;
     opacity: 1;
-    border-top: 1px dashed var(--border);
-    background-color: var(--bg-secondary);
+    border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    background-color: transparent;
 }
 
 .log-entry {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 6px;
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 8px;
+    margin-bottom: 4px;
     align-items: flex-start;
-    line-height: 1.6;
-    padding: 4px 0;
-    border-bottom: 1px dashed var(--border-light);
+    line-height: 1.55;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: 8px;
     min-width: 0;
+    color: var(--text-secondary);
+    background-color: transparent;
 }
 
 .log-entry:last-child {
-    border-bottom: none;
     margin-bottom: 0;
 }
 
@@ -606,31 +689,56 @@
     overflow-wrap: break-word;
 }
 
+.log-entry-dot {
+    width: 6px;
+    height: 6px;
+    margin-top: 0.55em;
+    border-radius: 999px;
+    background-color: var(--text-muted);
+    opacity: 0.8;
+}
+
+.log-entry-message {
+    min-width: 0;
+}
+
 .log-entry.log-search {
-    border-left: 3px solid var(--primary);
-    padding-left: 8px;
+    background-color: color-mix(in srgb, var(--primary-light) 45%, transparent);
 }
 
 .log-entry.log-crawl {
-    border-left: 3px solid var(--success);
-    padding-left: 8px;
+    background-color: color-mix(in srgb, var(--success-light) 52%, transparent);
 }
 
 .log-entry.log-analysis {
-    border-left: 3px solid #8b5cf6;
-    padding-left: 8px;
+    background-color: color-mix(in srgb, #8b5cf6 10%, transparent);
 }
 
 .log-entry.log-error {
-    border-left: 3px solid var(--error);
-    padding-left: 8px;
+    background-color: var(--error-light);
     color: var(--error);
+}
+
+.log-entry.log-search .log-entry-dot {
+    background-color: var(--primary);
+}
+
+.log-entry.log-crawl .log-entry-dot {
+    background-color: var(--success);
+}
+
+.log-entry.log-analysis .log-entry-dot {
+    background-color: #8b5cf6;
+}
+
+.log-entry.log-error .log-entry-dot {
+    background-color: var(--error);
 }
 
 .log-timestamp {
     color: var(--text-muted);
     font-size: 11px;
-    min-width: 62px;
+    min-width: 60px;
     opacity: 0.7;
     font-variant-numeric: tabular-nums;
     flex-shrink: 0;

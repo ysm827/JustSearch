@@ -11,9 +11,6 @@ from .prompts import TASK_ANALYSIS_PROMPT, RELEVANCE_ASSESSMENT_PROMPT, CLICK_DE
 
 logger = logging.getLogger(__name__)
 
-# 默认上下文轮数，可通过 settings 覆盖
-_DEFAULT_CONTEXT_TURNS = 6
-
 # LLM 调用超时
 _LLM_TIMEOUT = 120  # 秒（默认，用于 generate_answer）
 _LLM_SHORT_TIMEOUT = 30  # 秒（用于 analyze_task / assess_relevance 等短操作）
@@ -40,7 +37,7 @@ def _cache_analysis_result(key: str, result: dict):
 
 class LLMClient:
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1",
-                 model: str = "deepseek-v4-pro", max_context_turns: int = _DEFAULT_CONTEXT_TURNS):
+                 model: str = "deepseek-v4-pro"):
         self.client = create_openai_client(
             api_key=api_key,
             base_url=base_url,
@@ -48,7 +45,6 @@ class LLMClient:
             timeout=_LLM_TIMEOUT,
         )
         self.model = model
-        self.max_context_turns = max_context_turns
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
@@ -206,31 +202,15 @@ class LLMClient:
 
         return None
 
-    def _build_context_messages(self, history: Optional[List[Dict[str, str]]], max_turns: int) -> List[Dict[str, str]]:
-        """从历史记录中构建上下文消息，限制轮数。对 assistant 消息做摘要截断以节省 token。"""
+    def _build_context_messages(self, history: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+        """从历史记录中构建上下文消息，保留完整上下文内容。"""
         if not history:
             return []
-        
-        recent = history[-max_turns:]
+
         result = []
-        for msg in recent:
+        for msg in history:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            if role == "assistant" and len(content) > 500:
-                truncated = content[:400]
-                # Try to find a sentence boundary for cleaner truncation
-                last_stop = max(
-                    truncated.rfind('。'),
-                    truncated.rfind('.'),
-                    truncated.rfind('？'),
-                    truncated.rfind('?'),
-                    truncated.rfind('！'),
-                    truncated.rfind('!'),
-                )
-                if last_stop > len(truncated) * 0.5:
-                    content = content[:last_stop + 1] + "...(答案已截断)"
-                else:
-                    content = truncated + "...(答案已截断)"
             result.append({"role": role, "content": content})
         return result
 
@@ -255,7 +235,7 @@ class LLMClient:
         messages = [{"role": "system", "content": system_prompt}]
 
         # Add conversation history if available
-        context = self._build_context_messages(history, self.max_context_turns)
+        context = self._build_context_messages(history)
         for msg in context:
             role = msg.get("role", "user")
             content = msg.get("content", "")
@@ -321,7 +301,7 @@ class LLMClient:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = RELEVANCE_ASSESSMENT_PROMPT.format(current_time=current_time)
 
-        user_message = f"Query: {_truncate_for_log(query)}\n\nSnippets:\n"
+        user_message = f"Query: {query}\n\nSnippets:\n"
         for item in snippets:
             date_info = f"Date: {item.get('date', 'N/A')}\n" if item.get('date') else ""
             user_message += f"ID [{item['id']}]: Title: {item['title']}\n{date_info}Snippet: {item['snippet']}\n\n"
@@ -360,10 +340,9 @@ class LLMClient:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = CLICK_DECISION_PROMPT.format(current_time=current_time)
 
-        user_message = f"Query: {_truncate_for_log(query)}\n\nClickable Elements:\n"
-        # Limit elements to avoid token overflow
-        for el in elements[:50]:
-            user_message += f"ID [{el['id']}]: [{el['tag']}] {el['text'][:100]}\n"
+        user_message = f"Query: {query}\n\nClickable Elements:\n"
+        for el in elements:
+            user_message += f"ID [{el['id']}]: [{el['tag']}] {el['text']}\n"
 
         try:
             logger.info("[Click Decision] 评估 %d 个可点击元素", len(elements))
@@ -405,7 +384,7 @@ class LLMClient:
         messages = [{"role": "system", "content": system_prompt}]
 
         # Add conversation history context if available
-        context = self._build_context_messages(history, self.max_context_turns)
+        context = self._build_context_messages(history)
         for msg in context:
             role = msg.get("role", "user")
             content = msg.get("content", "")
@@ -413,12 +392,8 @@ class LLMClient:
 
         user_message = f"Question: {query}\n\nSources:\n"
         for src in sources:
-            # 智能段落截取：在段落边界截断，而非硬切
-            # Dynamic truncation based on number of sources — more sources = less per source
-            chars_per_source = min(8000, max(3000, 30000 // max(len(sources), 1)))
-            content_preview = _smart_truncate(src['content'], max_chars=chars_per_source)
             date_info = f" (Date: {src.get('date')})" if src.get('date') else ""
-            user_message += f"Source [{src['id']}] (Title: {src['title']}{date_info}):\n{content_preview}\n\n"
+            user_message += f"Source [{src['id']}] (Title: {src['title']}{date_info}):\n{src['content']}\n\n"
 
         messages.append({"role": "user", "content": user_message})
 
@@ -521,35 +496,3 @@ def _truncate_for_log(text: str, max_len: int = 50) -> str:
     if not text or len(text) <= max_len:
         return text
     return text[:max_len] + "..."
-
-
-def _smart_truncate(text: str, max_chars: int = 8000) -> str:
-    """
-    智能截取文本，尽量在段落/句子边界截断。
-    如果文本本身短于限制，直接返回。
-    """
-    if not text or len(text) <= max_chars:
-        return text or ""
-
-    # 找到 max_chars 附近的段落边界（双换行）
-    truncated = text[:max_chars]
-    last_paragraph = truncated.rfind('\n\n')
-    if last_paragraph > max_chars * 0.5:  # 至少保留 50% 的内容
-        return truncated[:last_paragraph].rstrip() + "\n\n[... 内容已截取]"
-
-    # 退而求其次：单换行边界
-    last_newline = truncated.rfind('\n')
-    if last_newline > max_chars * 0.5:
-        return truncated[:last_newline].rstrip() + "\n[... 内容已截取]"
-
-    # 最后手段：句号/问号/叹号（含中文标点）
-    last_sentence = max(
-        truncated.rfind('。'), truncated.rfind('.'),
-        truncated.rfind('！'), truncated.rfind('!'),
-        truncated.rfind('？'), truncated.rfind('?'),
-        truncated.rfind('；'), truncated.rfind(';'),
-    )
-    if last_sentence > max_chars * 0.5:
-        return truncated[:last_sentence + 1] + "[... 内容已截取]"
-
-    return truncated + "[... 内容已截取]"

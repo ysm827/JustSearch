@@ -1,8 +1,8 @@
 import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './state.js';
-import { createCopyButton } from './utils.js';
+import { createCopyButton } from './utils.js?v=2';
 import { updateActiveHistoryItem } from './history-view.js';
-import { createDynamicLogContainer, scrollToBottom, appendMessage, renderMessages, showConfirm } from './ui.js';
-import { renderWithCitations } from './source-renderer.js';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm } from './ui.js?v=2';
+import { renderWithCitations } from './source-renderer.js?v=2';
 import { showToast } from './toast.js';
 import * as API from './api.js';
 
@@ -91,21 +91,14 @@ export function setupChatHandler(elements, renderHistory) {
         // Assistant Message Placeholder
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message assistant';
+        msgDiv.dataset.messageRole = 'assistant';
 
-        // Progress bar
-        const progressBar = document.createElement('div');
-        progressBar.className = 'search-progress-bar';
-        const progressFill = document.createElement('div');
-        progressFill.className = 'progress-fill';
-        progressBar.appendChild(progressFill);
-        msgDiv.appendChild(progressBar);
-
-        const { logContainer, logDetails, spinner, statusText, expandIcon } = createDynamicLogContainer();
+        const { logContainer, logSummary, logDetails, spinner, statusText, expandIcon } = createDynamicLogContainer();
         const seenLogs = new Set(); // 去重
         msgDiv.appendChild(logContainer);
 
         const answerDiv = document.createElement('div');
-        answerDiv.className = 'message-content markdown-body';
+        answerDiv.className = 'message-content message-content-container markdown-body';
         const contentWrapper = document.createElement('div');
         contentWrapper.innerHTML = '<span class="blinking-cursor"></span>';
         answerDiv.appendChild(contentWrapper);
@@ -136,7 +129,6 @@ export function setupChatHandler(elements, renderHistory) {
 
         let currentSources = [];
         let hasReceivedChunk = false;
-        let logCount = 0;
         let searchStats = null;
         let searchStartTime = Date.now();
 
@@ -150,13 +142,6 @@ export function setupChatHandler(elements, renderHistory) {
                 statusText.textContent = statusText.textContent.replace(/ \([\d.]+s\)$/, '') + ` (${elapsed}s)`;
             }
         }, 500);
-
-        // Progress tracker
-        function updateProgress() {
-            logCount++;
-            const pct = Math.min(90, 10 + logCount * 6);
-            progressFill.style.width = pct + '%';
-        }
 
         try {
             await API.streamChat(text, {
@@ -173,11 +158,12 @@ export function setupChatHandler(elements, renderHistory) {
                     }
                 },
                 onLog: (msg) => {
-                    if (msg.includes('ACTION_REQUIRED: CAPTCHA_DETECTED')) {
+                    if (msg.includes('ACTION_REQUIRED: CAPTCHA_DETECTED') ||
+                        msg.includes('ACTION_REQUIRED: SEARCH_VERIFICATION_REQUIRED')) {
                         if (state.openBrowserModal) {
                             state.openBrowserModal(state.currentSessionId);
                         }
-                        msg = "需要人工验证。请在弹出的窗口中解决验证码。";
+                        msg = "需要人工验证。请在弹出的窗口中通过搜索引擎验证。";
                     }
                     // Detect engine fallback notification
                     if (msg.includes('自动切换到')) {
@@ -185,33 +171,13 @@ export function setupChatHandler(elements, renderHistory) {
                         if (match) showToast(`搜索引擎已切换到 ${match[1]}`, 'warning');
                     }
                     statusText.textContent = msg;
-                    updateProgress();
-
-                    const entry = document.createElement('div');
-                    if (/search|搜索|query/i.test(msg)) {
-                        entry.className = 'log-entry log-search';
-                    } else if (/crawl|爬取|fetch|reading/i.test(msg)) {
-                        entry.className = 'log-entry log-crawl';
-                    } else if (/analyz|分析|assess|评估/i.test(msg)) {
-                        entry.className = 'log-entry log-analysis';
-                    } else if (/error|失败|fail/i.test(msg)) {
-                        entry.className = 'log-entry log-error';
-                    } else {
-                        entry.className = 'log-entry';
-                    }
-                    const tsSpan = document.createElement('span');
-                    tsSpan.className = 'log-timestamp';
-                    tsSpan.textContent = new Date().toLocaleTimeString();
-                    const msgSpan = document.createElement('span');
-                    msgSpan.textContent = msg;
 
                     // 去重检查
                     const logKey = msg.trim().substring(0, 80);
                     if (seenLogs.has(logKey)) return;
                     seenLogs.add(logKey);
 
-                    entry.appendChild(tsSpan);
-                    entry.appendChild(msgSpan);
+                    const entry = createLogEntry(msg, new Date().toLocaleTimeString());
                     logDetails.appendChild(entry);
                     logDetails.scrollTop = logDetails.scrollHeight;
                 },
@@ -225,7 +191,6 @@ export function setupChatHandler(elements, renderHistory) {
                     if (!hasReceivedChunk) {
                         hasReceivedChunk = true;
                         contentWrapper.innerHTML = '';
-                        progressFill.style.width = '95%';
                     }
                     currentAnswerBuffer += chunk;
                     contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
@@ -247,7 +212,7 @@ export function setupChatHandler(elements, renderHistory) {
                     let errMsg = err;
                     if (typeof err === 'string') {
                         if (err.includes('请先在设置中配置 API 密钥')) {
-                            errMsg = '请先在设置中配置 API 密钥。点击左上角 ⚙️ 设置按钮，填入 API Key 后保存。';
+                            errMsg = '请先在设置中配置 API 密钥。点击左上角设置按钮，填入 API Key 后会自动保存。';
                         } else if (err.includes('请求失败 (429)') || err.includes('rate limit')) {
                             errMsg = 'API 请求过于频繁，请稍后重试。';
                         } else if (err.includes('请求失败 (401)') || err.includes('Unauthorized')) {
@@ -292,18 +257,13 @@ export function setupChatHandler(elements, renderHistory) {
             spinner.classList.remove('rotating');
             spinner.textContent = 'check_circle';
             spinner.classList.add('completed');
+            logContainer.classList.add('completed');
             if (searchStats && searchStats.sites_searched > 0) {
                 let statsText = `已完成 · 搜索 ${searchStats.sites_searched} 个结果`;
                 if (searchStats.sites_crawled > 0) {
                     statsText += ` · 深度阅读 ${searchStats.sites_crawled} 个页面`;
                 }
                 statsText += ` · ${totalElapsed}s`;
-                if (searchStats.prompt_tokens || searchStats.completion_tokens) {
-                    const totalTokens = (searchStats.prompt_tokens || 0) + (searchStats.completion_tokens || 0);
-                    if (totalTokens > 0) {
-                        statsText += ` · ${totalTokens.toLocaleString()} tokens`;
-                    }
-                }
                 statusText.textContent = statsText;
             } else {
                 statusText.textContent = `已完成 · ${totalElapsed}s`;
@@ -311,9 +271,7 @@ export function setupChatHandler(elements, renderHistory) {
             // 搜索完成，自动折叠过程日志
             logDetails.classList.remove('open');
             if (expandIcon) expandIcon.classList.remove('expanded');
-            // 完成进度条
-            progressBar.classList.add('done');
-            setTimeout(() => { progressBar.style.display = 'none'; }, 1500);
+            if (logSummary) logSummary.setAttribute('aria-expanded', 'false');
         }
     }
 

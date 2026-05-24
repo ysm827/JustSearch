@@ -10,10 +10,18 @@ from .engine_health import engine_health
 
 logger = logging.getLogger(__name__)
 _SEARCH_BATCH_TIMEOUT_SECONDS = 60.0
+_WORKFLOW_LLM_STEPS = ("analysis", "relevance", "interaction", "answer")
 
 class SearchWorkflow:
-    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "duckduckgo", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_context_turns: int = 6, max_concurrent_pages: int = 3):
-        self.llm = LLMClient(api_key, base_url, model, max_context_turns=max_context_turns)
+    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "duckduckgo", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_concurrent_pages: int = 3, step_model_configs: Optional[dict] = None):
+        self.llm = LLMClient(api_key, base_url, model)
+        self._initial_default_llm = self.llm
+        self.step_llms = self._build_step_llms(
+            step_model_configs or {},
+            api_key,
+            base_url,
+            model,
+        )
         # Pass the search engine preference to the browser manager
         self.browser = BrowserManager(engine=search_engine, max_results=max_results)
         self.max_iterations = max_iterations
@@ -25,6 +33,51 @@ class SearchWorkflow:
         self._content_cache: Dict[str, str] = {}
         # Minimum content length to be considered useful (chars)
         self._min_content_length = 150
+
+    def _build_step_llms(
+        self,
+        step_model_configs: dict,
+        default_api_key: str,
+        default_base_url: str,
+        default_model: str,
+    ) -> dict:
+        client_cache = {
+            (default_api_key, default_base_url, default_model): self.llm
+        }
+        clients = {}
+        for step_id in _WORKFLOW_LLM_STEPS:
+            config = step_model_configs.get(step_id) if isinstance(step_model_configs, dict) else None
+            api_key = str((config or {}).get("api_key") or default_api_key)
+            base_url = str((config or {}).get("base_url") or default_base_url)
+            model = str((config or {}).get("model") or default_model)
+            cache_key = (api_key, base_url, model)
+            if cache_key not in client_cache:
+                client_cache[cache_key] = LLMClient(
+                    api_key,
+                    base_url,
+                    model,
+                )
+            clients[step_id] = client_cache[cache_key]
+        return clients
+
+    def _llm_for_step(self, step_id: str):
+        client = self.step_llms.get(step_id)
+        if client is self._initial_default_llm and self.llm is not self._initial_default_llm:
+            return self.llm
+        return client or self.llm
+
+    def _usage_totals(self) -> tuple[int, int]:
+        seen = set()
+        prompt_tokens = 0
+        completion_tokens = 0
+        for client in [self.llm, *self.step_llms.values()]:
+            ident = id(client)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            prompt_tokens += getattr(client, "total_prompt_tokens", 0) or 0
+            completion_tokens += getattr(client, "total_completion_tokens", 0) or 0
+        return prompt_tokens, completion_tokens
 
     def _normalize_url(self, url: str) -> str:
         """规范化 URL 用于去重。处理 Bing redirect URL 等特殊格式。"""
@@ -110,7 +163,7 @@ class SearchWorkflow:
         
         new_sources = []
         if url not in visited_urls:
-            content = await self.browser.crawl_page(url, log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id)
+            content = await self.browser.crawl_page(url, log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self._llm_for_step("interaction"), session_id=self.session_id)
             visited_urls.add(url)
             source_id_counter += 1
             # 过滤超时/空内容
@@ -221,7 +274,7 @@ class SearchWorkflow:
         progress_callback("正在调用 AI 评估搜索结果的相关性...")
         
         # [04] Relevance Assessment
-        relevant_ids = await self.llm.assess_relevance(user_input, search_results)
+        relevant_ids = await self._llm_for_step("relevance").assess_relevance(user_input, search_results)
         progress_callback(f"选定进行深度爬取的 ID: {relevant_ids}")
 
         relevant_id_set = set()
@@ -308,7 +361,7 @@ class SearchWorkflow:
                     return await task
 
             tasks = [_crawl_with_semaphore(
-                self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self.llm, session_id=self.session_id)
+                self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self._llm_for_step("interaction"), session_id=self.session_id)
             ) for item in uncached_items]
             contents = await asyncio.gather(*tasks)
             # Build URL-to-index map for efficient lookup
@@ -385,7 +438,7 @@ class SearchWorkflow:
                     )
                 
                 # Pass conversation history to help understand context (e.g. "it", "he")
-                analysis = await self.llm.analyze_task(analysis_input, history)
+                analysis = await self._llm_for_step("analysis").analyze_task(analysis_input, history)
                 logger.info("[Workflow] 任务分析结果: type=%s, data=%s", analysis.get("type", ""), json.dumps(analysis, ensure_ascii=False)[:150])
                 
                 new_sources = []
@@ -428,19 +481,20 @@ class SearchWorkflow:
                 if source_callback:
                     source_callback(accumulated_sources)
                 
-                result = await self.llm.generate_answer(user_input, accumulated_sources, history, stream_callback)
+                result = await self._llm_for_step("answer").generate_answer(user_input, accumulated_sources, history, stream_callback)
                 
                 if result.get("status") == "sufficient":
                     progress_callback("答案状态: 充分")
                     final_answer = result.get("answer")
                     if stats_callback:
                         total_elapsed = time.monotonic() - start_time
+                        prompt_tokens, completion_tokens = self._usage_totals()
                         stats_callback({
                             "sites_searched": total_search_results,
                             "sites_crawled": len(visited_urls),
                             "iterations": iteration,
-                            "prompt_tokens": self.llm.total_prompt_tokens,
-                            "completion_tokens": self.llm.total_completion_tokens,
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
                             "total_seconds": round(total_elapsed, 1),
                         })
                     return self._format_references(final_answer, accumulated_sources)
@@ -458,12 +512,13 @@ class SearchWorkflow:
                     if iteration >= self.max_iterations:
                          final_answer = f"经过 {iteration} 次尝试后，我无法找到完全充分的答案。以下是基于现有信息的结果：\n\n{result.get('answer')}"
                          if stats_callback:
+                             prompt_tokens, completion_tokens = self._usage_totals()
                              stats_callback({
                                  "sites_searched": total_search_results,
                                  "iterations": iteration,
                                  "total_seconds": round(time.monotonic() - start_time, 1),
-                                 "prompt_tokens": self.llm.total_prompt_tokens,
-                                 "completion_tokens": self.llm.total_completion_tokens,
+                                 "prompt_tokens": prompt_tokens,
+                                 "completion_tokens": completion_tokens,
                              })
                          return final_answer
             

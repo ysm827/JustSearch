@@ -61,6 +61,17 @@ textarea:focus-visible {
     --code-bg: #f1f5f9;
     --code-text: #e11d48;
 
+    /* AMC-style Messages */
+    --amc-message-user-bg: #f3f4f6;
+    --amc-message-user-text: #000000;
+    --amc-message-model-bg: transparent;
+    --amc-message-model-text: #000000;
+    --amc-message-action-bg: transparent;
+    --amc-message-action-hover-bg: #ececf1;
+    --amc-message-action-text: #666666;
+    --amc-message-action-danger: #df3434;
+    --amc-message-code-bg: #f7f7f8;
+
     /* Scrollbar */
     --scrollbar-thumb: #d1d5db;
     --scrollbar-thumb-hover: #9ca3af;
@@ -125,6 +136,17 @@ textarea:focus-visible {
     /* Code */
     --code-bg: #1a1a2e;
     --code-text: #f472b6;
+
+    /* AMC-style Messages */
+    --amc-message-user-bg: #2563eb;
+    --amc-message-user-text: #ffffff;
+    --amc-message-model-bg: transparent;
+    --amc-message-model-text: #e4e4e7;
+    --amc-message-action-bg: transparent;
+    --amc-message-action-hover-bg: #18181b;
+    --amc-message-action-text: #a1a1aa;
+    --amc-message-action-danger: #fca5a5;
+    --amc-message-code-bg: #121214;
 
     /* Scrollbar */
     --scrollbar-thumb: #3f3f46;

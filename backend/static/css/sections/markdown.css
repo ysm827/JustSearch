@@ -2,62 +2,85 @@
    Markdown Rendering
    ======================================== */
 .markdown-body {
-    font-family: 'Inter', -apple-system, sans-serif;
-    line-height: 1.7;
-    font-size: 15px;
+    max-width: 100%;
+    min-width: 0;
+    background-color: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.message-content-container .markdown-body,
+.message-content.markdown-body {
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.markdown-body > *:first-child,
+.is-loading > *:first-child {
+    margin-top: 0 !important;
+}
+
+.markdown-body > *:last-child,
+.markdown-body p:last-child {
+    margin-bottom: 0 !important;
 }
 
 .markdown-body p {
-    margin: 0 0 12px;
+    color: inherit;
+    margin: 0 0 1em;
 }
 
-.markdown-body p:last-child {
-    margin-bottom: 0;
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    color: var(--text-primary);
+    line-height: 1.3;
+    margin: 1.5em 0 0.5em;
 }
 
-.markdown-body h1, .markdown-body h2, .markdown-body h3,
-.markdown-body h4, .markdown-body h5, .markdown-body h6 {
-    margin: 20px 0 10px;
+.markdown-body h1 {
+    font-size: 1.8em;
+    font-weight: 800;
+}
+
+.markdown-body h2 {
+    font-size: 1.55em;
+    font-weight: 750;
+}
+
+.markdown-body h3 {
+    font-size: 1.3em;
     font-weight: 700;
-    letter-spacing: -0.3px;
+}
+
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    font-weight: 650;
+}
+
+.markdown-body strong {
     color: var(--text-primary);
+    font-weight: 700;
 }
 
-.markdown-body h1 { font-size: 1.5em; }
-.markdown-body h2 { font-size: 1.3em; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-.markdown-body h3 { font-size: 1.15em; }
-
-.markdown-body pre {
-    background-color: var(--code-bg);
-    padding: 14px 16px;
-    border-radius: var(--radius-md);
-    overflow-x: auto;
-    margin: 12px 0;
-    border: 1px solid var(--border-light);
-    position: relative;
-}
-
-.markdown-body code {
-    background-color: var(--code-bg);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.88em;
-    color: var(--code-text);
-}
-
-.markdown-body pre code {
-    background: none;
-    padding: 0;
-    color: var(--text-primary);
-    font-size: 13px;
-    line-height: 1.6;
+.markdown-body em {
+    font-style: italic;
 }
 
 .markdown-body a {
     color: var(--primary);
-    text-decoration: none;
     font-weight: 500;
+    text-decoration: none;
     transition: color var(--transition-fast);
 }
 
@@ -66,74 +89,278 @@
 }
 
 .markdown-body blockquote {
-    margin: 12px 0;
-    padding: 8px 16px;
-    border-left: 3px solid var(--primary);
-    background-color: var(--primary-light);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    color: var(--text-secondary);
+    color: inherit;
+    border-left: 3px solid currentColor;
+    background-color: transparent;
+    border-radius: 0;
+    margin: 0.5rem 0;
+    opacity: 0.85;
+    padding: 0.25rem 0 0.25rem 1rem;
 }
 
 .markdown-body blockquote p {
     margin: 0;
 }
 
-.markdown-body ul, .markdown-body ol {
-    margin: 8px 0;
-    padding-left: 24px;
+.markdown-body hr {
+    height: 1px;
+    background-color: var(--text-muted);
+    border: none;
+    margin: 1.5rem 0;
+    opacity: 0.5;
+}
+
+.markdown-body ol {
+    list-style-type: decimal;
+    margin: 0 0 1em;
+    padding-left: 1.5em;
+}
+
+.markdown-body ul {
+    list-style-type: disc;
+    margin: 0 0 1em;
+    padding-left: 1.5em;
 }
 
 .markdown-body li {
-    margin: 4px 0;
-    line-height: 1.7;
+    display: list-item;
+    margin-bottom: 0.25em;
 }
 
-.markdown-body table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 12px 0;
-    font-size: 14px;
-    border-radius: var(--radius-sm);
+.markdown-body li > p {
+    margin-bottom: 0.5em;
+}
+
+.markdown-body details {
+    margin: 0.85rem 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background-color: color-mix(in srgb, var(--bg-secondary) 64%, transparent);
     overflow: hidden;
 }
 
-.markdown-body th {
-    background-color: var(--bg-secondary);
-    font-weight: 600;
-    text-align: left;
-    padding: 10px 14px;
-    border-bottom: 2px solid var(--border);
-    font-size: 13px;
+.markdown-body details > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.7rem 0.9rem;
     color: var(--text-secondary);
+    font-weight: 600;
+    user-select: none;
 }
 
-.markdown-body td {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border-light);
+.markdown-body details > summary::-webkit-details-marker {
+    display: none;
 }
 
-.markdown-body tr:nth-child(even) td {
-    background-color: var(--bg-secondary);
+.markdown-body details > summary::after {
+    content: '▾';
+    float: right;
+    color: var(--text-muted);
+    transition: transform var(--transition-fast);
 }
 
-.markdown-body hr {
-    border: none;
+.markdown-body details[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.markdown-body details > div {
+    padding: 0.8rem 0.9rem;
     border-top: 1px solid var(--border);
-    margin: 20px 0;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.875em;
+    line-height: 1.65;
+    white-space: pre-wrap;
 }
 
-.markdown-body img {
+/* Code */
+.markdown-body pre {
+    background-color: var(--amc-message-code-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    line-height: 1.5;
+    margin: 0.75rem 0;
+    overflow-x: auto;
+    padding: 1rem;
+    position: relative;
+}
+
+.markdown-body pre code {
+    background: transparent;
+    border: 0;
+    color: var(--text-primary);
+    display: block;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 0;
+}
+
+.markdown-body code:not(pre code) {
+    color: var(--primary-text);
+    background-color: var(--primary-light);
+    border: 1px solid var(--primary-light);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.9em;
+    font-weight: 500;
+    line-height: 1.4;
+    padding: 0.2em 0.4em;
+}
+
+.markdown-body pre.code-block-wrapper {
+    padding: 0;
+    overflow: hidden;
+    box-shadow: var(--shadow-xs);
+}
+
+.code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 38px;
+    padding: 0.45rem 0.75rem;
+    background-color: color-mix(in srgb, var(--bg) 72%, var(--bg-secondary));
+    border-bottom: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.code-block-lang {
+    min-width: 0;
+    flex: 1;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.code-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-height: 26px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 0.2rem 0.45rem;
+    transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.code-copy-btn:hover {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.code-copy-btn .material-symbols-rounded {
+    font-size: 16px;
+}
+
+.markdown-body .code-block-wrapper code {
+    border-radius: 0;
+    display: block;
+    max-height: 420px;
+    overflow: auto;
+    padding: 1rem;
+}
+
+.markdown-body .hljs,
+.markdown-body pre code.hljs,
+code.hljs {
+    background-color: transparent;
+}
+
+/* Tables */
+.markdown-body table:not(.rich-html-table) {
+    width: 100%;
+    min-width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    margin: 0.75rem 0;
+    background-color: transparent;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.markdown-body table:not(.rich-html-table) caption {
+    caption-side: top;
+    color: inherit;
+    font-weight: 600;
+    padding: 0.875rem 1rem 0.25rem;
+    text-align: left;
+}
+
+.markdown-body table:not(.rich-html-table) thead {
+    background-color: transparent;
+    border-bottom: 1px solid var(--border);
+}
+
+.markdown-body table:not(.rich-html-table) th {
+    background-color: transparent;
+    border: none;
+    color: inherit;
+    font-size: 0.95em;
+    font-weight: 700;
+    opacity: 0.9;
+    overflow-wrap: anywhere;
+    padding: 0.875rem 1rem;
+    text-align: left;
+    vertical-align: top;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.markdown-body table:not(.rich-html-table) tbody tr {
+    background-color: transparent;
+    border-bottom: 1px solid var(--border);
+}
+
+.markdown-body table:not(.rich-html-table) tbody tr:last-child {
+    border-bottom: none;
+}
+
+.markdown-body table:not(.rich-html-table) td {
+    background-color: transparent;
+    border: none;
+    color: inherit;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    padding: 1rem;
+    vertical-align: top;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.markdown-body table.rich-html-table {
     max-width: 100%;
-    border-radius: var(--radius-md);
 }
 
-.markdown-body strong {
-    font-weight: 650;
+/* Media */
+.markdown-body img:not(.citation-favicon):not(.ref-favicon) {
+    max-width: 100%;
+    max-height: 320px;
+    height: auto;
+    object-fit: contain;
+    display: block;
+    margin: 0.5rem 0;
+    background-color: var(--bg-secondary);
+    border-radius: 8px;
+    box-shadow: var(--shadow-xs);
 }
 
-/* ========================================
-   Citations & References
-   ======================================== */
+/* Citations and references */
 .citation-link {
     color: var(--primary);
     text-decoration: none;
@@ -159,6 +386,18 @@
     color: var(--text-inverse);
     transform: translateY(-1px);
     box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+}
+
+.citation-favicon,
+.ref-favicon {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    display: inline-block;
+    flex-shrink: 0;
+    margin: 0;
+    object-fit: contain;
+    vertical-align: middle;
 }
 
 .reference-item {

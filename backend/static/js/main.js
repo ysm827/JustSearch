@@ -1,12 +1,12 @@
 import { initializeAuth, normalizeSettings } from './modules/auth.js';
 import { state, setCurrentSessionId } from './modules/state.js';
-import { initUI, elements } from './modules/ui.js';
-import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js';
+import { initUI, elements } from './modules/ui.js?v=2';
+import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=2';
 import { setupBrowserModal } from './modules/browser-modal.js';
-import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=10';
-import { setupSettingsModal } from './modules/settings-modal.js?v=12';
-import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js';
-import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js';
+import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=11';
+import { setupSettingsModal } from './modules/settings-modal.js?v=22';
+import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=2';
+import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js?v=14';
 import * as API from './modules/api.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -76,7 +76,7 @@ function updateModelSelector(settings) {
         const providerId = String(provider.id || '').trim();
         if (!providerId) return;
 
-        const models = String(provider.model_id || '').split(',').map(s => s.trim()).filter(Boolean);
+        const models = getSupportedModelItems(provider.model_id);
         models.forEach(model => {
             const option = document.createElement('option');
             let val = model;
@@ -93,6 +93,7 @@ function updateModelSelector(settings) {
             option.title = `${providerId} / ${val}`;
             option.dataset.providerId = providerId;
             option.dataset.providerName = provider.name || providerId;
+            option.dataset.modelDisplayName = displayName;
             select.appendChild(option);
         });
     });
@@ -110,6 +111,17 @@ function updateModelSelector(settings) {
         selected.selected = true;
     }
     syncCustomModelSelect();
+}
+
+function getSupportedModelItems(modelIds) {
+    return String(modelIds || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(model => model && !isUnsupportedGemini25Model(model));
+}
+
+function isUnsupportedGemini25Model(model) {
+    return /(^|[^a-z0-9])gemini[\s._-]*2[\s._-]*5($|[^a-z0-9])/i.test(String(model || ''));
 }
 
 function restoreSessionFromUrl(chatHistory, loadChat) {
@@ -136,7 +148,7 @@ function showHomeState() {
 function setupSystemThemeListener() {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if ((state.settings.theme || 'light') === 'auto') {
-            import('./modules/utils.js').then(m => m.applyTheme('auto'));
+            import('./modules/utils.js?v=2').then(m => m.applyTheme('auto'));
         }
     });
 }

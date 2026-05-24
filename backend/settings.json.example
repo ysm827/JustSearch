@@ -10,10 +10,15 @@
             "model_id": "deepseek-v4-pro"
         }
     ],
+    "workflow_step_models": {
+        "analysis": {"provider_id": "", "model_id": ""},
+        "relevance": {"provider_id": "", "model_id": ""},
+        "interaction": {"provider_id": "", "model_id": ""},
+        "answer": {"provider_id": "", "model_id": ""}
+    },
     "search_engine": "duckduckgo",
     "max_results": 50,
     "max_iterations": 5,
     "interactive_search": true,
-    "max_concurrent_pages": 10,
-    "max_context_turns": 6
+    "max_concurrent_pages": 10
 }

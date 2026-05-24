@@ -1,5 +1,5 @@
-import { createCopyButton } from './utils.js';
-import { extractSources, renderWithCitations } from './source-renderer.js';
+import { createCopyButton } from './utils.js?v=2';
+import { extractSources, renderWithCitations } from './source-renderer.js?v=2';
 import { state } from './state.js';
 
 /**
@@ -128,6 +128,7 @@ export function renderMessages(messages) {
 export function appendMessage(role, content, logs = null, sources = null, stats = null, messageIndex = null, timestamp = null) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
+    msgDiv.dataset.messageRole = role;
     
     if (role === 'assistant' && logs && logs.length > 0) {
          const siteCount = (stats && stats.sites_searched) ? stats.sites_searched : ((sources && sources.length) ? sources.length : 0);
@@ -135,7 +136,7 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
     }
 
     const contentDiv = document.createElement('div');
-    contentDiv.className = 'message-content';
+    contentDiv.className = 'message-content message-content-container';
     
     if (role === 'assistant') {
         contentDiv.classList.add('markdown-body');
@@ -212,12 +213,62 @@ export function scrollToBottom() {
     });
 }
 
+function classifyLogMessage(message) {
+    if (/search|搜索|query/i.test(message)) return 'log-search';
+    if (/crawl|爬取|fetch|reading|读取|阅读/i.test(message)) return 'log-crawl';
+    if (/analyz|分析|assess|评估|总结|生成/i.test(message)) return 'log-analysis';
+    if (/error|失败|fail|错误/i.test(message)) return 'log-error';
+    return '';
+}
+
+export function createLogEntry(message, timestamp = '') {
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${classifyLogMessage(message)}`.trim();
+
+    const dot = document.createElement('span');
+    dot.className = 'log-entry-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    entry.appendChild(dot);
+
+    if (timestamp) {
+        const tsSpan = document.createElement('span');
+        tsSpan.className = 'log-timestamp';
+        tsSpan.textContent = timestamp;
+        entry.appendChild(tsSpan);
+    }
+
+    const msgSpan = document.createElement('span');
+    msgSpan.className = 'log-entry-message';
+    msgSpan.textContent = message;
+    entry.appendChild(msgSpan);
+
+    return entry;
+}
+
+function wireLogToggle(logSummary, logDetails, expandIcon) {
+    const toggle = () => {
+        const isOpen = logDetails.classList.toggle('open');
+        expandIcon.classList.toggle('expanded', isOpen);
+        logSummary.setAttribute('aria-expanded', String(isOpen));
+    };
+
+    logSummary.onclick = toggle;
+    logSummary.onkeydown = (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+    };
+}
+
 export function createLogContainer(logs, sourceCount = 0) {
     const logContainer = document.createElement('div');
-    logContainer.className = 'log-container';
+    logContainer.className = 'log-container message-thoughts-block completed';
     
     const logSummary = document.createElement('div');
     logSummary.className = 'log-summary';
+    logSummary.setAttribute('role', 'button');
+    logSummary.setAttribute('tabindex', '0');
+    logSummary.setAttribute('aria-expanded', 'false');
     
     const statusLeft = document.createElement('div');
     statusLeft.className = 'log-status-left';
@@ -245,19 +296,11 @@ export function createLogContainer(logs, sourceCount = 0) {
     
     if (logs && Array.isArray(logs)) {
         logs.forEach(log => {
-            const entry = document.createElement('div');
-            entry.className = 'log-entry';
-            const span = document.createElement('span');
-            span.textContent = log;
-            entry.appendChild(span);
-            logDetails.appendChild(entry);
+            logDetails.appendChild(createLogEntry(log));
         });
     }
     
-    logSummary.onclick = () => {
-        logDetails.classList.toggle('open');
-        expandIcon.classList.toggle('expanded');
-    };
+    wireLogToggle(logSummary, logDetails, expandIcon);
     
     logContainer.appendChild(logSummary);
     logContainer.appendChild(logDetails);
@@ -267,10 +310,13 @@ export function createLogContainer(logs, sourceCount = 0) {
 
 export function createDynamicLogContainer() {
     const logContainer = document.createElement('div');
-    logContainer.className = 'log-container';
+    logContainer.className = 'log-container message-thoughts-block';
     
     const logSummary = document.createElement('div');
     logSummary.className = 'log-summary';
+    logSummary.setAttribute('role', 'button');
+    logSummary.setAttribute('tabindex', '0');
+    logSummary.setAttribute('aria-expanded', 'true');
     
     const statusLeft = document.createElement('div');
     statusLeft.className = 'log-status-left';
@@ -296,15 +342,12 @@ export function createDynamicLogContainer() {
     const logDetails = document.createElement('div');
     logDetails.className = 'log-details open';
     
-    logSummary.onclick = () => {
-        logDetails.classList.toggle('open');
-        expandIcon.classList.toggle('expanded');
-    };
+    wireLogToggle(logSummary, logDetails, expandIcon);
     
     logContainer.appendChild(logSummary);
     logContainer.appendChild(logDetails);
     
-    return { logContainer, logDetails, spinner, statusText, expandIcon };
+    return { logContainer, logSummary, logDetails, spinner, statusText, expandIcon };
 }
 
 /**

@@ -139,14 +139,26 @@ def test_captcha_interaction_session_is_registered_before_frontend_notification(
     manager_source = (
         PROJECT_ROOT / "backend/app/browser_manager.py"
     ).read_text(encoding="utf-8")
-    captcha_block = manager_source.split("if detected_captcha:", 1)[1].split(
-        "# Wait for results", 1
+    verification_block = manager_source.split(
+        "async def _wait_for_manual_verification", 1
+    )[1].split(
+        "async def _handle_verification_pages", 1
     )[0]
 
-    register_index = captcha_block.index("register_interaction_session(session_id, page, event)")
-    notify_index = captcha_block.index("ACTION_REQUIRED: CAPTCHA_DETECTED")
+    register_index = verification_block.index("register_interaction_session(session_id, page, event)")
+    notify_index = verification_block.index("ACTION_REQUIRED:")
 
     assert register_index < notify_index
+
+
+def test_frontend_opens_browser_modal_for_all_search_verification_actions():
+    chat_source = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+
+    assert "ACTION_REQUIRED: CAPTCHA_DETECTED" in chat_source
+    assert "ACTION_REQUIRED: SEARCH_VERIFICATION_REQUIRED" in chat_source
+    assert "state.openBrowserModal" in chat_source
 
 
 def test_google_engine_uses_official_multicolor_icon():
@@ -551,6 +563,10 @@ def test_validate_api_key_button_shows_loading_state():
     assert "validateBtn.classList.remove('is-validating')" in settings_js
     assert "validateBtn.disabled = true" in settings_js
     assert "validateBtn.disabled = false" in settings_js
+    assert "请先输入 API 密钥" not in settings_js
+    assert "API 连接验证通过" in settings_js
+    assert "Gemini 2.5 系列模型不再支持" in settings_js
+    assert "isUnsupportedGemini25Model" in settings_js
     assert "progress_activity" in settings_js
     assert ".password-toggle-btn.is-validating" in settings_css
     assert ".password-toggle-btn.is-validating span" in settings_css
@@ -606,6 +622,87 @@ def test_provider_cards_show_summary_and_fold_model_list():
     ]
     for token in expected_css_tokens:
         assert token in settings_css
+
+
+def test_api_settings_support_workflow_step_model_selection():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    settings_css = (
+        PROJECT_ROOT / "backend/static/css/sections/input-modal.css"
+    ).read_text(encoding="utf-8")
+    chat_source = (PROJECT_ROOT / "backend/app/routers/chat.py").read_text(
+        encoding="utf-8"
+    )
+    workflow_source = (PROJECT_ROOT / "backend/app/workflow.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="workflow-step-models-container"' in index_source
+    assert "workflow_step_models: collectWorkflowStepModels()" in settings_js
+    assert "renderWorkflowStepModels" in settings_js
+    assert "getConfiguredModelOptions" in settings_js
+    assert ".workflow-step-model-row" in settings_css
+    assert "_resolve_workflow_step_models" in chat_source
+    assert "step_model_configs=workflow_step_models" in chat_source
+    assert "self._llm_for_step(\"analysis\")" in workflow_source
+    assert "self._llm_for_step(\"relevance\")" in workflow_source
+    assert "self._llm_for_step(\"interaction\")" in workflow_source
+    assert "self._llm_for_step(\"answer\")" in workflow_source
+
+
+def test_settings_modal_auto_saves_without_manual_buttons():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    chat_js = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'id="save-settings-btn"' not in index_source
+    assert 'id="cancel-settings-btn"' not in index_source
+    assert "saveSettingsBtn" not in settings_js
+    assert "cancelSettingsBtn" not in settings_js
+    assert "requestSettingsAutoSave" in settings_js
+    assert "flushSettingsAutoSave" in settings_js
+    assert "canAutoSaveSettings" in settings_js
+    assert "rememberCurrentSettingsPayload" in settings_js
+    assert "await API.fetchSettings();" in settings_js
+    assert "const closeSettingsModal = async () => {" in settings_js
+    assert "API.saveSettingsAPI(newSettings)" in settings_js
+    assert "radio.addEventListener('change', () => requestSettingsAutoSave" in settings_js
+    assert "row.querySelector('select').addEventListener('change'" in settings_js
+    assert "设置已保存" not in settings_js
+    assert "'保存设置失败'" not in settings_js
+    assert "自动保存设置失败" in settings_js
+    assert "后保存" not in chat_js
+
+
+def test_api_settings_panel_preserves_provider_state_during_auto_save():
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+
+    assert "function resolveProviderDefaultId" in settings_js
+    assert "getSelectedDefaultProviderId()" in settings_js
+    assert "getProviderCollapseStates" in settings_js
+    assert "preserveCollapsed: true" in settings_js
+    assert "expandedProviderId: newProvider.id" in settings_js
+    assert "createProviderCard(provider, fallbackDefault, index, { collapsed })" in settings_js
+    assert "serialize({ save = true } = {})" in settings_js
+    assert "requestSettingsAutoSave();" in settings_js
+    assert "serialize({ save: false })" in settings_js
+    assert "card.dataset.savedProviderId" in settings_js
+    assert "previous_id: card.dataset.savedProviderId || providerId" in settings_js
+    assert "previous_provider_id: providerCard.dataset.savedProviderId || providerId" in settings_js
+    assert "markSavedProviderIdentities();" in settings_js
+    assert "providerIdMap" in settings_js
 
 
 def test_settings_modal_has_search_engine_availability_check():
@@ -673,6 +770,60 @@ def test_default_max_search_results_is_fifty_across_app():
     assert '"max_results": 50' in settings_example
 
 
+def test_llm_requests_do_not_apply_context_length_limits():
+    llm_source = (PROJECT_ROOT / "backend/app/llm_client.py").read_text(
+        encoding="utf-8"
+    )
+    crawler_source = (PROJECT_ROOT / "backend/app/crawler/content.py").read_text(
+        encoding="utf-8"
+    )
+    chat_source = (PROJECT_ROOT / "backend/app/routers/chat.py").read_text(
+        encoding="utf-8"
+    )
+    settings_source = (PROJECT_ROOT / "backend/app/routers/settings.py").read_text(
+        encoding="utf-8"
+    )
+    workflow_source = (PROJECT_ROOT / "backend/app/workflow.py").read_text(
+        encoding="utf-8"
+    )
+    settings_js = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    settings_example = (PROJECT_ROOT / "backend/settings.json.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert "history[-" not in llm_source
+    assert "_smart_truncate" not in llm_source
+    assert "chars_per_source" not in llm_source
+    assert "内容已截取" not in llm_source
+    assert "答案已截断" not in llm_source
+    assert "elements[:50]" not in llm_source
+    assert "el['text'][:100]" not in llm_source
+    assert "_truncate_for_log(query)" not in llm_source
+    assert "_MAX_CONTENT_LENGTH" not in crawler_source
+    assert "内容过长" not in crawler_source
+    assert "max_context_turns" not in chat_source
+    assert "max_context_turns" not in settings_source
+    assert "max_context_turns" not in workflow_source
+    assert "max-context-turns-input" not in settings_js
+    assert "max-context-turns-input" not in index_source
+    assert "max_context_turns" not in settings_example
+
+
+def test_progress_summary_does_not_show_token_usage():
+    chat_source = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+
+    assert "prompt_tokens" not in chat_source
+    assert "completion_tokens" not in chat_source
+    assert "tokens`" not in chat_source
+
+
 def test_input_area_has_no_character_counter():
     index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
         encoding="utf-8"
@@ -732,8 +883,17 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "export function extractSources" in renderer_source
     assert "export function renderWithCitations" in renderer_source
     assert "function getFaviconUrl" in renderer_source
-    assert "from './source-renderer.js'" in ui_source
-    assert "from './source-renderer.js'" in chat_source
+    assert "from './source-renderer.js?v=2'" in ui_source
+    assert "from './source-renderer.js?v=2'" in chat_source
+    assert "from './ui.js?v=2'" in (
+        PROJECT_ROOT / "backend/static/js/modules/history-view.js"
+    ).read_text(encoding="utf-8")
+    assert "from './ui.js?v=2'" in (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    assert "from './ui.js?v=2'" in (
+        PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
+    ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
     assert "export function renderWithCitations" not in ui_source
     assert "function getFaviconUrl" not in ui_source
@@ -772,11 +932,65 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
         PROJECT_ROOT / "backend/static/js/main.js"
     ).read_text(encoding="utf-8")
 
-    assert 'href="/static/css/style.css?v=12"' in index_source
-    assert 'src="/static/js/main.js?v=12"' in index_source
+    assert 'href="/static/css/style.css?v=15"' in index_source
+    assert 'src="/static/js/main.js?v=24"' in index_source
+    assert "@import url('./sections/base.css?v=3');" in style_source
     assert "@import url('./sections/sidebar.css?v=10');" in style_source
-    assert "@import url('./sections/input-modal.css?v=12');" in style_source
-    assert "from './modules/settings-modal.js?v=12'" in main_source
+    assert "@import url('./sections/chat.css?v=3');" in style_source
+    assert "@import url('./sections/input-modal.css?v=14');" in style_source
+    assert "@import url('./sections/markdown.css?v=3');" in style_source
+    assert "@import url('./sections/responsive.css?v=3');" in style_source
+    assert "@import url('./sections/polish.css?v=3');" in style_source
+    assert "from './modules/chat.js?v=2'" in main_source
+    assert "from './modules/history-view.js?v=11'" in main_source
+    assert "from './modules/settings-modal.js?v=22'" in main_source
+    assert "from './modules/sidebar.js?v=2'" in main_source
+    assert "from './modules/model-selector.js?v=14'" in main_source
+
+
+def test_message_bubbles_follow_amc_visual_pattern():
+    base_css = (
+        PROJECT_ROOT / "backend/static/css/sections/base.css"
+    ).read_text(encoding="utf-8")
+    chat_css = (
+        PROJECT_ROOT / "backend/static/css/sections/chat.css"
+    ).read_text(encoding="utf-8")
+    markdown_css = (
+        PROJECT_ROOT / "backend/static/css/sections/markdown.css"
+    ).read_text(encoding="utf-8")
+    input_modal_css = (
+        PROJECT_ROOT / "backend/static/css/sections/input-modal.css"
+    ).read_text(encoding="utf-8")
+
+    for token in [
+        "--amc-message-user-bg: #f3f4f6;",
+        "--amc-message-user-text: #000000;",
+        "--amc-message-user-bg: #2563eb;",
+        "--amc-message-model-bg: transparent;",
+        "--amc-message-code-bg: #f7f7f8;",
+    ]:
+        assert token in base_css
+
+    for token in [
+        "max-width: 920px;",
+        "padding-inline: 42px;",
+        "background: var(--amc-message-user-bg);",
+        "border-top-right-radius: 2px;",
+        "max-width: 80%;",
+        "background-color: var(--amc-message-model-bg);",
+        ".message.assistant .copy-btn",
+        ".message.user .copy-btn",
+        "opacity: 0;",
+        "pointer-events: none;",
+        ".message:hover .copy-btn",
+    ]:
+        assert token in chat_css
+
+    assert "background: linear-gradient(135deg, var(--primary), var(--primary-hover))" not in chat_css
+    assert "/* --- Regenerate Button --- */" not in input_modal_css
+    assert ".message-content:hover .msg-delete-btn" not in input_modal_css
+    assert "background-color: var(--amc-message-code-bg);" in markdown_css
+    assert "border-left: 3px solid currentColor;" in markdown_css
 
 
 def test_history_rename_updates_cached_history_source():
@@ -827,6 +1041,27 @@ def test_sidebar_history_groups_have_frontend_controls():
     assert "data-group-id" in history_source
     assert ".chat-group-header" in sidebar_css
     assert ".chat-group-drop-target" in sidebar_css
+
+
+def test_new_group_button_uses_amc_folders_icon():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+
+    new_group_markup = index_source.split('id="new-group-btn"', 1)[1].split(
+        "</button>",
+        1,
+    )[0]
+
+    assert 'data-testid="new-group-folder-icon"' in new_group_markup
+    assert 'width="18"' in new_group_markup
+    assert 'height="18"' in new_group_markup
+    assert 'viewBox="0 0 24 24"' in new_group_markup
+    assert 'stroke-width="2"' in new_group_markup
+    assert 'd="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2A2 2 0 0 0 11.93 4H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z"' in new_group_markup
+    assert 'd="M2 8v11a2 2 0 0 0 2 2h14"' in new_group_markup
+    assert 'd="M12 10v6"' not in new_group_markup
+    assert 'd="M9 13h6"' not in new_group_markup
 
 
 def test_sidebar_custom_groups_render_sessions_by_date():
@@ -976,8 +1211,8 @@ def test_sidebar_mini_icons_match_expanded_icon_size_and_direction():
     ].split('    </div>\n\n    <div id="main">', 1)[0]
     assert 'width="20" height="20"' not in collapsed_markup
     assert collapsed_markup.count('width="18" height="18"') >= 5
-    assert 'class="icon-svg sidebar-collapse-icon"' in index_source
-    assert 'class="icon-svg sidebar-expand-icon"' in index_source
+    assert index_source.count('class="icon-svg sidebar-collapse-icon"') >= 3
+    assert 'class="icon-svg sidebar-expand-icon"' not in index_source
     assert ".sidebar-expand-icon" in sidebar_css
     assert "transform: scaleX(-1);" in sidebar_css
 
@@ -1047,6 +1282,39 @@ def test_model_selector_trigger_has_no_provider_icon():
     assert "model-item-icon-svg" in selector_source
 
 
+def test_collapsed_model_selectors_show_model_name_without_provider():
+    main_source = (PROJECT_ROOT / "backend/static/js/main.js").read_text(
+        encoding="utf-8"
+    )
+    selector_source = (
+        PROJECT_ROOT / "backend/static/js/modules/model-selector.js"
+    ).read_text(encoding="utf-8")
+    settings_source = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+
+    assert "option.dataset.modelDisplayName = displayName" in main_source
+    assert "triggerText.textContent = activeOption.dataset.modelDisplayName || activeOption.text" in selector_source
+    assert "if (opt === activeOption)" in selector_source
+    assert "<optgroup" in settings_source
+    assert "modelLabel: displayName" in settings_source
+    assert "label: `${displayName} · ${providerName}`" not in settings_source
+
+
+def test_gemini_25_models_are_filtered_from_frontend_options():
+    main_source = (PROJECT_ROOT / "backend/static/js/main.js").read_text(
+        encoding="utf-8"
+    )
+    settings_source = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+
+    assert "getSupportedModelItems(provider.model_id)" in main_source
+    assert "isUnsupportedGemini25Model" in main_source
+    assert "isUnsupportedGemini25Model" in settings_source
+    assert ".filter(model => model && !isUnsupportedGemini25Model(model))" in settings_source
+
+
 def test_deep_search_toggle_uses_material_symbol_icon():
     index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(encoding="utf-8")
 
@@ -1087,6 +1355,8 @@ def test_openai_clients_use_project_factory_with_user_agent():
 
     assert "JustSearch/" in source
     assert "__version__" in source
+    assert "LOCAL_PROVIDER_API_KEY" in source
+    assert "api_key=api_key or LOCAL_PROVIDER_API_KEY" in source
 
     factory_calls = [
         node

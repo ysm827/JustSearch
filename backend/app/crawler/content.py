@@ -82,7 +82,6 @@ _JS_EXTRACT_CONTENT = """() => {
     return text;
 }"""
 
-_MAX_CONTENT_LENGTH = 200_000
 _BLOCKED_RESOURCE_TYPES = {
     "image",
     "media",
@@ -121,13 +120,6 @@ async def extract_page_content(page: Page, url: str) -> str:
     for attempt in range(3):
         try:
             content = await page.evaluate(_JS_EXTRACT_CONTENT)
-            if content and len(content) > _MAX_CONTENT_LENGTH:
-                logger.warning(
-                    "[Crawler] Content too large (%d chars), truncating: %s",
-                    len(content),
-                    url[:80],
-                )
-                content = content[:_MAX_CONTENT_LENGTH] + "\n\n[... 内容过长，已截取]"
             return content
         except Exception as e:
             if "Execution context was destroyed" in str(e) or "Cannot find context" in str(e):

@@ -221,6 +221,106 @@ def test_search_web_records_verification_page_as_blocked(monkeypatch):
     assert stats["critical_failure_streak"] == 1
 
 
+def test_blocked_search_page_with_session_opens_manual_verification_and_continues(monkeypatch):
+    class FakeMouse:
+        async def move(self, *_args):
+            return None
+
+    class FakePage:
+        mouse = FakeMouse()
+
+        def __init__(self):
+            self.content_calls = 0
+
+        async def goto(self, *_args, **_kwargs):
+            return None
+
+        async def evaluate(self, script, *_args):
+            if "querySelectorAll" not in script:
+                return None
+            return [
+                {
+                    "id": 1,
+                    "title": "CORS (Cross-Origin Resource Sharing) - FastAPI",
+                    "url": "https://fastapi.tiangolo.com/tutorial/cors/",
+                    "snippet": "allow_origins controls allowed origins.",
+                }
+            ]
+
+        async def content(self):
+            self.content_calls += 1
+            if self.content_calls == 1:
+                return "正在验证您不是机器人 在您继续搜索之前进行快速检查。 pow-captcha"
+            return ""
+
+        async def query_selector(self, *_args):
+            return None
+
+        async def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        async def wait_for_selector(self, *_args, **_kwargs):
+            return None
+
+    @asynccontextmanager
+    async def fake_rate_limit(_log_func=None):
+        yield
+
+    async def fake_release_page(_page):
+        return None
+
+    fake_page = FakePage()
+
+    async def fake_get_new_page():
+        return fake_page
+
+    async def fake_resolve(url, log_func=None):
+        return url
+
+    registered_sessions = []
+    removed_sessions = []
+
+    def fake_register(session_id, page, event):
+        registered_sessions.append((session_id, page))
+        asyncio.get_running_loop().call_soon(event.set)
+
+    def fake_remove(session_id):
+        removed_sessions.append(session_id)
+
+    logs = []
+
+    engine_health._results.clear()
+    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
+    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
+    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
+    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
+    monkeypatch.setattr(browser_manager, "register_interaction_session", fake_register)
+    monkeypatch.setattr(browser_manager, "remove_interaction_session", fake_remove)
+
+    manager = BrowserManager(engine="brave", max_results=3)
+
+    async def fake_apply_stealth(_page):
+        return None
+
+    manager.stealth.apply_stealth_async = fake_apply_stealth
+
+    results = asyncio.run(
+        manager.search_web(
+            "FastAPI CORS",
+            allow_fallback=False,
+            session_id="session-1",
+            log_func=logs.append,
+        )
+    )
+
+    assert results[0]["title"] == "CORS (Cross-Origin Resource Sharing) - FastAPI"
+    assert registered_sessions == [("session-1", fake_page)]
+    assert removed_sessions == ["session-1"]
+    assert any("ACTION_REQUIRED: SEARCH_VERIFICATION_REQUIRED" in msg for msg in logs)
+    assert any("收到验证完成信号" in msg for msg in logs)
+
+
 def test_google_captcha_without_session_returns_without_waiting(monkeypatch):
     class FakeMouse:
         async def move(self, *_args):
@@ -635,3 +735,63 @@ def test_workflow_records_low_quality_and_skips_crawl_when_no_results_are_releva
     stats = engine_health.get_stats()["searxng"]
     assert stats["failure_reasons"] == {"low_quality": 1}
     assert stats["healthy"] is True
+
+
+def test_workflow_routes_llm_calls_to_configured_step_clients():
+    calls = []
+
+    class AnalysisLLM:
+        async def analyze_task(self, _query, _history):
+            calls.append("analysis")
+            return {"type": "search", "queries": ["FastAPI middleware"]}
+
+    class AnswerLLM:
+        total_prompt_tokens = 11
+        total_completion_tokens = 7
+
+        async def generate_answer(self, _query, _sources, _history, _stream_callback):
+            calls.append("answer")
+            return {"status": "sufficient", "answer": "done"}
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="fallback-model",
+        search_engine="searxng",
+        max_results=3,
+    )
+    workflow.step_llms["analysis"] = AnalysisLLM()
+    workflow.step_llms["answer"] = AnswerLLM()
+
+    async def fake_handle_search(*_args, **_kwargs):
+        return (
+            [
+                {
+                    "id": 1,
+                    "title": "FastAPI",
+                    "url": "https://example.com/fastapi",
+                    "content": "FastAPI middleware reference.",
+                }
+            ],
+            1,
+            1,
+        )
+
+    workflow._handle_search = fake_handle_search
+    stats = {}
+
+    result = asyncio.run(
+        workflow.run(
+            "FastAPI middleware",
+            lambda _msg: None,
+            None,
+            [],
+            None,
+            lambda data: stats.update(data),
+        )
+    )
+
+    assert "done" in result
+    assert calls == ["analysis", "answer"]
+    assert stats["prompt_tokens"] == 11
+    assert stats["completion_tokens"] == 7

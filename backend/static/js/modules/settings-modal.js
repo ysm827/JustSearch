@@ -1,15 +1,24 @@
 import { authFetch } from './auth.js';
 import { setCurrentSessionId, state } from './state.js';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js';
-import { renderHistory } from './history-view.js';
+import { elements, showConfirm } from './ui.js?v=2';
+import { renderHistory } from './history-view.js?v=11';
 import * as API from './api.js';
+
+const WORKFLOW_STEPS = [
+    { id: 'analysis', label: '问题分析' },
+    { id: 'relevance', label: '相关性评估' },
+    { id: 'interaction', label: '页面交互' },
+    { id: 'answer', label: '最终回答' },
+];
+
+let isApplyingSettingsForm = false;
+let requestSettingsAutoSave = () => {};
+let flushSettingsAutoSave = () => Promise.resolve(false);
 
 export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSettingsSaved }) {
     const settingsBtn = document.getElementById('settings-btn');
     const closeBtn = elements.settingsModal.querySelector('.close-btn');
-    const cancelSettingsBtn = document.getElementById('cancel-settings-btn');
-    const saveSettingsBtn = document.getElementById('save-settings-btn');
     const resetSettingsBtn = document.getElementById('reset-settings-btn');
     const clearHistoryBtn = document.getElementById('clear-history-btn');
     const clearCacheBtn = document.getElementById('clear-cache-btn');
@@ -57,7 +66,8 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         switchTab(lastTab);
         elements.settingsModal.classList.add('active');
         await updateVersionDisplay();
-        await populateSettingsForm();
+        await API.fetchSettings();
+        await populateSettingsForm(rememberCurrentSettingsPayload);
     };
 
     settingsBtn.addEventListener('click', openSettings);
@@ -67,47 +77,32 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         miniSettingsBtn.addEventListener('click', openSettings);
     }
 
-    closeBtn.addEventListener('click', () => {
-        elements.settingsModal.classList.remove('active');
-    });
-
-    if (cancelSettingsBtn) {
-        cancelSettingsBtn.addEventListener('click', () => {
+    const closeSettingsModal = async () => {
+        try {
+            await flushSettingsAutoSave();
+        } finally {
             elements.settingsModal.classList.remove('active');
-        });
-    }
+        }
+    };
+
+    closeBtn.addEventListener('click', closeSettingsModal);
 
     window.addEventListener('click', (event) => {
         if (event.target === elements.settingsModal) {
-            elements.settingsModal.classList.remove('active');
+            closeSettingsModal();
         }
     });
-
-    if (saveSettingsBtn) {
-        saveSettingsBtn.addEventListener('click', async () => {
-            const newSettings = collectSettingsForm();
-            if (await API.saveSettingsAPI(newSettings)) {
-                updateModelSelector(state.settings);
-                if (typeof onSettingsSaved === 'function') {
-                    onSettingsSaved();
-                }
-                elements.settingsModal.classList.remove('active');
-                showToast('设置已保存', 'success');
-            } else {
-                showToast('保存设置失败', 'error');
-            }
-        });
-    }
 
     resetSettingsBtn.addEventListener('click', async () => {
         if (!(await showConfirm('您确定要恢复默认设置吗？', '恢复默认设置'))) return;
         const defaults = await API.restoreDefaultSettingsAPI();
         if (defaults) {
             fillSettingsForm(defaults);
-            if (typeof onSettingsSaved === 'function') {
-                onSettingsSaved();
+            if (await flushSettingsAutoSave()) {
+                showToast('已恢复默认设置', 'success');
+            } else {
+                showToast('恢复默认设置失败', 'error');
             }
-            showToast('已恢复默认设置', 'success');
         } else {
             showToast('加载默认设置失败', 'error');
         }
@@ -168,22 +163,70 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
     setupEngineCheckControls();
     initProviderListUI();
 
-    // Auto-save logic
     let saveTimeout = null;
-    function triggerAutoSave() {
-        if (saveTimeout) clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(async () => {
-            const newSettings = collectSettingsForm();
+    let saveInFlight = false;
+    let saveAgain = false;
+    let lastSavedPayload = '';
+
+    function rememberCurrentSettingsPayload() {
+        const currentSettings = collectSettingsForm();
+        lastSavedPayload = canAutoSaveSettings(currentSettings)
+            ? JSON.stringify(currentSettings)
+            : '';
+    }
+
+    async function persistSettings() {
+        if (isApplyingSettingsForm) return false;
+        if (saveInFlight) {
+            saveAgain = true;
+            return false;
+        }
+
+        const newSettings = collectSettingsForm();
+        if (!canAutoSaveSettings(newSettings)) {
+            return false;
+        }
+
+        const payload = JSON.stringify(newSettings);
+        if (payload === lastSavedPayload) {
+            return true;
+        }
+
+        saveInFlight = true;
+        try {
             if (await API.saveSettingsAPI(newSettings)) {
+                markSavedProviderIdentities();
+                lastSavedPayload = JSON.stringify(collectSettingsForm());
                 updateModelSelector(state.settings);
                 if (typeof onSettingsSaved === 'function') {
                     onSettingsSaved();
                 }
-            } else {
-                showToast('保存设置失败', 'error');
+                return true;
             }
-        }, 500);
+            showToast('自动保存设置失败', 'error');
+            return false;
+        } finally {
+            saveInFlight = false;
+            if (saveAgain) {
+                saveAgain = false;
+                requestSettingsAutoSave();
+            }
+        }
     }
+
+    requestSettingsAutoSave = ({ immediate = false } = {}) => {
+        if (isApplyingSettingsForm) return;
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(persistSettings, immediate ? 0 : 700);
+    };
+
+    flushSettingsAutoSave = async () => {
+        if (saveTimeout) {
+            clearTimeout(saveTimeout);
+            saveTimeout = null;
+        }
+        return persistSettings();
+    };
 
     const autoSaveInputs = [
         'theme-select',
@@ -191,15 +234,14 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         'max-results-input',
         'max-iterations-input',
         'interactive-search-input',
-        'max-concurrent-pages-input',
-        'max-context-turns-input'
+        'max-concurrent-pages-input'
     ];
 
     autoSaveInputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             const eventType = (el.tagName === 'SELECT' || el.type === 'checkbox') ? 'change' : 'input';
-            el.addEventListener(eventType, triggerAutoSave);
+            el.addEventListener(eventType, () => requestSettingsAutoSave());
         }
     });
 }
@@ -274,8 +316,11 @@ function formatVersionText(version) {
         : `v${rawVersion}`;
 }
 
-async function populateSettingsForm() {
+async function populateSettingsForm(onFilled) {
     fillSettingsForm(state.settings);
+    if (typeof onFilled === 'function') {
+        onFilled();
+    }
 
     const starsCountElement = document.getElementById('github-stars-count');
     const aboutStarsCountElement = document.getElementById('about-stars-count');
@@ -293,14 +338,23 @@ async function populateSettingsForm() {
 }
 
 function fillSettingsForm(settings) {
-    document.getElementById('theme-select').value = settings.theme || 'light';
-    document.getElementById('engine-select').value = settings.search_engine || 'duckduckgo';
-    document.getElementById('max-results-input').value = settings.max_results || 50;
-    document.getElementById('max-iterations-input').value = settings.max_iterations || 5;
-    renderProviderList(settings.providers || [], settings.default_provider_id || '');
-    document.getElementById('interactive-search-input').checked = settings.interactive_search !== undefined ? settings.interactive_search : true;
-    document.getElementById('max-concurrent-pages-input').value = settings.max_concurrent_pages || 10;
-    document.getElementById('max-context-turns-input').value = settings.max_context_turns || 6;
+    isApplyingSettingsForm = true;
+    try {
+        document.getElementById('theme-select').value = settings.theme || 'light';
+        document.getElementById('engine-select').value = settings.search_engine || 'duckduckgo';
+        document.getElementById('max-results-input').value = settings.max_results || 50;
+        document.getElementById('max-iterations-input').value = settings.max_iterations || 5;
+        renderProviderList(settings.providers || [], settings.default_provider_id || '');
+        renderWorkflowStepModels(
+            settings.workflow_step_models || {},
+            settings.providers || [],
+            settings.default_provider_id || '',
+        );
+        document.getElementById('interactive-search-input').checked = settings.interactive_search !== undefined ? settings.interactive_search : true;
+        document.getElementById('max-concurrent-pages-input').value = settings.max_concurrent_pages || 10;
+    } finally {
+        isApplyingSettingsForm = false;
+    }
 }
 
 function collectSettingsForm() {
@@ -313,10 +367,30 @@ function collectSettingsForm() {
         max_iterations: parseInt(document.getElementById('max-iterations-input').value) || 5,
         default_provider_id: defaultProvider?.value || providers[0]?.id || '',
         providers,
+        workflow_step_models: collectWorkflowStepModels(),
         interactive_search: document.getElementById('interactive-search-input').checked,
         max_concurrent_pages: parseInt(document.getElementById('max-concurrent-pages-input').value) || 10,
-        max_context_turns: parseInt(document.getElementById('max-context-turns-input').value) || 6,
     };
+}
+
+function canAutoSaveSettings(settings) {
+    const providers = Array.isArray(settings?.providers) ? settings.providers : [];
+    if (providers.length === 0) return false;
+
+    const providerIds = new Set();
+    const providerIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+    for (const provider of providers) {
+        const id = String(provider.id || '').trim();
+        const baseUrl = String(provider.base_url || '').trim();
+        const modelId = String(provider.model_id || '').trim();
+        if (!id || !baseUrl || !modelId || !providerIdPattern.test(id) || providerIds.has(id)) {
+            return false;
+        }
+        providerIds.add(id);
+    }
+
+    const defaultProviderId = String(settings.default_provider_id || '').trim();
+    return !defaultProviderId || providerIds.has(defaultProviderId);
 }
 
 function setupEngineCheckControls() {
@@ -433,8 +507,8 @@ async function validateApiKey(e) {
     const baseUrl = providerCard.querySelector('.provider-base-url-input').value.trim();
     const modelId = providerCard.querySelector('.provider-model-input').value.trim();
     const providerId = providerCard.querySelector('.provider-id-input').value.trim();
-    if (!apiKey) {
-        showToast('请先输入 API 密钥', 'warning');
+    if (isUnsupportedGemini25Model(modelId)) {
+        showToast('Gemini 2.5 系列模型不再支持', 'warning');
         return;
     }
 
@@ -450,6 +524,7 @@ async function validateApiKey(e) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 provider_id: providerId,
+                previous_provider_id: providerCard.dataset.savedProviderId || providerId,
                 api_key: apiKey,
                 base_url: baseUrl,
                 model_id: (() => {
@@ -460,7 +535,7 @@ async function validateApiKey(e) {
         });
         const data = await res.json();
         if (data.valid) {
-            showToast('API 密钥验证通过', 'success');
+            showToast('API 连接验证通过', 'success');
         } else {
             showToast(data.error || '验证失败', 'error');
         }
@@ -492,15 +567,24 @@ function initProviderListUI() {
 
     addButton.addEventListener('click', () => {
         const providers = collectProvidersForm();
-        providers.push(createEmptyProvider(providers.length + 1));
-        renderProviderList(providers, providers[0]?.id || '');
+        const currentDefaultProviderId = getSelectedDefaultProviderId();
+        const newProvider = createEmptyProvider(providers.length + 1);
+        providers.push(newProvider);
+        renderProviderList(
+            providers,
+            resolveProviderDefaultId(providers, currentDefaultProviderId),
+            { preserveCollapsed: true, expandedProviderId: newProvider.id },
+        );
+        requestSettingsAutoSave({ immediate: true });
     });
 }
 
-function renderProviderList(providers, defaultProviderId) {
+function renderProviderList(providers, defaultProviderId, options = {}) {
     const container = document.getElementById('provider-list-container');
     if (!container) return;
 
+    const collapseStates = options.preserveCollapsed ? getProviderCollapseStates() : new Map();
+    const expandedProviderId = String(options.expandedProviderId || '').trim();
     const items = Array.isArray(providers) && providers.length > 0
         ? providers
         : [createEmptyProvider(1)];
@@ -508,14 +592,180 @@ function renderProviderList(providers, defaultProviderId) {
 
     container.innerHTML = '';
     items.forEach((provider, index) => {
-        container.appendChild(createProviderCard(provider, fallbackDefault, index));
+        const providerId = String(provider.id || `provider-${index + 1}`).trim();
+        const collapsed = expandedProviderId && providerId === expandedProviderId
+            ? false
+            : collapseStates.has(providerId)
+                ? collapseStates.get(providerId)
+                : null;
+        container.appendChild(createProviderCard(provider, fallbackDefault, index, { collapsed }));
+    });
+    refreshWorkflowStepModelOptions();
+}
+
+function getProviderCollapseStates() {
+    const states = new Map();
+    document.querySelectorAll('.provider-card').forEach((card) => {
+        const providerId = card.querySelector('.provider-id-input')?.value.trim() || '';
+        if (providerId) {
+            states.set(providerId, card.classList.contains('collapsed'));
+        }
+    });
+    return states;
+}
+
+function renderWorkflowStepModels(stepModels, providers, defaultProviderId) {
+    const container = document.getElementById('workflow-step-models-container');
+    if (!container) return;
+
+    const options = getConfiguredModelOptions(providers);
+    container.innerHTML = '';
+
+    WORKFLOW_STEPS.forEach((step) => {
+        const row = document.createElement('div');
+        row.className = 'workflow-step-model-row';
+        const selectId = `workflow-step-model-${step.id}`;
+        const selected = stepModels?.[step.id] || {};
+        const selectedValue = selected.provider_id && selected.model_id
+            ? encodeStepModelValue(selected.provider_id, selected.model_id)
+            : '';
+
+        const optionHtml = [
+            `<option value="">跟随聊天栏默认模型</option>`,
+            ...getGroupedWorkflowModelOptions(options, selectedValue),
+        ].join('');
+
+        row.innerHTML = `
+            <label for="${selectId}">${escapeHtml(step.label)}</label>
+            <select id="${selectId}" class="workflow-step-model-select" data-step-id="${escapeHtml(step.id)}">
+                ${optionHtml}
+            </select>
+        `;
+
+        container.appendChild(row);
+        row.querySelector('select').addEventListener('change', () => {
+            requestSettingsAutoSave({ immediate: true });
+        });
+    });
+
+    container.classList.toggle('is-empty', options.length === 0);
+}
+
+function refreshWorkflowStepModelOptions({ providerIdMap = null } = {}) {
+    const container = document.getElementById('workflow-step-models-container');
+    if (!container) return;
+    const current = collectWorkflowStepModels();
+    if (providerIdMap) {
+        Object.values(current).forEach((stepModel) => {
+            if (providerIdMap.has(stepModel.provider_id)) {
+                stepModel.provider_id = providerIdMap.get(stepModel.provider_id);
+            }
+        });
+    }
+    const providers = collectProvidersForm();
+    renderWorkflowStepModels(current, providers, getSelectedDefaultProviderId() || providers[0]?.id || '');
+}
+
+function getSelectedDefaultProviderId() {
+    return document.querySelector('input[name="default-provider-radio"]:checked')?.value || '';
+}
+
+function resolveProviderDefaultId(providers, preferredProviderId = '') {
+    const providerIds = (Array.isArray(providers) ? providers : [])
+        .map(provider => String(provider.id || '').trim())
+        .filter(Boolean);
+    const preferred = String(preferredProviderId || '').trim();
+    return providerIds.includes(preferred) ? preferred : (providerIds[0] || '');
+}
+
+function collectWorkflowStepModels() {
+    const result = {};
+    WORKFLOW_STEPS.forEach((step) => {
+        result[step.id] = { provider_id: '', model_id: '' };
+    });
+
+    document.querySelectorAll('.workflow-step-model-select').forEach((select) => {
+        const stepId = select.dataset.stepId;
+        if (!stepId || !result[stepId]) return;
+        const parsed = decodeStepModelValue(select.value);
+        result[stepId] = parsed || { provider_id: '', model_id: '' };
+    });
+
+    return result;
+}
+
+function getConfiguredModelOptions(providers) {
+    const options = [];
+    (Array.isArray(providers) ? providers : []).forEach((provider) => {
+        const providerId = String(provider.id || '').trim();
+        if (!providerId) return;
+
+        getModelItems(provider.model_id).forEach((modelValue) => {
+            const colonIdx = modelValue.indexOf(':');
+            const modelId = colonIdx === -1 ? modelValue.trim() : modelValue.substring(0, colonIdx).trim();
+            if (!modelId) return;
+            const displayName = getModelDisplayName(modelValue);
+            const providerName = String(provider.name || providerId).trim() || providerId;
+            options.push({
+                value: encodeStepModelValue(providerId, modelId),
+                providerId,
+                modelId,
+                modelLabel: displayName,
+                providerLabel: providerName,
+                label: displayName,
+                title: `${providerId} / ${modelId}`,
+            });
+        });
+    });
+    return options;
+}
+
+function getGroupedWorkflowModelOptions(options, selectedValue) {
+    const groups = new Map();
+    options.forEach((option) => {
+        const key = option.providerId || '';
+        if (!groups.has(key)) {
+            groups.set(key, {
+                label: option.providerLabel || option.providerId || 'Provider',
+                options: [],
+            });
+        }
+        groups.get(key).options.push(option);
+    });
+
+    return Array.from(groups.values()).map((group) => {
+        const items = group.options.map((option) => {
+            const isSelected = option.value === selectedValue ? 'selected' : '';
+            return `<option value="${escapeHtml(option.value)}" title="${escapeHtml(option.title)}" ${isSelected}>${escapeHtml(option.modelLabel || option.label)}</option>`;
+        }).join('');
+        return `<optgroup label="${escapeHtml(group.label)}">${items}</optgroup>`;
     });
 }
 
-function createProviderCard(provider, defaultProviderId, index) {
+function encodeStepModelValue(providerId, modelId) {
+    return `${encodeURIComponent(providerId)}|||${encodeURIComponent(modelId)}`;
+}
+
+function decodeStepModelValue(value) {
+    if (!value) return null;
+    const parts = String(value).split('|||');
+    if (parts.length !== 2) return null;
+    try {
+        return {
+            provider_id: decodeURIComponent(parts[0]),
+            model_id: decodeURIComponent(parts[1]),
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+function createProviderCard(provider, defaultProviderId, index, options = {}) {
     const card = document.createElement('div');
     card.className = 'provider-card collapsed';
     const providerId = provider.id || `provider-${index + 1}`;
+    card.dataset.savedProviderId = provider.previous_id || providerId;
+    card.dataset.liveProviderId = providerId;
     const radioId = `default-provider-${index}`;
     const providerSummary = formatProviderSummary(provider);
     card.innerHTML = `
@@ -592,16 +842,26 @@ function createProviderCard(provider, defaultProviderId, index) {
     const idInput = card.querySelector('.provider-id-input');
     const radio = card.querySelector('input[name="default-provider-radio"]');
     idInput.addEventListener('input', () => {
-        radio.value = idInput.value.trim();
-        const displayName = card.querySelector('.provider-name-input').value.trim() || idInput.value.trim();
+        const previousProviderId = card.dataset.liveProviderId || card.dataset.savedProviderId || providerId;
+        const nextProviderId = idInput.value.trim();
+        card.dataset.liveProviderId = nextProviderId;
+        radio.value = nextProviderId;
+        const displayName = card.querySelector('.provider-name-input').value.trim() || nextProviderId;
         card.querySelector('.provider-card-name').textContent = displayName;
-        card.querySelector('.provider-card-subtitle').textContent = idInput.value.trim();
+        card.querySelector('.provider-card-subtitle').textContent = nextProviderId;
         updateProviderSummary(card);
+        const providerIdMap = previousProviderId && nextProviderId
+            ? new Map([[previousProviderId, nextProviderId]])
+            : null;
+        refreshWorkflowStepModelOptions({ providerIdMap });
+        requestSettingsAutoSave();
     });
     card.querySelector('.provider-name-input').addEventListener('input', () => {
         const displayName = card.querySelector('.provider-name-input').value.trim() || idInput.value.trim();
         card.querySelector('.provider-card-name').textContent = displayName;
         updateProviderSummary(card);
+        refreshWorkflowStepModelOptions();
+        requestSettingsAutoSave();
     });
 
     const collapseBtn = card.querySelector('.provider-collapse-btn');
@@ -616,7 +876,9 @@ function createProviderCard(provider, defaultProviderId, index) {
     collapseBtn.addEventListener('click', (event) => {
         setCollapsed(!card.classList.contains('collapsed'));
     });
-    if (providerId === defaultProviderId) {
+    if (typeof options.collapsed === 'boolean') {
+        setCollapsed(options.collapsed);
+    } else if (providerId === defaultProviderId) {
         setCollapsed(false);
     }
 
@@ -632,11 +894,29 @@ function createProviderCard(provider, defaultProviderId, index) {
     });
 
     card.querySelector('.provider-validate-key-btn').addEventListener('click', validateApiKey);
-    card.querySelector('.provider-api-key-input').addEventListener('input', () => updateProviderSummary(card));
-    card.querySelector('.provider-base-url-input').addEventListener('input', () => updateProviderSummary(card));
+    radio.addEventListener('change', () => requestSettingsAutoSave({ immediate: true }));
+    card.querySelector('.provider-api-key-input').addEventListener('input', () => {
+        updateProviderSummary(card);
+        requestSettingsAutoSave();
+    });
+    card.querySelector('.provider-base-url-input').addEventListener('input', () => {
+        updateProviderSummary(card);
+        requestSettingsAutoSave();
+    });
     card.querySelector('.remove-provider-btn').addEventListener('click', () => {
-        const providers = collectProvidersForm().filter(item => item.id !== idInput.value.trim());
-        renderProviderList(providers.length > 0 ? providers : [createEmptyProvider(1)], providers[0]?.id || '');
+        const currentDefaultProviderId = getSelectedDefaultProviderId();
+        const providers = Array.from(document.querySelectorAll('.provider-card'))
+            .filter(providerCard => providerCard !== card)
+            .map(collectProviderCardForm)
+            .filter(provider => provider.id || provider.base_url || provider.model_id || provider.api_key);
+        const nextProviders = providers.length > 0 ? providers : [createEmptyProvider(1)];
+        const preferredDefaultId = radio.checked ? '' : currentDefaultProviderId;
+        renderProviderList(
+            nextProviders,
+            resolveProviderDefaultId(nextProviders, preferredDefaultId),
+            { preserveCollapsed: true },
+        );
+        requestSettingsAutoSave({ immediate: true });
     });
     setupProviderModelList(card);
     return card;
@@ -651,7 +931,8 @@ function setupProviderModelList(providerCard) {
 
     function render() {
         container.innerHTML = '';
-        const items = (hiddenInput.value || '').split(',').map(s => s.trim()).filter(Boolean);
+        const items = getModelItems(hiddenInput.value);
+        hiddenInput.value = items.join(', ');
         if (items.length === 0) {
             addModelRow('', '');
         } else {
@@ -667,7 +948,7 @@ function setupProviderModelList(providerCard) {
         updateProviderSummary(providerCard);
     }
 
-    function serialize() {
+    function serialize({ save = true } = {}) {
         hiddenInput.value = Array.from(container.querySelectorAll('.model-row'))
             .map(row => {
                 const id = row.querySelector('.model-id-input').value.trim();
@@ -675,10 +956,14 @@ function setupProviderModelList(providerCard) {
                 if (!id) return '';
                 return name ? `${id}:${name}` : id;
             })
-            .filter(Boolean)
+            .filter(model => model && !isUnsupportedGemini25Model(model))
             .join(', ');
         updateModelPanelSummary(providerCard);
         updateProviderSummary(providerCard);
+        refreshWorkflowStepModelOptions();
+        if (save) {
+            requestSettingsAutoSave();
+        }
     }
 
     function addModelRow(id = '', name = '') {
@@ -719,7 +1004,7 @@ function setupProviderModelList(providerCard) {
     addButton.addEventListener('click', () => {
         setModelPanelCollapsed(false);
         addModelRow('', '');
-        serialize();
+        serialize({ save: false });
     });
     render();
     setModelPanelCollapsed(true);
@@ -767,7 +1052,14 @@ function updateModelPanelSummary(providerCard) {
 }
 
 function getModelItems(modelId) {
-    return String(modelId || '').split(',').map(s => s.trim()).filter(Boolean);
+    return String(modelId || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(model => model && !isUnsupportedGemini25Model(model));
+}
+
+function isUnsupportedGemini25Model(model) {
+    return /(^|[^a-z0-9])gemini[\s._-]*2[\s._-]*5($|[^a-z0-9])/i.test(String(model || ''));
 }
 
 function getModelDisplayName(modelValue) {
@@ -781,18 +1073,30 @@ function getModelDisplayName(modelValue) {
 
 function collectProvidersForm() {
     return Array.from(document.querySelectorAll('.provider-card'))
-        .map((card) => {
-            const apiKeyInput = card.querySelector('.provider-api-key-input');
-            let apiKey = apiKeyInput.value.trim();
-            return {
-                id: card.querySelector('.provider-id-input').value.trim(),
-                name: card.querySelector('.provider-name-input').value.trim(),
-                api_key: apiKey,
-                base_url: card.querySelector('.provider-base-url-input').value.trim(),
-                model_id: card.querySelector('.provider-model-input').value.trim(),
-            };
-        })
+        .map(collectProviderCardForm)
         .filter(provider => provider.id || provider.base_url || provider.model_id || provider.api_key);
+}
+
+function collectProviderCardForm(card) {
+    const providerId = card.querySelector('.provider-id-input').value.trim();
+    return {
+        id: providerId,
+        previous_id: card.dataset.savedProviderId || providerId,
+        name: card.querySelector('.provider-name-input').value.trim(),
+        api_key: card.querySelector('.provider-api-key-input').value.trim(),
+        base_url: card.querySelector('.provider-base-url-input').value.trim(),
+        model_id: card.querySelector('.provider-model-input').value.trim(),
+    };
+}
+
+function markSavedProviderIdentities() {
+    document.querySelectorAll('.provider-card').forEach((card) => {
+        const providerId = card.querySelector('.provider-id-input')?.value.trim() || '';
+        if (providerId) {
+            card.dataset.savedProviderId = providerId;
+            card.dataset.liveProviderId = providerId;
+        }
+    });
 }
 
 function createEmptyProvider(index) {

@@ -31,6 +31,8 @@ from .search_result_cleanup import (
 _search_cache: dict = {}
 _SEARCH_CACHE_TTL = 300  # 5 minutes
 _RESULTS_WAIT_TIMEOUT_MS = 15000
+_MANUAL_VERIFICATION_TIMEOUT_SECONDS = 600.0
+_MAX_MANUAL_VERIFICATION_STEPS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -161,67 +163,20 @@ class BrowserManager:
                     return []
 
             # Check for CAPTCHA
-            try:
-                content = await page.content()
-            except Exception:
-                content = ""
-            current_url = getattr(page, "url", "")
+            content, current_url = await self._read_page_state(page)
 
-            detected_captcha = False
-            for check in config["captcha_check"]:
-                if check.startswith("#"):
-                    try:
-                        if await page.query_selector(check):
-                            detected_captcha = True
-                            break
-                    except Exception:
-                        pass
-                elif check in content:
-                    detected_captcha = True
-                    break
-
-            if detected_captcha:
-                logger.warning("CAPTCHA detected on %s!", engine_name)
-                engine_health.record(
-                    actual_engine,
-                    success=False,
-                    reason="captcha",
-                    batch_id=health_batch_id,
-                )
-                if log_func:
-                    log_func("浏览器: 检测到验证码！等待手动解决...")
-
-                if session_id:
-                    event = asyncio.Event()
-                    register_interaction_session(session_id, page, event)
-
-                    if log_func:
-                        log_func("ACTION_REQUIRED: CAPTCHA_DETECTED")
-                        log_func(f"浏览器: 请点击界面上的'手动验证'按钮来解决验证码")
-
-                    try:
-                        await asyncio.wait_for(event.wait(), timeout=600.0)
-                        if log_func:
-                            log_func("浏览器: 收到验证完成信号，继续执行...")
-                    except asyncio.TimeoutError:
-                        if log_func:
-                            log_func("浏览器: 等待手动验证超时 (10分钟)。")
-                    finally:
-                        remove_interaction_session(session_id)
-                else:
-                    return []
-
-            blocked_reason = _blocked_search_reason(content, current_url)
-            if blocked_reason:
-                logger.warning("Search blocked on %s: %s", engine_name, blocked_reason)
-                engine_health.record(
-                    actual_engine,
-                    success=False,
-                    reason=blocked_reason,
-                    batch_id=health_batch_id,
-                )
-                if log_func:
-                    log_func(f"浏览器: {engine_name} 返回验证/错误页面，跳过该引擎。")
+            verification_ok = await self._handle_verification_pages(
+                page=page,
+                content=content,
+                current_url=current_url,
+                config=config,
+                engine_name=engine_name,
+                actual_engine=actual_engine,
+                session_id=session_id,
+                log_func=log_func,
+                health_batch_id=health_batch_id,
+            )
+            if not verification_ok:
                 return []
 
             # Wait for results
@@ -374,6 +329,130 @@ class BrowserManager:
             return []
         finally:
             await release_page(page)
+
+    async def _read_page_state(self, page: Page) -> tuple[str, str]:
+        try:
+            content = await page.content()
+        except Exception:
+            content = ""
+        return content, getattr(page, "url", "")
+
+    async def _detect_captcha(self, page: Page, content: str, config: Dict) -> bool:
+        for check in config["captcha_check"]:
+            if check.startswith("#"):
+                try:
+                    if await page.query_selector(check):
+                        return True
+                except Exception:
+                    pass
+            elif check in content:
+                return True
+        return False
+
+    async def _wait_for_manual_verification(
+        self,
+        page: Page,
+        session_id: str | None,
+        log_func,
+        action: str,
+        message: str,
+    ) -> bool:
+        if not session_id:
+            return False
+
+        event = asyncio.Event()
+        register_interaction_session(session_id, page, event)
+
+        if log_func:
+            log_func(f"ACTION_REQUIRED: {action}")
+            log_func(message)
+
+        try:
+            await asyncio.wait_for(
+                event.wait(),
+                timeout=_MANUAL_VERIFICATION_TIMEOUT_SECONDS,
+            )
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=5000)
+            except Exception:
+                pass
+            if log_func:
+                log_func("浏览器: 收到验证完成信号，继续执行...")
+            return True
+        except asyncio.TimeoutError:
+            if log_func:
+                log_func("浏览器: 等待手动验证超时 (10分钟)。")
+            return False
+        finally:
+            remove_interaction_session(session_id)
+
+    async def _handle_verification_pages(
+        self,
+        page: Page,
+        content: str,
+        current_url: str,
+        config: Dict,
+        engine_name: str,
+        actual_engine: str,
+        session_id: str | None,
+        log_func,
+        health_batch_id: str | None,
+    ) -> bool:
+        for _ in range(_MAX_MANUAL_VERIFICATION_STEPS):
+            if await self._detect_captcha(page, content, config):
+                logger.warning("CAPTCHA detected on %s!", engine_name)
+                engine_health.record(
+                    actual_engine,
+                    success=False,
+                    reason="captcha",
+                    batch_id=health_batch_id,
+                )
+                if log_func:
+                    log_func("浏览器: 检测到验证码！等待手动解决...")
+
+                verified = await self._wait_for_manual_verification(
+                    page,
+                    session_id,
+                    log_func,
+                    "CAPTCHA_DETECTED",
+                    "浏览器: 请在弹出的手动验证窗口中解决验证码。",
+                )
+                if not verified:
+                    return False
+                content, current_url = await self._read_page_state(page)
+                continue
+
+            blocked_reason = _blocked_search_reason(content, current_url)
+            if blocked_reason:
+                logger.warning("Search blocked on %s: %s", engine_name, blocked_reason)
+                engine_health.record(
+                    actual_engine,
+                    success=False,
+                    reason=blocked_reason,
+                    batch_id=health_batch_id,
+                )
+                if log_func:
+                    log_func(f"浏览器: {engine_name} 返回验证/反爬页面，等待手动通过...")
+
+                verified = await self._wait_for_manual_verification(
+                    page,
+                    session_id,
+                    log_func,
+                    "SEARCH_VERIFICATION_REQUIRED",
+                    "浏览器: 请在弹出的手动验证窗口中通过搜索引擎验证。",
+                )
+                if not verified:
+                    if log_func:
+                        log_func(f"浏览器: {engine_name} 返回验证/错误页面，跳过该引擎。")
+                    return False
+                content, current_url = await self._read_page_state(page)
+                continue
+
+            return True
+
+        if log_func:
+            log_func(f"浏览器: {engine_name} 验证后仍未进入结果页，跳过该引擎。")
+        return False
 
     async def _fallback_text_extract(self, page: Page, query: str, log_func=None) -> List[Dict]:
         """

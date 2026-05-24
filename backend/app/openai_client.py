@@ -6,6 +6,7 @@ from .version import __version__
 
 
 OPENAI_USER_AGENT = f"JustSearch/{__version__}"
+LOCAL_PROVIDER_API_KEY = "justsearch-local-provider"
 
 
 def create_openai_client(
@@ -17,7 +18,7 @@ def create_openai_client(
 ) -> AsyncOpenAI:
     """Create an AsyncOpenAI client with project-level defaults."""
     return AsyncOpenAI(
-        api_key=api_key,
+        api_key=api_key or LOCAL_PROVIDER_API_KEY,
         base_url=base_url,
         timeout=timeout,
         max_retries=max_retries,

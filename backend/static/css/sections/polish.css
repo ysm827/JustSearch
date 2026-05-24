@@ -18,15 +18,15 @@
    UI Polishing overrides
    ======================================== */
 .message-content {
-    line-height: 1.75;
-    font-size: 15.5px;
-    letter-spacing: 0.2px;
+    line-height: 1.8;
+    font-size: 15px;
+    letter-spacing: 0;
     word-break: break-word;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
 }
 
 .message.user .message-content {
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+    box-shadow: var(--shadow-sm);
 }
 
 /* Message timestamps — show on hover */
@@ -34,26 +34,37 @@
     font-size: 11px;
     color: var(--text-muted);
     margin-top: 4px;
-    text-align: right;
+    line-height: 1;
     opacity: 0;
     transition: opacity 0.2s;
+    user-select: none;
+}
+
+.message.user .message-time {
+    align-self: flex-end;
+    padding-right: 4px;
+}
+
+.message.assistant .message-time {
+    align-self: flex-start;
+    padding-left: 0;
 }
 
 .message:hover .message-time {
-    opacity: 1;
+    opacity: 0.72;
 }
 
 [data-theme="dark"] .message.user .message-content {
-    box-shadow: 0 4px 12px rgba(96, 165, 250, 0.15);
+    box-shadow: none;
 }
 
 .code-block-header {
-    background-color: var(--bg);
+    background-color: color-mix(in srgb, var(--bg) 72%, var(--bg-secondary));
 }
 
 [data-theme="dark"] .code-block-header {
-    background-color: #0d0d15;
-    border-bottom-color: rgba(255, 255, 255, 0.06);
+    background-color: color-mix(in srgb, var(--bg) 72%, var(--bg-secondary));
+    border-bottom-color: var(--border);
 }
 
 [data-theme="dark"] .code-block-wrapper {
@@ -105,15 +116,15 @@
 
 
 .markdown-body th {
-    background-color: var(--bg-elevated);
+    background-color: transparent;
 }
 
 .markdown-body tr:nth-child(even) td {
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: transparent;
 }
 
 [data-theme="dark"] .markdown-body tr:nth-child(even) td {
-    background-color: rgba(255, 255, 255, 0.02);
+    background-color: transparent;
 }
 
 /* Update copy code button styles */
@@ -154,6 +165,7 @@
 
 .log-summary::after {
     content: '';
+    display: none;
     position: absolute;
     bottom: 0;
     left: 0;
@@ -164,9 +176,7 @@
 }
 
 .log-container:not(.completed) .log-summary::after {
-    width: 100%;
-    animation: loadingBar 2s ease infinite;
-    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+    display: none;
 }
 
 @keyframes loadingBar {
@@ -184,14 +194,8 @@
     object-fit: contain;
 }
 
-/* Assistant Message padding fix for Markdown */
-.message.assistant .message-content {
-    padding-left: 8px;
-    padding-right: 8px;
-}
-
 .message.assistant .message-content p {
-    margin-bottom: 14px;
+    margin-bottom: 1em;
 }
 
 /* Source references block at the bottom */
@@ -316,19 +320,6 @@
 }
 
 
-/* Fix user message overlap with absolute copy-btn */
-.message.user .message-content {
-    padding-right: 44px; /* leave room for absolute copy button */
-    min-width: 60px;
-}
-
-/* Ensure copy button in user message is correctly aligned */
-.message.user .message-content .copy-btn {
-    top: 50%;
-    transform: translateY(-50%);
-    right: 12px;
-}
-
 /* Typography line heights */
 .hero-title {
     letter-spacing: -1.5px;
@@ -410,8 +401,8 @@
     color: var(--text-muted);
 }
 [data-theme="dark"] .code-copy-btn:hover {
-    color: var(--text-inverse);
-    background-color: var(--primary);
+    color: var(--text-primary);
+    background-color: var(--bg-secondary);
 }
 
 /* Ensure smooth sidebar animation on mobile */

@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import asyncio
+import copy
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
@@ -738,13 +739,20 @@ DEFAULT_SETTINGS = {
             "model_id": "deepseek-v4-pro",
         }
     ],
+    "workflow_step_models": {
+        "analysis": {"provider_id": "", "model_id": ""},
+        "relevance": {"provider_id": "", "model_id": ""},
+        "interaction": {"provider_id": "", "model_id": ""},
+        "answer": {"provider_id": "", "model_id": ""},
+    },
     "search_engine": "duckduckgo",
     "max_results": "50",
     "max_iterations": "5",
     "interactive_search": "true",
     "max_concurrent_pages": "10",
-    "max_context_turns": "6",
 }
+
+_REMOVED_SETTINGS_KEYS = {"max_context_turns"}
 
 _api_key_index = 0
 _api_key_lock = asyncio.Lock()
@@ -814,10 +822,17 @@ async def load_settings() -> dict:
         result = await session.execute(select(Settings))
         rows = result.scalars().all()
 
-    settings = DEFAULT_SETTINGS.copy()
+    settings = copy.deepcopy(DEFAULT_SETTINGS)
+    stored_keys = set()
     for row in rows:
+        if row.key in _REMOVED_SETTINGS_KEYS:
+            continue
+        stored_keys.add(row.key)
         settings[row.key] = _parse_setting_value(row.value)
-    settings = _normalize_loaded_settings(settings)
+    settings = _normalize_loaded_settings(
+        settings,
+        has_stored_providers="providers" in stored_keys,
+    )
     return settings
 
 
@@ -844,14 +859,57 @@ async def save_settings(settings: dict) -> bool:
         return False
 
 
-def _normalize_loaded_settings(settings: dict) -> dict:
+def _normalize_loaded_settings(
+    settings: dict,
+    *,
+    has_stored_providers: bool = True,
+) -> dict:
     """Return settings in the current provider-list shape."""
-    result = settings.copy()
+    result = copy.deepcopy(settings)
+    legacy_api_key = str(result.get("api_key", "") or "").strip()
+    legacy_base_url = str(result.get("base_url", "") or "").strip()
+    legacy_model_id = str(result.get("model_id", "") or "").strip()
+    has_legacy_model_config = any((legacy_api_key, legacy_base_url, legacy_model_id))
+
+    if (
+        not has_stored_providers
+        and has_legacy_model_config
+    ):
+        legacy_provider = {
+            "id": result.get("default_provider_id") or DEFAULT_SETTINGS["default_provider_id"],
+            "name": DEFAULT_SETTINGS["providers"][0]["name"],
+            "api_key": legacy_api_key,
+            "base_url": legacy_base_url or DEFAULT_SETTINGS["providers"][0]["base_url"],
+            "model_id": legacy_model_id or DEFAULT_SETTINGS["providers"][0]["model_id"],
+        }
+        result["default_provider_id"] = legacy_provider["id"]
+        result["providers"] = [legacy_provider]
+        result["workflow_step_models"] = _normalize_loaded_workflow_step_models(
+            result.get("workflow_step_models")
+        )
+        return result
+
     if isinstance(result.get("providers"), list) and result["providers"]:
+        providers = [
+            provider.copy() if isinstance(provider, dict) else provider
+            for provider in result["providers"]
+        ]
+        first_provider = providers[0] if isinstance(providers[0], dict) else None
+        if first_provider and _should_backfill_legacy_provider(first_provider, has_legacy_model_config):
+            if legacy_api_key and not str(first_provider.get("api_key", "") or "").strip():
+                first_provider["api_key"] = legacy_api_key
+            if legacy_base_url:
+                first_provider["base_url"] = legacy_base_url
+            if legacy_model_id:
+                first_provider["model_id"] = legacy_model_id
+        result["providers"] = providers
         if not result.get("default_provider_id"):
-            first = result["providers"][0]
+            first = providers[0]
             if isinstance(first, dict):
                 result["default_provider_id"] = first.get("id", "")
+        result["workflow_step_models"] = _normalize_loaded_workflow_step_models(
+            result.get("workflow_step_models")
+        )
         return result
 
     legacy_provider = {
@@ -863,4 +921,36 @@ def _normalize_loaded_settings(settings: dict) -> dict:
     }
     result["default_provider_id"] = legacy_provider["id"]
     result["providers"] = [legacy_provider]
+    result["workflow_step_models"] = _normalize_loaded_workflow_step_models(
+        result.get("workflow_step_models")
+    )
     return result
+
+
+def _should_backfill_legacy_provider(provider: dict, has_legacy_model_config: bool) -> bool:
+    if not has_legacy_model_config:
+        return False
+
+    default_provider = DEFAULT_SETTINGS["providers"][0]
+    return (
+        str(provider.get("id", "") or "").strip() == default_provider["id"]
+        and str(provider.get("api_key", "") or "").strip() == ""
+        and str(provider.get("base_url", "") or "").strip() == default_provider["base_url"]
+        and str(provider.get("model_id", "") or "").strip() == default_provider["model_id"]
+    )
+
+
+def _normalize_loaded_workflow_step_models(raw: Any) -> dict:
+    defaults = copy.deepcopy(DEFAULT_SETTINGS["workflow_step_models"])
+    if not isinstance(raw, dict):
+        return defaults
+
+    for step_id in defaults:
+        item = raw.get(step_id)
+        if not isinstance(item, dict):
+            continue
+        defaults[step_id] = {
+            "provider_id": str(item.get("provider_id", "")).strip(),
+            "model_id": str(item.get("model_id", "")).strip(),
+        }
+    return defaults

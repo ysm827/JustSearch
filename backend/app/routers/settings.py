@@ -22,7 +22,9 @@ from ..openai_client import create_openai_client
 from ..providers import (
     ensure_default_provider_id,
     get_provider_by_id,
+    is_unsupported_model_id,
     mask_provider_secrets,
+    normalize_workflow_step_models,
     normalize_providers,
 )
 from ..search_engine import get_all_engines
@@ -46,22 +48,28 @@ _ENGINE_FAILURE_MESSAGES = {
 
 class ProviderModel(BaseModel):
     id: str
+    previous_id: Optional[str] = ""
     name: Optional[str] = ""
     api_key: Optional[str] = ""
     base_url: str
     model_id: str
 
 
+class WorkflowStepModel(BaseModel):
+    provider_id: Optional[str] = ""
+    model_id: Optional[str] = ""
+
+
 class SettingsModel(BaseModel):
     theme: Optional[str] = "light"
     default_provider_id: Optional[str] = None
     providers: Optional[list[ProviderModel]] = None
+    workflow_step_models: Optional[dict[str, WorkflowStepModel]] = None
     search_engine: Optional[str] = "duckduckgo"
     max_results: Optional[int] = 50
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
     max_concurrent_pages: Optional[int] = 10
-    max_context_turns: Optional[int] = 6
 
 
 class EngineCheckRequest(BaseModel):
@@ -101,10 +109,30 @@ async def update_settings_endpoint(settings: SettingsModel):
             providers,
             update.get("default_provider_id") or current.get("default_provider_id"),
         )
+        primary_provider = get_provider_by_id(
+            {"providers": providers},
+            update["default_provider_id"],
+        ) or providers[0]
+        update["api_key"] = primary_provider.get("api_key", "")
+        update["base_url"] = primary_provider.get("base_url", "")
+        update["model_id"] = primary_provider.get("model_id", "")
     elif "default_provider_id" in update:
         update["default_provider_id"] = ensure_default_provider_id(
             current.get("providers", []),
             update["default_provider_id"],
+        )
+
+    providers_for_steps = update.get("providers") or current.get("providers", [])
+    if "workflow_step_models" in update:
+        update["workflow_step_models"] = normalize_workflow_step_models(
+            update["workflow_step_models"],
+            providers_for_steps,
+        )
+    elif "providers" in update:
+        update["workflow_step_models"] = normalize_workflow_step_models(
+            current.get("workflow_step_models"),
+            providers_for_steps,
+            strict=False,
         )
 
     # Validate numeric ranges
@@ -114,8 +142,6 @@ async def update_settings_endpoint(settings: SettingsModel):
         update["max_iterations"] = max(1, min(10, int(update["max_iterations"])))
     if "max_concurrent_pages" in update:
         update["max_concurrent_pages"] = max(1, min(20, int(update["max_concurrent_pages"])))
-    if "max_context_turns" in update:
-        update["max_context_turns"] = max(1, min(20, int(update["max_context_turns"])))
 
     # Validate search engine
     valid_engines = {"duckduckgo", "google", "bing", "sogou", "brave", "searxng"}
@@ -194,8 +220,11 @@ async def validate_api_key_endpoint(body: dict = Body(...)):
     api_key = body.get("api_key", "").strip()
     if api_key and "****" in api_key:
         provider_id = body.get("provider_id", "").strip()
+        previous_provider_id = body.get("previous_provider_id", "").strip()
         settings = await load_settings()
         provider = get_provider_by_id(settings, provider_id) if provider_id else None
+        if provider is None and previous_provider_id:
+            provider = get_provider_by_id(settings, previous_provider_id)
         api_key = (provider or {}).get("api_key", "").strip()
 
     base_url = body.get("base_url", "").strip() or "https://api.openai.com/v1"
@@ -203,11 +232,10 @@ async def validate_api_key_endpoint(body: dict = Body(...)):
     if model_id and ":" in model_id:
         model_id = model_id.split(":")[0].strip()
 
-    if not api_key:
-        return {"valid": False, "error": "API key is empty"}
-
     if not model_id:
         return {"valid": False, "error": "Model ID is empty"}
+    if is_unsupported_model_id(model_id):
+        return {"valid": False, "error": "Gemini 2.5 系列模型不再支持"}
 
     try:
         client = create_openai_client(api_key=api_key, base_url=base_url)

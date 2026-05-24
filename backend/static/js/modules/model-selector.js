@@ -167,6 +167,8 @@ export function syncCustomModelSelect() {
         return;
     }
 
+    const activeOption = nativeSelect.options[nativeSelect.selectedIndex];
+
     Array.from(options).forEach((opt) => {
         const item = document.createElement('div');
         item.className = 'model-dropdown-item';
@@ -213,10 +215,10 @@ export function syncCustomModelSelect() {
         `;
         item.appendChild(rightDiv);
 
-        if (opt.value === nativeSelect.value) {
+        if (opt === activeOption) {
             item.classList.add('selected');
             item.setAttribute('aria-selected', 'true');
-            triggerText.textContent = opt.text;
+            triggerText.textContent = opt.dataset.modelDisplayName || opt.text;
             triggerText.title = opt.title || opt.value;
         } else {
             item.setAttribute('aria-selected', 'false');
@@ -257,9 +259,8 @@ export function syncCustomModelSelect() {
     });
 
     // Make sure trigger text is updated correctly.
-    const activeOption = nativeSelect.options[nativeSelect.selectedIndex];
     if (activeOption) {
-        triggerText.textContent = activeOption.text;
+        triggerText.textContent = activeOption.dataset.modelDisplayName || activeOption.text;
         triggerText.title = activeOption.title || activeOption.value;
     }
 }
