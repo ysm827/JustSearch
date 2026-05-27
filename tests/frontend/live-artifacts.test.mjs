@@ -196,7 +196,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=21');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=22');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -274,7 +274,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=21');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=22');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -731,8 +731,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=16');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=21');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=17');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=22');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -807,7 +807,7 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
 test('citation rendering resolves sparse source ids instead of array positions', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=5');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=6');
 
     const html = renderWithCitations('Sparse citation [4]', [
         { id: 2, title: 'Second', url: 'https://two.example' },
@@ -825,7 +825,7 @@ test('citation rendering resolves sparse source ids instead of array positions',
 
 test('citation rendering normalizes bare-domain source urls', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=5');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=6');
 
     const html = renderWithCitations('官网 [2]', [
         { id: 2, title: 'Linux Do', url: 'linux.do/' },
@@ -846,7 +846,7 @@ test('citation rendering normalizes bare-domain source urls', async () => {
 
 test('citation rendering links citations from embedded reference markdown when sources are absent', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=5');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=6');
 
     const html = renderWithCitations([
         '官网 来源给出的官网是 linux.do/。[2]',
@@ -871,7 +871,7 @@ test('citation rendering links citations from embedded reference markdown when s
 
 test('citation rendering neutralizes non-http source urls', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=5');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=6');
 
     const html = renderWithCitations('Unsafe citation [1]', [
         { id: 1, title: 'Unsafe', url: 'javascript:alert(1)' },
@@ -887,4 +887,32 @@ test('citation rendering neutralizes non-http source urls', async () => {
     assert.equal(reference.getAttribute('href'), '#');
     assert.equal(reference.hasAttribute('target'), false);
     assert.equal(container.querySelector('.citation-favicon'), null);
+});
+
+test('citation rendering tolerates malformed source payloads', async () => {
+    installBrowserGlobals();
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=6');
+
+    assert.doesNotThrow(() => renderWithCitations('No sources [1]', { id: 1, url: 'https://bad.example' }));
+    assert.doesNotThrow(() => renderWithCitations(null, [{ id: 1, url: 'https://safe.example' }]));
+
+    const html = renderWithCitations('Mixed sources [2] [4] [5]', [
+        null,
+        'valid.example/path',
+        42,
+        { id: 4, title: 123, url: 'https://four.example' },
+        { id: 5, title: '', url: '' },
+    ]);
+    const container = document.createElement('div');
+    container.innerHTML = html;
+
+    const citations = Array.from(container.querySelectorAll('.citation-link'));
+    assert.equal(citations.length, 3);
+    assert.equal(citations[0].textContent.trim(), '2');
+    assert.equal(citations[0].getAttribute('href'), 'https://valid.example/path');
+    assert.equal(citations[1].textContent.trim(), '4');
+    assert.equal(citations[1].getAttribute('href'), 'https://four.example');
+    assert.equal(citations[2].textContent.trim(), '5');
+    assert.equal(citations[2].getAttribute('href'), '#');
+    assert.equal(citations[2].hasAttribute('target'), false);
 });

@@ -5,7 +5,7 @@ import {
     createMessageActionRail,
     createRegenerateButton
 } from './utils.js?v=3';
-import { extractSources, renderWithCitations } from './source-renderer.js?v=5';
+import { extractSources, renderWithCitations } from './source-renderer.js?v=6';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=8';
 import { state } from './state.js?v=2';
 

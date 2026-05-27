@@ -46,15 +46,33 @@ export function extractSources(text) {
     const sources = [];
     const regex = /\[(\d+)\] \[([^\]]*)\]\(([^)]+)\)/g;
     let match;
-    while ((match = regex.exec(text)) !== null) {
+    while ((match = regex.exec(String(text || ''))) !== null) {
         sources.push({ id: match[1], title: match[2], url: match[3] });
     }
     return sources;
 }
 
+function normalizeSources(sources) {
+    if (!Array.isArray(sources)) return [];
+    return sources
+        .map((source, index) => {
+            if (typeof source === 'string') {
+                const url = source.trim();
+                return url ? { id: String(index + 1), title: url, url } : null;
+            }
+            if (!source || typeof source !== 'object') return null;
+            const id = String(source.id ?? index + 1).trim();
+            if (!id) return null;
+            const url = String(source.url || '').trim();
+            const title = String(source.title || url || `Source ${id}`).replace(/\s+/g, ' ').trim();
+            return { ...source, id, title, url };
+        })
+        .filter(Boolean);
+}
+
 function mergeSources(primarySources, fallbackSources) {
     const sourceById = new Map();
-    [...(fallbackSources || []), ...(primarySources || [])].forEach((source, index) => {
+    [...normalizeSources(fallbackSources), ...normalizeSources(primarySources)].forEach((source, index) => {
         const id = String(source?.id ?? index + 1).trim();
         if (!id) return;
         sourceById.set(id, { ...source, id });
@@ -63,8 +81,9 @@ function mergeSources(primarySources, fallbackSources) {
 }
 
 export function renderWithCitations(text, sources) {
-    const resolvedSources = mergeSources(sources, extractSources(text));
-    const html = md.render(text);
+    const safeText = String(text || '');
+    const resolvedSources = mergeSources(sources, extractSources(safeText));
+    const html = md.render(safeText);
     if (resolvedSources.length === 0) return html;
     const sourceById = new Map(
         resolvedSources

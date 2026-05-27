@@ -1,7 +1,7 @@
 import { authFetch } from './auth.js?v=1';
 import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=2';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=16';
+import { elements, showConfirm } from './ui.js?v=17';
 import { renderHistory } from './history-view.js?v=22';
 import * as API from './api.js?v=3';
 
