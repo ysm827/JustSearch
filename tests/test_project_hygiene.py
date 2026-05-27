@@ -1023,7 +1023,7 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     ).read_text(encoding="utf-8")
 
     assert 'href="/static/css/style.css?v=25"' in index_source
-    assert 'src="/static/js/main.js?v=38"' in index_source
+    assert 'src="/static/js/main.js?v=39"' in index_source
     assert "@import url('./sections/base.css?v=4');" in style_source
     assert "@import url('./sections/sidebar.css?v=11');" in style_source
     assert "@import url('./sections/chat.css?v=10');" in style_source
@@ -1038,7 +1038,7 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "from './modules/chat.js?v=14'" in main_source
     assert "from './modules/browser-modal.js?v=2'" in main_source
     assert "from './modules/history-view.js?v=19'" in main_source
-    assert "from './modules/settings-modal.js?v=35'" in main_source
+    assert "from './modules/settings-modal.js?v=36'" in main_source
     assert "from './modules/sidebar.js?v=12'" in main_source
     assert "from './modules/model-selector.js?v=14'" in main_source
     assert "from './modules/api.js?v=2'" in main_source

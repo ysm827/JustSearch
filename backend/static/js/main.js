@@ -4,7 +4,7 @@ import { initUI, elements } from './modules/ui.js?v=10';
 import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=14';
 import { setupBrowserModal } from './modules/browser-modal.js?v=2';
 import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=19';
-import { setupSettingsModal } from './modules/settings-modal.js?v=35';
+import { setupSettingsModal } from './modules/settings-modal.js?v=36';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=12';
 import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js?v=14';
 import * as API from './modules/api.js?v=2';
@@ -126,6 +126,10 @@ function splitModelItem(model) {
         if (modelId && displayName) {
             return { modelId, displayName };
         }
+        return {
+            modelId: raw,
+            displayName: raw.includes('/') ? raw.split('/').pop() : raw,
+        };
     }
     const colonIdx = raw.indexOf(':');
     if (colonIdx !== -1) {

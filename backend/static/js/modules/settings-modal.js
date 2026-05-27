@@ -1226,6 +1226,10 @@ function splitModelItem(modelValue) {
         if (modelId && displayName) {
             return { modelId, displayName };
         }
+        return {
+            modelId: raw,
+            displayName: raw.includes('/') ? raw.split('/').pop() : raw,
+        };
     }
     const colonIdx = raw.indexOf(':');
     if (colonIdx !== -1) {

@@ -114,4 +114,20 @@ test('compact model display names do not become API model ids', async () => {
     assert.equal(rows[0].querySelector('.model-name-input').value, '5.5');
     assert.equal(rows[1].querySelector('.model-id-input').value, 'qwen2.5:7b');
     assert.equal(rows[1].querySelector('.model-name-input').value, 'Qwen 7B');
+
+    __settingsModalTestHooks.renderProviderList(
+        [
+            {
+                ...providers[0],
+                model_id: 'foo::, org/foo::',
+            },
+        ],
+        'gateway',
+    );
+
+    const fallbackRows = Array.from(document.querySelectorAll('.model-row'));
+    assert.equal(fallbackRows[0].querySelector('.model-id-input').value, 'foo::');
+    assert.equal(fallbackRows[0].querySelector('.model-name-input').value, '');
+    assert.equal(fallbackRows[1].querySelector('.model-id-input').value, 'org/foo::');
+    assert.equal(fallbackRows[1].querySelector('.model-name-input').value, '');
 });

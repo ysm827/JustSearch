@@ -105,6 +105,7 @@ def split_model_item(model_item: Any) -> tuple[str, str]:
         display_name = display_name.strip()
         if model_id and display_name:
             return model_id, display_name
+        return raw, raw.split("/")[-1] if "/" in raw else raw
 
     if ":" in raw:
         model_id, display_name = raw.split(":", 1)

@@ -1656,6 +1656,7 @@ def test_provider_normalization_strips_gemini_25_models():
     assert first_model_id("deepseek-chat:DeepSeek 聊天") == "deepseek-chat"
     assert first_model_id("qwen2.5:7b") == "qwen2.5:7b"
     assert first_model_id("qwen2.5:7b::Qwen 7B") == "qwen2.5:7b"
+    assert first_model_id("foo::") == "foo::"
 
 
 def test_loaded_settings_backfills_legacy_api_into_default_provider():
