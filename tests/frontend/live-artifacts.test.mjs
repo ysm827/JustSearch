@@ -195,7 +195,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=16');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=17');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -601,7 +601,7 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
         const { elements } = await import('../../backend/static/js/modules/ui.js?v=12');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=16');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=17');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },

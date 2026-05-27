@@ -89,3 +89,33 @@ test('history search uses backend full-text results without replacing cached his
         globalThis.clearTimeout = originalClearTimeout;
     }
 });
+
+test('history item export opens in an isolated new window', async () => {
+    installBrowserGlobals();
+    const openedWindows = [];
+
+    window.open = (...args) => {
+        openedWindows.push(args);
+        return null;
+    };
+
+    const { elements } = await import('../../backend/static/js/modules/ui.js?v=12');
+    const historyView = await import('../../backend/static/js/modules/history-view.js?test=export-window');
+    elements.historyList = document.getElementById('history-list');
+    elements.historySearchInput = document.getElementById('history-search-input');
+
+    historyView.renderHistory(
+        [{ id: 'chat id?x=1', title: 'Export target', timestamp: '2026-01-03T00:00:00Z' }],
+        '',
+        { onSelect: () => {}, onDelete: () => {} },
+        [],
+    );
+
+    document.querySelector('.history-export-btn').click();
+
+    assert.deepEqual(openedWindows, [[
+        '/api/history/chat%20id%3Fx%3D1/export',
+        '_blank',
+        'noopener,noreferrer',
+    ]]);
+});
