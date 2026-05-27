@@ -88,26 +88,37 @@ async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=2
     fts_query = _build_safe_fts_query(q)
     async with await get_session() as session:
         try:
-            result = await session.execute(
-                sql_text(
-                    "SELECT DISTINCT cs.id, cs.title, cs.group_id, cs.updated_at "
-                    "FROM chat_messages_fts fts "
-                    "JOIN chat_sessions cs ON cs.id = fts.session_id "
-                    "WHERE chat_messages_fts MATCH :query "
-                    "ORDER BY cs.updated_at DESC LIMIT 20"
-                ),
-                {"query": fts_query},
-            )
-            rows = result.fetchall()
-            return [
-                {
-                    "id": row[0],
-                    "title": row[1],
-                    "group_id": row[2],
-                    "timestamp": _format_utc_timestamp(row[3]),
-                }
-                for row in rows
-            ]
+            chats = []
+            offset = 0
+            batch_size = 100
+            while len(chats) < 20:
+                result = await session.execute(
+                    sql_text(
+                        "SELECT DISTINCT cs.id, cs.title, cs.group_id, cs.updated_at "
+                        "FROM chat_messages_fts fts "
+                        "JOIN chat_sessions cs ON cs.id = fts.session_id "
+                        "WHERE chat_messages_fts MATCH :query "
+                        "ORDER BY cs.updated_at DESC LIMIT :limit OFFSET :offset"
+                    ),
+                    {"query": fts_query, "limit": batch_size, "offset": offset},
+                )
+                rows = result.fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    session_id = normalize_route_safe_id(row[0])
+                    if not session_id:
+                        continue
+                    chats.append({
+                        "id": session_id,
+                        "title": row[1],
+                        "group_id": normalize_route_safe_id(row[2]) if row[2] else None,
+                        "timestamp": _format_utc_timestamp(row[3]),
+                    })
+                    if len(chats) >= 20:
+                        break
+                offset += len(rows)
+            return chats
         except Exception as e:
             logger.warning("FTS search failed, falling back to title search: %s", e)
             # Fallback: search by title only

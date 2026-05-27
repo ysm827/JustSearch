@@ -435,29 +435,56 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
 
 async def list_chats(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
     """Return list of chat summaries (id, title, timestamp), newest first. Supports pagination."""
-    async with await get_session() as session:
-        result = await session.execute(
-            select(ChatSession)
-            .order_by(ChatSession.updated_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        sessions = result.scalars().all()
+    try:
+        limit = int(limit)
+        offset = int(offset)
+    except (TypeError, ValueError):
+        limit = 100
+        offset = 0
+    limit = max(0, limit)
+    offset = max(0, offset)
+    if limit == 0:
+        return []
 
-        return [
-            {
-                "id": s.id,
-                "title": s.title,
-                "group_id": s.group_id,
-                "timestamp": _format_utc_timestamp(s.updated_at),
-            }
-            for s in sessions
-        ]
+    target_count = offset + limit
+    scan_offset = 0
+    batch_size = min(max(target_count, 100), 1000)
+    chats = []
+
+    async with await get_session() as session:
+        while len(chats) < target_count:
+            result = await session.execute(
+                select(ChatSession)
+                .order_by(ChatSession.updated_at.desc())
+                .limit(batch_size)
+                .offset(scan_offset)
+            )
+            sessions = result.scalars().all()
+            if not sessions:
+                break
+
+            for s in sessions:
+                session_id = normalize_route_safe_id(s.id)
+                if not session_id:
+                    continue
+                chats.append({
+                    "id": session_id,
+                    "title": s.title,
+                    "group_id": normalize_route_safe_id(s.group_id) if s.group_id else None,
+                    "timestamp": _format_utc_timestamp(s.updated_at),
+                })
+
+            scan_offset += len(sessions)
+
+    return chats[offset:target_count]
 
 
 def _group_to_dict(group: ChatGroup) -> Dict[str, Any]:
+    group_id = normalize_route_safe_id(group.id)
+    if not group_id:
+        return {}
     return {
-        "id": group.id,
+        "id": group_id,
         "title": group.title,
         "is_expanded": bool(group.is_expanded),
         "timestamp": _format_utc_timestamp(group.updated_at),
@@ -471,7 +498,11 @@ async def list_chat_groups() -> List[Dict[str, Any]]:
             select(ChatGroup).order_by(ChatGroup.updated_at.desc())
         )
         groups = result.scalars().all()
-        return [_group_to_dict(group) for group in groups]
+        return [
+            group_dict
+            for group in groups
+            if (group_dict := _group_to_dict(group))
+        ]
 
 
 async def create_chat_group(title: str) -> Dict[str, Any]:

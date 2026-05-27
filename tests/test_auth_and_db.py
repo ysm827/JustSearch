@@ -943,6 +943,81 @@ def test_history_search_handles_fts_special_characters(tmp_path):
     asyncio.run(run())
 
 
+def test_history_lists_and_search_hide_route_unsafe_legacy_ids(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        async with await database.get_session() as session:
+            session.add(database.ChatGroup(id="safe-group", title="Safe Group"))
+            session.add(database.ChatGroup(id="bad\\group", title="Dirty Group"))
+            session.add(
+                database.ChatSession(
+                    id="visible-session",
+                    title="Visible Session",
+                    group_id="bad\\group",
+                )
+            )
+            session.add(
+                database.ChatMessage(
+                    session_id="visible-session",
+                    role="user",
+                    content="sharedtoken visible",
+                )
+            )
+            session.add(
+                database.ChatSession(
+                    id="bad\\session",
+                    title="Dirty Session",
+                )
+            )
+            session.add(
+                database.ChatMessage(
+                    session_id="bad\\session",
+                    role="user",
+                    content="sharedtoken dirty",
+                )
+            )
+            await session.commit()
+
+        chats = await database.list_chats()
+        groups = await database.list_chat_groups()
+
+        assert [chat["id"] for chat in chats] == ["visible-session"]
+        assert chats[0]["group_id"] is None
+        assert [group["id"] for group in groups] == ["safe-group"]
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            search_response = await client.get("/api/history/search", params={"q": "sharedtoken"})
+
+        assert search_response.status_code == 200
+        assert [item["id"] for item in search_response.json()] == ["visible-session"]
+        assert search_response.json()[0]["group_id"] is None
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_context_user_data_dir_is_stable_for_slot(tmp_path):
     from backend.app.browser_context import get_context_user_data_dir
 
