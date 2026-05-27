@@ -1468,6 +1468,58 @@ def test_settings_api_partial_update_preserves_existing_values(tmp_path):
     asyncio.run(run())
 
 
+def test_settings_api_uses_configured_search_engines(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.settings import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+
+        app = FastAPI()
+        app.include_router(router)
+        monkeypatch.setattr(
+            "backend.app.routers.settings.get_all_engines",
+            lambda: ["searxng", "custom-engine"],
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            saved_response = await client.post(
+                "/api/settings",
+                json={"search_engine": "custom-engine"},
+            )
+            rejected_response = await client.post(
+                "/api/settings",
+                json={"search_engine": "missing-engine"},
+            )
+
+        assert saved_response.status_code == 200
+        assert saved_response.json()["settings"]["search_engine"] == "custom-engine"
+        assert rejected_response.status_code == 400
+        assert "custom-engine" in rejected_response.json()["detail"]
+        assert "missing-engine" not in rejected_response.json()["detail"]
+
+        raw_settings = await database.load_settings()
+        assert raw_settings["search_engine"] == "custom-engine"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_settings_api_preserves_masked_provider_key_when_id_changes(tmp_path):
     from backend.app import database
     from backend.app.routers.settings import router

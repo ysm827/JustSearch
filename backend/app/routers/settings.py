@@ -156,9 +156,12 @@ async def update_settings_endpoint(settings: SettingsModel):
         update["max_concurrent_pages"] = max(1, min(20, int(update["max_concurrent_pages"])))
 
     # Validate search engine
-    valid_engines = {"duckduckgo", "google", "bing", "sogou", "brave", "searxng"}
+    valid_engines = set(get_all_engines())
     if "search_engine" in update and update["search_engine"] not in valid_engines:
-        raise HTTPException(status_code=400, detail=f"不支持的搜索引擎。可选: {', '.join(valid_engines)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的搜索引擎。可选: {', '.join(sorted(valid_engines))}",
+        )
 
     current.update(update)
 
