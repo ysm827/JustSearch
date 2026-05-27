@@ -369,8 +369,8 @@ function fillSettingsForm(settings) {
     try {
         document.getElementById('theme-select').value = settings.theme || 'light';
         document.getElementById('engine-select').value = settings.search_engine || 'searxng';
-        document.getElementById('max-results-input').value = settings.max_results || 50;
-        document.getElementById('max-iterations-input').value = settings.max_iterations || 5;
+        document.getElementById('max-results-input').value = normalizeNumberSetting(settings.max_results, 50, 1, 50);
+        document.getElementById('max-iterations-input').value = normalizeNumberSetting(settings.max_iterations, 5, 1, 10);
         renderProviderList(settings.providers || [], settings.default_provider_id || '');
         renderWorkflowStepModels(
             settings.workflow_step_models || {},
@@ -378,7 +378,7 @@ function fillSettingsForm(settings) {
             settings.default_provider_id || '',
         );
         document.getElementById('interactive-search-input').checked = settings.interactive_search !== undefined ? settings.interactive_search : true;
-        document.getElementById('max-concurrent-pages-input').value = settings.max_concurrent_pages || 10;
+        document.getElementById('max-concurrent-pages-input').value = normalizeNumberSetting(settings.max_concurrent_pages, 10, 1, 20);
         updateProviderValidationUI();
         updateProviderCountLabel(collectProvidersForm().length);
         setSettingsSaveStatus('saved');
@@ -393,14 +393,20 @@ function collectSettingsForm() {
     return {
         theme: document.getElementById('theme-select').value,
         search_engine: document.getElementById('engine-select').value,
-        max_results: parseInt(document.getElementById('max-results-input').value) || 50,
-        max_iterations: parseInt(document.getElementById('max-iterations-input').value) || 5,
+        max_results: normalizeNumberSetting(document.getElementById('max-results-input').value, 50, 1, 50),
+        max_iterations: normalizeNumberSetting(document.getElementById('max-iterations-input').value, 5, 1, 10),
         default_provider_id: defaultProvider?.value || providers[0]?.id || '',
         providers,
         workflow_step_models: collectWorkflowStepModels(),
         interactive_search: document.getElementById('interactive-search-input').checked,
-        max_concurrent_pages: parseInt(document.getElementById('max-concurrent-pages-input').value) || 10,
+        max_concurrent_pages: normalizeNumberSetting(document.getElementById('max-concurrent-pages-input').value, 10, 1, 20),
     };
+}
+
+function normalizeNumberSetting(value, fallback, min, max) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
 function canAutoSaveSettings(settings) {
@@ -1341,8 +1347,10 @@ function escapeHtml(str) {
 }
 
 export const __settingsModalTestHooks = {
+    collectSettingsForm,
     collectProvidersForm,
     collectWorkflowStepModels,
+    normalizeNumberSetting,
     renderEngineCheckResults,
     renderProviderList,
     renderWorkflowStepModels,

@@ -835,9 +835,14 @@ def test_default_max_search_results_is_fifty_across_app():
     assert 'min(50, int(update["max_results"]))' in settings_source
     assert 'max_results: int = 50' in browser_manager_source
     assert 'max_results: int = 50' in workflow_source
-    assert "settings.max_results || 50" in settings_js
-    assert "max_results: parseInt(document.getElementById('max-results-input').value) || 50" in settings_js
+    assert "normalizeNumberSetting(settings.max_results, 50, 1, 50)" in settings_js
+    assert "normalizeNumberSetting(settings.max_iterations, 5, 1, 10)" in settings_js
+    assert "normalizeNumberSetting(settings.max_concurrent_pages, 10, 1, 20)" in settings_js
+    assert "max_results: normalizeNumberSetting(document.getElementById('max-results-input').value, 50, 1, 50)" in settings_js
+    assert "max_iterations: normalizeNumberSetting(document.getElementById('max-iterations-input').value, 5, 1, 10)" in settings_js
+    assert "max_concurrent_pages: normalizeNumberSetting(document.getElementById('max-concurrent-pages-input').value, 10, 1, 20)" in settings_js
     assert 'id="max-results-input" placeholder="50" min="1" max="50"' in index_source
+    assert 'id="max-concurrent-pages-input" placeholder="10" min="1" max="20"' in index_source
     assert '"max_results": 50' in settings_example
 
 
@@ -1023,7 +1028,7 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     ).read_text(encoding="utf-8")
 
     assert 'href="/static/css/style.css?v=25"' in index_source
-    assert 'src="/static/js/main.js?v=43"' in index_source
+    assert 'src="/static/js/main.js?v=44"' in index_source
     assert "@import url('./sections/base.css?v=4');" in style_source
     assert "@import url('./sections/sidebar.css?v=11');" in style_source
     assert "@import url('./sections/chat.css?v=10');" in style_source
@@ -1038,7 +1043,7 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "from './modules/chat.js?v=16'" in main_source
     assert "from './modules/browser-modal.js?v=2'" in main_source
     assert "from './modules/history-view.js?v=20'" in main_source
-    assert "from './modules/settings-modal.js?v=39'" in main_source
+    assert "from './modules/settings-modal.js?v=40'" in main_source
     assert "from './modules/sidebar.js?v=13'" in main_source
     assert "from './modules/model-selector.js?v=14'" in main_source
     assert "from './modules/api.js?v=2'" in main_source

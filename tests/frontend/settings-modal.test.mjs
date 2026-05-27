@@ -9,6 +9,12 @@ function installBrowserGlobals() {
     const dom = new JSDOM(`
         <!doctype html>
         <body>
+            <select id="theme-select"><option value="light">Light</option></select>
+            <select id="engine-select"><option value="searxng">SearXNG</option></select>
+            <input id="max-results-input" type="number">
+            <input id="max-iterations-input" type="number">
+            <input id="interactive-search-input" type="checkbox" checked>
+            <input id="max-concurrent-pages-input" type="number">
             <div id="provider-list-container"></div>
             <div id="workflow-step-models-container"></div>
             <div id="engine-check-results"></div>
@@ -194,4 +200,30 @@ test('engine check results render untrusted response fields as text', async () =
         Array.from(resultsEl.querySelectorAll('.engine-check-detail'))[1].textContent,
         '可用 · 0 个结果',
     );
+});
+
+test('settings form clamps numeric fields before saving', async () => {
+    installBrowserGlobals();
+    const { __settingsModalTestHooks } = await import('../../backend/static/js/modules/settings-modal.js?test=numeric-clamp');
+
+    __settingsModalTestHooks.renderProviderList([
+        {
+            id: 'deepseek',
+            name: 'DeepSeek',
+            api_key: 'secret',
+            base_url: 'https://api.deepseek.com/v1',
+            model_id: 'deepseek-chat',
+        },
+    ], 'deepseek');
+
+    document.getElementById('max-results-input').value = '500';
+    document.getElementById('max-iterations-input').value = '-2';
+    document.getElementById('max-concurrent-pages-input').value = '20.8';
+
+    const settings = __settingsModalTestHooks.collectSettingsForm();
+
+    assert.equal(settings.max_results, 50);
+    assert.equal(settings.max_iterations, 1);
+    assert.equal(settings.max_concurrent_pages, 20);
+    assert.equal(__settingsModalTestHooks.normalizeNumberSetting('not-a-number', 5, 1, 10), 5);
 });
