@@ -646,6 +646,39 @@ def test_context_user_data_dir_is_stable_for_slot(tmp_path):
     assert get_context_user_data_dir(project_root, 3) == expected
 
 
+def test_preferred_browser_channel_uses_bundled_chromium_without_system_chrome(monkeypatch):
+    from backend.app import browser_context
+
+    monkeypatch.delenv("PLAYWRIGHT_BROWSER_CHANNEL", raising=False)
+    monkeypatch.delenv("BROWSER_CHANNEL", raising=False)
+    monkeypatch.setattr(browser_context, "_system_chrome_available", lambda: False)
+
+    assert browser_context.get_preferred_browser_channel() is None
+
+
+def test_preferred_browser_channel_uses_system_chrome_when_available(monkeypatch):
+    from backend.app import browser_context
+
+    monkeypatch.delenv("PLAYWRIGHT_BROWSER_CHANNEL", raising=False)
+    monkeypatch.delenv("BROWSER_CHANNEL", raising=False)
+    monkeypatch.setattr(browser_context, "_system_chrome_available", lambda: True)
+
+    assert browser_context.get_preferred_browser_channel() == "chrome"
+
+
+def test_preferred_browser_channel_honors_explicit_browser_channel(monkeypatch):
+    from backend.app import browser_context
+
+    monkeypatch.setenv("BROWSER_CHANNEL", "msedge")
+    monkeypatch.delenv("PLAYWRIGHT_BROWSER_CHANNEL", raising=False)
+    monkeypatch.setattr(browser_context, "_system_chrome_available", lambda: False)
+
+    assert browser_context.get_preferred_browser_channel() == "msedge"
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSER_CHANNEL", "chromium")
+    assert browser_context.get_preferred_browser_channel() is None
+
+
 def test_search_rate_limit_releases_lock_before_context_body():
     from backend.app import browser_context
 

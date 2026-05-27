@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import random
+import shutil
 import time
 import json
 from contextlib import asynccontextmanager
@@ -29,6 +30,17 @@ _MAX_REQUESTS_PER_CONTEXT = 50
 _MAX_CONTEXT_AGE_SECONDS = 3600  # 1 hour
 _ROTATION_CHECK_INTERVAL = 60  # seconds between background checks
 _MAX_BROWSER_RESTART_RETRIES = 3
+_BUNDLED_BROWSER_CHANNELS = {"", "bundled", "chromium", "default", "none", "playwright"}
+_CHROME_PATH_ENV_VARS = ("CHROME_PATH", "GOOGLE_CHROME_BIN")
+_CHROME_PATH_CANDIDATES = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/opt/google/chrome/chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+)
+_CHROME_PATH_COMMANDS = ("google-chrome", "google-chrome-stable", "chrome")
 
 
 @dataclass
@@ -98,6 +110,28 @@ def get_browser_config(user_data_dir: str) -> dict:
 
 def get_context_user_data_dir(project_root: str | os.PathLike, slot_index: int) -> Path:
     return Path(project_root) / "user_data" / f"ctx_{slot_index}"
+
+
+def _system_chrome_available() -> bool:
+    for env_name in _CHROME_PATH_ENV_VARS:
+        configured_path = os.getenv(env_name, "").strip()
+        if configured_path and Path(configured_path).exists():
+            return True
+
+    if any(shutil.which(command) for command in _CHROME_PATH_COMMANDS):
+        return True
+
+    return any(Path(path).exists() for path in _CHROME_PATH_CANDIDATES)
+
+
+def get_preferred_browser_channel() -> str | None:
+    configured = (
+        os.getenv("PLAYWRIGHT_BROWSER_CHANNEL", "")
+        or os.getenv("BROWSER_CHANNEL", "")
+    ).strip()
+    if configured:
+        return None if configured.lower() in _BUNDLED_BROWSER_CHANNELS else configured
+    return "chrome" if _system_chrome_available() else None
 
 
 @asynccontextmanager
@@ -176,14 +210,20 @@ async def _create_context(slot_index: int, headless_override: bool = None) -> ob
         ignore_default_args=["--enable-automation"],
     )
 
-    # Try Chrome first, fall back to Chromium
-    try:
-        ctx = await _GLOBAL_PLAYWRIGHT.chromium.launch_persistent_context(
-            channel="chrome", **launch_kwargs,
-        )
-    except Exception as e:
-        logger.warning("Failed to launch Chrome: %s. Trying default Chromium...", e)
-        launch_kwargs.pop("channel", None)  # channel kwarg already consumed
+    browser_channel = get_preferred_browser_channel()
+    if browser_channel:
+        try:
+            ctx = await _GLOBAL_PLAYWRIGHT.chromium.launch_persistent_context(
+                channel=browser_channel, **launch_kwargs,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to launch %s browser channel: %s. Trying default Chromium...",
+                browser_channel,
+                e,
+            )
+            ctx = await _GLOBAL_PLAYWRIGHT.chromium.launch_persistent_context(**launch_kwargs)
+    else:
         ctx = await _GLOBAL_PLAYWRIGHT.chromium.launch_persistent_context(**launch_kwargs)
 
     logger.info("Created browser context (UA: %s)", user_agent)
