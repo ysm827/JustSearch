@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
@@ -33,11 +34,43 @@ DEFAULT_WORKFLOW_STEP_MODELS = {
 
 _PROVIDER_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 _UNSUPPORTED_MODEL_RE = re.compile(r"\bgemini[\s._-]*2[\s._-]*5\b", re.IGNORECASE)
+_LOCAL_PROVIDER_HOSTS = {
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "0.0.0.0",
+    "host.docker.internal",
+}
 
 
 def is_unsupported_model_id(model_id: Any) -> bool:
     """Return True for model ids/display names that are no longer supported."""
     return bool(_UNSUPPORTED_MODEL_RE.search(str(model_id or "")))
+
+
+def is_local_provider_base_url(base_url: Any) -> bool:
+    """Return True for local OpenAI-compatible runtimes that commonly accept empty keys."""
+    parsed = urlparse(str(base_url or "").strip())
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    return host in _LOCAL_PROVIDER_HOSTS or host.startswith("127.")
+
+
+def provider_allows_empty_api_key(provider: dict[str, Any]) -> bool:
+    return is_local_provider_base_url(provider.get("base_url", ""))
+
+
+def require_provider_api_key(provider: dict[str, Any], label: str = "provider") -> None:
+    api_key = str(provider.get("api_key", "") or "").strip()
+    if api_key or provider_allows_empty_api_key(provider):
+        return
+
+    display_name = str(provider.get("name") or provider.get("id") or label).strip()
+    raise HTTPException(
+        status_code=400,
+        detail=f"请先在设置中配置 API 密钥（{display_name}）。",
+    )
 
 
 def supported_model_items(model_ids: Any) -> list[str]:
@@ -51,6 +84,55 @@ def supported_model_items(model_ids: Any) -> list[str]:
 
 def normalize_supported_model_ids(model_ids: Any) -> str:
     return ", ".join(supported_model_items(model_ids))
+
+
+def split_model_item(model_item: Any) -> tuple[str, str]:
+    """Split a configured model item into API id and display label.
+
+    ``::`` is the unambiguous display-name separator used by the settings UI
+    (for example ``gpt-5.5::5.5``). A single colon followed by a human label is
+    kept for legacy settings (for example ``gpt-4.1:GPT 4.1``). Compact colon
+    tags such as ``qwen2.5:7b`` are kept as part of the model id for local
+    runtimes.
+    """
+    raw = str(model_item or "").strip()
+    if not raw:
+        return "", ""
+
+    if "::" in raw:
+        model_id, display_name = raw.split("::", 1)
+        model_id = model_id.strip()
+        display_name = display_name.strip()
+        if model_id and display_name:
+            return model_id, display_name
+
+    if ":" in raw:
+        model_id, display_name = raw.split(":", 1)
+        model_id = model_id.strip()
+        display_name = display_name.strip()
+        compact_tag = re.fullmatch(r"[A-Za-z0-9._-]+", display_name or "") is not None
+        repeated_compact_name = (
+            compact_tag
+            and model_id
+            and display_name
+            and model_id.lower() == display_name.lower()
+        )
+        suffix_compact_name = (
+            compact_tag
+            and model_id
+            and display_name
+            and model_id.lower().endswith(display_name.lower())
+            and any(separator in model_id for separator in ("-", "_", "."))
+        )
+        if model_id and display_name and (
+            re.search(r"\s", display_name)
+            or not compact_tag
+            or repeated_compact_name
+            or suffix_compact_name
+        ):
+            return model_id, display_name
+
+    return raw, raw.split("/")[-1] if "/" in raw else raw
 
 
 def with_supported_provider_models(provider: dict[str, Any]) -> dict[str, Any]:
@@ -219,6 +301,5 @@ def first_model_id(model_ids: str) -> str:
     raw = items[0] if items else str(model_ids or "").strip()
     if "," in raw:
         raw = next((item.strip() for item in raw.split(",") if item.strip()), raw)
-    if ":" in raw:
-        raw = raw.split(":", 1)[0].strip()
-    return raw
+    model_id, _display_name = split_model_item(raw)
+    return model_id

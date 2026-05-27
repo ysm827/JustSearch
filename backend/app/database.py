@@ -137,8 +137,12 @@ class ChatSession(Base):
     created_at = Column(DateTime, default=func.now(), index=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), index=True)
 
-    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan",
-                            order_by="ChatMessage.created_at")
+    messages = relationship(
+        "ChatMessage",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by=lambda: (ChatMessage.created_at, ChatMessage.id),
+    )
 
 
 class ChatMessage(Base):
@@ -274,17 +278,22 @@ async def init_db():
 
 
 async def _cleanup_old_sessions(max_age_days: int = 90):
-    """Remove sessions older than max_age_days that have been inactive."""
+    """Remove empty sessions older than max_age_days."""
     try:
         cutoff = datetime.now() - __import__('datetime').timedelta(days=max_age_days)
         async with await get_session() as session:
-            # Single batch delete — cascade handles messages automatically
             result = await session.execute(
-                delete(ChatSession).where(ChatSession.updated_at < cutoff)
+                delete(ChatSession)
+                .where(ChatSession.updated_at < cutoff)
+                .where(
+                    ~select(ChatMessage.id)
+                    .where(ChatMessage.session_id == ChatSession.id)
+                    .exists()
+                )
             )
             if result.rowcount > 0:
                 await session.commit()
-                logger.info("Cleaned up %d sessions older than %d days", result.rowcount, max_age_days)
+                logger.info("Cleaned up %d empty sessions older than %d days", result.rowcount, max_age_days)
     except Exception as e:
         logger.warning("Session cleanup failed: %s", e)
 
@@ -314,7 +323,7 @@ async def load_chat_history(session_id_or_path: str) -> Optional[Dict[str, Any]]
 
         msgs = (await session.execute(
             select(ChatMessage).where(ChatMessage.session_id == session_id)
-            .order_by(ChatMessage.created_at)
+            .order_by(ChatMessage.created_at, ChatMessage.id)
         )).scalars().all()
 
         messages = []
@@ -531,7 +540,7 @@ async def delete_message(session_id: str, message_index: int):
     async with await get_session() as session:
         msgs = (await session.execute(
             select(ChatMessage).where(ChatMessage.session_id == session_id)
-            .order_by(ChatMessage.created_at)
+            .order_by(ChatMessage.created_at, ChatMessage.id)
         )).scalars().all()
 
         if message_index < 0 or message_index >= len(msgs):
@@ -601,6 +610,15 @@ def _normalize_imported_message(message: dict, index: int, session_time: datetim
     }
 
 
+def _normalize_optional_id(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        normalized = str(value).strip()
+        return normalized or None
+    return None
+
+
 def _normalize_imported_chat(chat: dict) -> Optional[Dict[str, Any]]:
     session_id = str(chat.get("id", "")).strip()
     messages = chat.get("messages")
@@ -610,7 +628,7 @@ def _normalize_imported_chat(chat: dict) -> Optional[Dict[str, Any]]:
     return {
         "id": session_id,
         "title": str(chat.get("title", "")).strip() or _extract_title(str(messages[0].get("content", ""))),
-        "group_id": chat.get("group_id") or chat.get("groupId") or None,
+        "group_id": _normalize_optional_id(chat.get("group_id") or chat.get("groupId")),
         "created_at": session_time,
         "updated_at": session_time,
         "messages": [
@@ -745,7 +763,7 @@ DEFAULT_SETTINGS = {
         "interaction": {"provider_id": "", "model_id": ""},
         "answer": {"provider_id": "", "model_id": ""},
     },
-    "search_engine": "duckduckgo",
+    "search_engine": "searxng",
     "max_results": "50",
     "max_iterations": "5",
     "interactive_search": "true",

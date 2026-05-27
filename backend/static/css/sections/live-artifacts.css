@@ -1,0 +1,488 @@
+/* ========================================
+   Live Artifacts
+   ======================================== */
+.live-artifact-inline-frame {
+    width: 100%;
+    margin: 12px 0;
+    overflow: visible;
+}
+
+.live-artifact-inline-viewport {
+    position: relative;
+    width: 100%;
+    min-height: 120px;
+    height: 320px;
+    overflow: hidden;
+    border-radius: 8px;
+    background: transparent;
+}
+
+.live-artifact-inline-iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: transparent;
+}
+
+.live-artifact-interaction {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    margin: 12px 0;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-xs);
+}
+
+.live-artifact-interaction.pending {
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.live-artifact-interaction-header h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 750;
+    line-height: 1.3;
+}
+
+.live-artifact-interaction-header p {
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.live-artifact-interaction-fields {
+    display: grid;
+    gap: 12px;
+}
+
+.live-artifact-interaction-field {
+    display: block;
+    min-width: 0;
+}
+
+.live-artifact-interaction-field.boolean {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    background: var(--bg);
+}
+
+.live-artifact-interaction-field input[type="checkbox"] {
+    margin-top: 3px;
+    accent-color: var(--primary);
+}
+
+.live-artifact-interaction-label {
+    display: block;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.live-artifact-interaction-required {
+    margin-left: 4px;
+    color: var(--danger);
+}
+
+.live-artifact-interaction-description {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.live-artifact-interaction-field input:not([type="checkbox"]),
+.live-artifact-interaction-field textarea,
+.live-artifact-interaction-field select {
+    width: 100%;
+    min-height: 36px;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+}
+
+.live-artifact-interaction-field textarea {
+    min-height: 92px;
+    resize: vertical;
+}
+
+.live-artifact-interaction-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 13px;
+}
+
+.live-artifact-interaction-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.live-artifact-interaction-submit {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 36px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--primary);
+    color: var(--text-on-primary);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.live-artifact-interaction-submit .material-symbols-rounded {
+    font-size: 17px;
+}
+
+.live-artifacts-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0 0 14px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--bg-elevated) 88%, var(--bg-secondary));
+    box-shadow: var(--shadow-xs);
+}
+
+.live-artifacts-strip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.live-artifacts-strip-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 750;
+}
+
+.live-artifacts-strip-title .material-symbols-rounded {
+    color: var(--primary);
+    font-size: 18px;
+}
+
+.live-artifacts-strip-meta {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.live-artifacts-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.live-artifact-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    min-height: 46px;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.live-artifact-card:hover {
+    border-color: var(--border-focus);
+    background: color-mix(in srgb, var(--bg-input) 76%, var(--primary-light));
+    transform: translateY(-1px);
+}
+
+.live-artifact-card > .material-symbols-rounded {
+    flex: 0 0 auto;
+    color: var(--primary);
+    font-size: 19px;
+}
+
+.live-artifact-card-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 2px;
+}
+
+.live-artifact-card-title,
+.live-artifact-card-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live-artifact-card-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.live-artifact-card-meta {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+}
+
+.live-artifact-open-btn {
+    color: var(--primary);
+}
+
+.live-artifacts-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1090;
+    background: color-mix(in srgb, #000 28%, transparent);
+    backdrop-filter: blur(4px);
+}
+
+.live-artifacts-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    width: min(48vw, 760px);
+    min-width: 440px;
+    height: 100dvh;
+    border-left: 1px solid var(--border);
+    background: var(--bg);
+    box-shadow: -20px 0 36px color-mix(in srgb, #000 12%, transparent);
+    transform: translateX(100%);
+    transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+body.live-artifacts-open .live-artifacts-panel {
+    transform: translateX(0);
+}
+
+.live-artifacts-panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.live-artifacts-title-block {
+    min-width: 0;
+}
+
+.live-artifacts-kicker {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.live-artifacts-title {
+    margin-top: 4px;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 17px;
+    font-weight: 750;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live-artifacts-meta {
+    margin-top: 3px;
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live-artifacts-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.live-artifacts-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+}
+
+.live-artifacts-tab {
+    min-height: 30px;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.live-artifacts-tab.is-active {
+    background: var(--bg-input);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-xs);
+}
+
+.live-artifacts-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.live-artifacts-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.live-artifacts-icon-btn:hover {
+    border-color: var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.live-artifacts-icon-btn .material-symbols-rounded {
+    font-size: 19px;
+}
+
+.live-artifacts-panel-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: color-mix(in srgb, var(--bg-secondary) 38%, var(--bg));
+}
+
+.live-artifacts-preview-view,
+.live-artifacts-code-view {
+    display: none;
+    width: 100%;
+    height: 100%;
+}
+
+.live-artifacts-preview-view.is-active,
+.live-artifacts-code-view.is-active {
+    display: block;
+}
+
+.live-artifacts-preview-view {
+    position: relative;
+    padding: 12px;
+}
+
+.live-artifacts-frame {
+    width: 100%;
+    height: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: var(--shadow-xs);
+}
+
+.live-artifacts-empty {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.live-artifacts-code-view {
+    margin: 0;
+    padding: 16px;
+    overflow: auto;
+    background: var(--amc-message-code-bg);
+    color: var(--text-primary);
+}
+
+.live-artifacts-code-view code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+    white-space: pre;
+}
+
+@media (max-width: 960px) {
+    .live-artifacts-panel {
+        width: min(92vw, 720px);
+        min-width: 0;
+    }
+}
+
+@media (max-width: 640px) {
+    .live-artifacts-panel {
+        width: 100vw;
+    }
+
+    .live-artifacts-panel-header,
+    .live-artifacts-toolbar {
+        padding-inline: 14px;
+    }
+
+    .live-artifacts-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .live-artifacts-actions {
+        justify-content: flex-end;
+    }
+
+    .live-artifacts-list {
+        grid-template-columns: 1fr;
+    }
+}

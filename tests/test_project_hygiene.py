@@ -676,7 +676,8 @@ def test_settings_modal_auto_saves_without_manual_buttons():
     assert "await API.fetchSettings();" in settings_js
     assert "const closeSettingsModal = async () => {" in settings_js
     assert "API.saveSettingsAPI(newSettings)" in settings_js
-    assert "radio.addEventListener('change', () => requestSettingsAutoSave" in settings_js
+    assert "radio.addEventListener('change', () => {" in settings_js
+    assert "requestSettingsAutoSave({ immediate: true });" in settings_js
     assert "row.querySelector('select').addEventListener('change'" in settings_js
     assert "设置已保存" not in settings_js
     assert "'保存设置失败'" not in settings_js
@@ -729,6 +730,60 @@ def test_settings_modal_has_search_engine_availability_check():
     assert ".engine-check-results" in settings_css
     assert ".engine-check-result.available" in settings_css
     assert ".engine-check-result.unavailable" in settings_css
+
+
+def test_docker_compose_wires_self_hosted_searxng():
+    compose_source = (PROJECT_ROOT / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "searxng:" in compose_source
+    assert "image: searxng/searxng:latest" in compose_source
+    assert "depends_on:" in compose_source
+    assert "- searxng" in compose_source
+    assert "SEARXNG_SEARCH_URL=${SEARXNG_SEARCH_URL:-http://searxng:8080/search?q={query}&format=html}" in compose_source
+
+
+def test_runtime_security_defaults_are_not_wide_open():
+    env_example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+    compose_source = (PROJECT_ROOT / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    )
+    main_source = (PROJECT_ROOT / "backend/app/main.py").read_text(
+        encoding="utf-8"
+    )
+
+    local_origins = (
+        "http://localhost:8000,http://127.0.0.1:8000,"
+        "http://localhost,http://127.0.0.1"
+    )
+    assert f"CORS_ORIGINS={local_origins}" in env_example
+    assert f"CORS_ORIGINS=${{CORS_ORIGINS:-{local_origins}}}" in compose_source
+    assert '"127.0.0.1:8000:8000"' in compose_source
+    assert '"8000:8000"' not in compose_source
+    assert "JUSTSEARCH_AUTH_ENABLED=true" in env_example
+    assert "JUSTSEARCH_AUTH_ENABLED=${JUSTSEARCH_AUTH_ENABLED:-true}" in compose_source
+    assert 'load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))' in main_source
+
+
+def test_default_search_engine_is_searxng_across_app():
+    database_source = (PROJECT_ROOT / "backend/app/database.py").read_text(
+        encoding="utf-8"
+    )
+    settings_example = (
+        PROJECT_ROOT / "backend/settings.json.example"
+    ).read_text(encoding="utf-8")
+    chat_source = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+    settings_source = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+
+    assert '"search_engine": "searxng"' in database_source
+    assert '"search_engine": "searxng"' in settings_example
+    assert "state.settings.search_engine || 'searxng'" in chat_source
+    assert "settings.search_engine || 'searxng'" in settings_source
 
 
 def test_default_max_search_results_is_fifty_across_app():
@@ -842,6 +897,24 @@ def test_input_area_has_no_character_counter():
     assert ".char-count" not in css_source
 
 
+def test_frontend_typography_avoids_fuzzy_text_rendering():
+    css_sources = {
+        path.relative_to(PROJECT_ROOT).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted((PROJECT_ROOT / "backend/static/css").rglob("*.css"))
+    }
+    css_source = "\n".join(css_sources.values())
+
+    assert "-webkit-font-smoothing: antialiased" not in css_source
+    assert "-moz-osx-font-smoothing: grayscale" not in css_source
+
+    negative_letter_spacing = []
+    for filename, source in css_sources.items():
+        for match in re.finditer(r"letter-spacing\s*:\s*-[^;]+;", source):
+            negative_letter_spacing.append(f"{filename}: {match.group(0)}")
+
+    assert negative_letter_spacing == []
+
+
 def test_initial_release_version_uses_semver_and_v_display_prefix():
     version_source = (PROJECT_ROOT / "backend/app/version.py").read_text(encoding="utf-8")
     dockerfile_source = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -883,15 +956,15 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "export function extractSources" in renderer_source
     assert "export function renderWithCitations" in renderer_source
     assert "function getFaviconUrl" in renderer_source
-    assert "from './source-renderer.js?v=2'" in ui_source
-    assert "from './source-renderer.js?v=2'" in chat_source
-    assert "from './ui.js?v=2'" in (
+    assert "from './source-renderer.js?v=3'" in ui_source
+    assert "from './source-renderer.js?v=3'" in chat_source
+    assert "from './ui.js?v=8'" in (
         PROJECT_ROOT / "backend/static/js/modules/history-view.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=2'" in (
+    assert "from './ui.js?v=8'" in (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=2'" in (
+    assert "from './ui.js?v=8'" in (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
@@ -909,6 +982,7 @@ def test_css_is_split_into_named_sections():
         "chat.css",
         "input-modal.css",
         "markdown.css",
+        "live-artifacts.css",
         "overlays.css",
         "responsive.css",
         "polish.css",
@@ -932,20 +1006,119 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
         PROJECT_ROOT / "backend/static/js/main.js"
     ).read_text(encoding="utf-8")
 
-    assert 'href="/static/css/style.css?v=15"' in index_source
-    assert 'src="/static/js/main.js?v=24"' in index_source
-    assert "@import url('./sections/base.css?v=3');" in style_source
-    assert "@import url('./sections/sidebar.css?v=10');" in style_source
-    assert "@import url('./sections/chat.css?v=3');" in style_source
-    assert "@import url('./sections/input-modal.css?v=14');" in style_source
+    assert 'href="/static/css/style.css?v=24"' in index_source
+    assert 'src="/static/js/main.js?v=36"' in index_source
+    assert "@import url('./sections/base.css?v=4');" in style_source
+    assert "@import url('./sections/sidebar.css?v=11');" in style_source
+    assert "@import url('./sections/chat.css?v=10');" in style_source
+    assert "@import url('./sections/input-modal.css?v=17');" in style_source
     assert "@import url('./sections/markdown.css?v=3');" in style_source
-    assert "@import url('./sections/responsive.css?v=3');" in style_source
-    assert "@import url('./sections/polish.css?v=3');" in style_source
-    assert "from './modules/chat.js?v=2'" in main_source
-    assert "from './modules/history-view.js?v=11'" in main_source
-    assert "from './modules/settings-modal.js?v=22'" in main_source
-    assert "from './modules/sidebar.js?v=2'" in main_source
+    assert "@import url('./sections/live-artifacts.css?v=2');" in style_source
+    assert "@import url('./sections/responsive.css?v=5');" in style_source
+    assert "@import url('./sections/polish.css?v=6');" in style_source
+    assert "from './modules/auth.js?v=1'" in main_source
+    assert "from './modules/ui.js?v=8'" in main_source
+    assert "from './modules/chat.js?v=12'" in main_source
+    assert "from './modules/browser-modal.js?v=1'" in main_source
+    assert "from './modules/history-view.js?v=17'" in main_source
+    assert "from './modules/settings-modal.js?v=33'" in main_source
+    assert "from './modules/sidebar.js?v=10'" in main_source
     assert "from './modules/model-selector.js?v=14'" in main_source
+    assert "from './modules/api.js?v=1'" in main_source
+    assert "import('./modules/utils.js?v=3')" in main_source
+
+
+def test_auth_token_persists_with_data_volume_and_401_recovers():
+    auth_py = (PROJECT_ROOT / "backend/app/auth.py").read_text(encoding="utf-8")
+    auth_js = (
+        PROJECT_ROOT / "backend/static/js/modules/auth.js"
+    ).read_text(encoding="utf-8")
+
+    assert '_TOKEN_FILE_ENV_VAR = "JUSTSEARCH_AUTH_TOKEN_FILE"' in auth_py
+    assert 'return _DATA_DIR / ".auth_token"' in auth_py
+    assert "def get_legacy_auth_token_path" in auth_py
+    assert "_migrate_legacy_auth_token(token_path)" in auth_py
+    assert "AUTH_RETRY_KEY = 'justsearch_auth_retry'" in auth_js
+    assert "clearStoredAuthToken(win)" in auth_js
+    assert "win.location.reload()" in auth_js
+    assert "handleUnauthorizedResponse(response)" in auth_js
+
+
+def test_live_artifacts_are_integrated_with_chat_rendering():
+    style_source = (
+        PROJECT_ROOT / "backend/static/css/style.css"
+    ).read_text(encoding="utf-8")
+    live_artifacts_js = (
+        PROJECT_ROOT / "backend/static/js/modules/live-artifacts.js"
+    ).read_text(encoding="utf-8")
+    chat_source = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+    ui_source = (
+        PROJECT_ROOT / "backend/static/js/modules/ui.js"
+    ).read_text(encoding="utf-8")
+
+    assert "live-artifacts.css?v=2" in style_source
+    assert "export function renderLiveArtifactsForMessage" in live_artifacts_js
+    assert "function extractLiveArtifacts" in live_artifacts_js
+    assert "function extractRawHtmlArtifacts" in live_artifacts_js
+    assert "function extractInlineLiveArtifact" in live_artifacts_js
+    assert "function extractLiveArtifactInteraction" in live_artifacts_js
+    assert "function parseLiveArtifactInteractionSpec" in live_artifacts_js
+    assert "function renderLiveArtifactInteraction" in live_artifacts_js
+    assert "function renderInlineArtifactFrame" in live_artifacts_js
+    assert "data-amc-stream-preview-root" in live_artifacts_js
+    assert "STREAM_RENDER_EVENT" in live_artifacts_js
+    assert "function postInlineArtifactStream" in live_artifacts_js
+    assert "sanitizeStreamDocument" in live_artifacts_js
+    assert "Content-Security-Policy" in live_artifacts_js
+    assert "PREVIEW_CONTENT_SECURITY_POLICY" in live_artifacts_js
+    assert "frame-src 'none'" in live_artifacts_js
+    assert "form-action 'none'" in live_artifacts_js
+    assert "function injectPreviewSecurityPolicy" in live_artifacts_js
+    assert "event: 'diagnostic'" in live_artifacts_js
+    assert "resource-error" in live_artifacts_js
+    assert "runtime-error" in live_artifacts_js
+    assert "csp-violation" in live_artifacts_js
+    assert "function normalizePreviewDiagnostic" in live_artifacts_js
+    assert "amc-live-artifact-interaction" in live_artifacts_js
+    assert "dataset.liveArtifactInteraction" in live_artifacts_js
+    assert "amc-live-artifact-interaction:v1" in live_artifacts_js
+    assert "function buildArtifactCode" in live_artifacts_js
+    assert "function hideSupportingCodeBlocks" in live_artifacts_js
+    assert "function shouldMergeSupportingBlocks" in live_artifacts_js
+    assert "parseInfoAttributes" in live_artifacts_js
+    assert "__liveArtifactsTestHooks" in live_artifacts_js
+    assert "live-artifacts-frame" in live_artifacts_js
+    assert "data-artifact-view=\"code\"" in live_artifacts_js
+    assert "sandbox=\"allow-scripts allow-forms allow-modals allow-popups\"" in live_artifacts_js
+    assert "renderLiveArtifactsForMessage(contentWrapper" in chat_source
+    assert "isStreaming: true" in chat_source
+    assert "renderLiveArtifactsForMessage(answerBody" in ui_source
+
+
+def test_thinking_box_uses_amc_style_spinner():
+    chat_css = (
+        PROJECT_ROOT / "backend/static/css/sections/chat.css"
+    ).read_text(encoding="utf-8")
+    ui_js = (
+        PROJECT_ROOT / "backend/static/js/modules/ui.js"
+    ).read_text(encoding="utf-8")
+
+    assert ".log-spinner.rotating::before" in chat_css
+    assert ".log-spinner.rotating::after" not in chat_css
+    assert ".material-symbols-rounded.log-spinner" in chat_css
+    assert "position: absolute;" in chat_css
+    assert "inset: 2px;" in chat_css
+    assert "display: block;" in chat_css
+    assert "conic-gradient" in chat_css
+    for accent in ("#00d1ff", "#6978ff", "#b15cff", "#ff5ab3", "#ff8a3d", "#ffd166"):
+        assert accent in chat_css
+    assert "@keyframes amcThinkingSpin" in chat_css
+    assert "@keyframes amcThinkingDot" not in chat_css
+    assert "@keyframes amcThoughtSweep" in chat_css
+    assert "animation: none;" in chat_css
+    assert "正在思考..." in ui_js
 
 
 def test_message_bubbles_follow_amc_visual_pattern():
@@ -972,25 +1145,114 @@ def test_message_bubbles_follow_amc_visual_pattern():
         assert token in base_css
 
     for token in [
-        "max-width: 920px;",
-        "padding-inline: 42px;",
+        "max-width: 1056px;",
+        "margin-top: 24px;",
+        ".message.grouped",
+        "margin-top: 6px;",
+        ".message-row",
+        ".message-side",
+        ".message-avatar",
+        ".assistant-avatar",
+        ".user-avatar",
+        ".error-avatar",
         "background: var(--amc-message-user-bg);",
-        "border-top-right-radius: 2px;",
+        "padding: 16px 20px;",
+        "border-top-right-radius: 4px;",
         "max-width: 80%;",
         "background-color: var(--amc-message-model-bg);",
-        ".message.assistant .copy-btn",
-        ".message.user .copy-btn",
+        "max-width: calc(100% - 56px);",
+        ".message-answer-body",
+        ".message-content.is-collapsible.is-collapsed .message-user-text",
+        ".message-collapse-toggle",
+        ".message-action-rail",
+        "position: static;",
+        ".edit-message-btn",
         "opacity: 0;",
         "pointer-events: none;",
-        ".message:hover .copy-btn",
+        ".message:hover .message-action-rail",
+        ".message:focus-within .message-action-rail",
     ]:
         assert token in chat_css
 
+    assert ".message.assistant .message-action-rail" not in chat_css
+    assert ".message.user .message-action-rail" not in chat_css
     assert "background: linear-gradient(135deg, var(--primary), var(--primary-hover))" not in chat_css
     assert "/* --- Regenerate Button --- */" not in input_modal_css
     assert ".message-content:hover .msg-delete-btn" not in input_modal_css
     assert "background-color: var(--amc-message-code-bg);" in markdown_css
     assert "border-left: 3px solid currentColor;" in markdown_css
+
+
+def test_message_side_actions_follow_amc_interaction_pattern():
+    utils_source = (
+        PROJECT_ROOT / "backend/static/js/modules/utils.js"
+    ).read_text(encoding="utf-8")
+    ui_source = (
+        PROJECT_ROOT / "backend/static/js/modules/ui.js"
+    ).read_text(encoding="utf-8")
+    chat_source = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+    source_renderer = (
+        PROJECT_ROOT / "backend/static/js/modules/source-renderer.js"
+    ).read_text(encoding="utf-8")
+    responsive_css = (
+        PROJECT_ROOT / "backend/static/css/sections/responsive.css"
+    ).read_text(encoding="utf-8")
+
+    for token in [
+        "export function createMessageActionRail",
+        "role', 'toolbar'",
+        "dataset.action",
+        "copy-message",
+        "edit-message",
+        "regenerate-message",
+        "delete-message",
+        "is-success",
+    ]:
+        assert token in utils_source
+
+    for token in [
+        "export function createMessageShell",
+        "normalizeMessageRole",
+        "MESSAGE_GROUP_WINDOW_MS",
+        "isGroupedWithPrevious",
+        "createMessageAvatar",
+        "message-row",
+        "message-side",
+        "message-avatar",
+        "is-collapsible",
+        "message-collapse-toggle",
+        "message-answer-body",
+        "sideColumn.appendChild(createMessageActions",
+        "previousUserContent",
+        "createEditMessageButton",
+        "createRegenerateButton",
+        "createDeleteMessageButton",
+        "onRegenerate",
+        "onEdit",
+        "onMessageDeleted",
+    ]:
+        assert token in ui_source
+
+    assert "createMessageActionRail([copyBtn, regenBtn], '助手消息操作')" in chat_source
+    assert "createMessageShell('assistant')" in chat_source
+    assert "contentWrapper.className = 'message-answer-body'" in chat_source
+    assert "sideColumn.appendChild(createMessageActionRail" in chat_source
+    assert "stageMessageForInput" in chat_source
+    assert "from './utils.js?v=3'" in chat_source
+    assert "from './utils.js?v=3'" in ui_source
+    assert "from './utils.js?v=3'" in source_renderer
+    assert ".message-row" in responsive_css
+    assert ".message-side" in responsive_css
+    assert ".message-avatar" in responsive_css
+    assert ".message.user .message-content" in responsive_css
+    assert ".message.assistant .message-content," in responsive_css
+    assert ".message-action-rail" in responsive_css
+    assert "opacity: 1;" in responsive_css
+    assert "pointer-events: auto;" in responsive_css
+    assert ".message.assistant .message-action-rail" not in responsive_css
+    assert ".message.user .message-action-rail" not in responsive_css
 
 
 def test_history_rename_updates_cached_history_source():
@@ -1331,6 +1593,47 @@ def test_deep_search_toggle_uses_material_symbol_icon():
     assert '<svg class="icon-svg"' not in button_markup
 
 
+def test_live_artifacts_toggle_wires_amc_live_artifacts_mode():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(encoding="utf-8")
+    chat_source = (PROJECT_ROOT / "backend/static/js/modules/chat.js").read_text(
+        encoding="utf-8"
+    )
+    api_source = (PROJECT_ROOT / "backend/static/js/modules/api.js").read_text(
+        encoding="utf-8"
+    )
+    state_source = (PROJECT_ROOT / "backend/static/js/modules/state.js").read_text(
+        encoding="utf-8"
+    )
+    router_source = (PROJECT_ROOT / "backend/app/routers/chat.py").read_text(
+        encoding="utf-8"
+    )
+    workflow_source = (PROJECT_ROOT / "backend/app/workflow.py").read_text(
+        encoding="utf-8"
+    )
+    prompts_source = (PROJECT_ROOT / "backend/app/prompts.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="quick-live-artifacts-btn"' in index_source
+    assert "Live Artifacts" in index_source
+    assert "auto_awesome" in index_source
+    assert "liveArtifactsMode: state.liveArtifactsMode" in chat_source
+    assert "setLiveArtifactsMode(nextValue)" in chat_source
+    assert "live_artifacts_mode: Boolean(liveArtifactsMode)" in api_source
+    assert "liveArtifactsMode: false" in state_source
+    assert "live_artifacts_mode: Optional[bool]" in router_source
+    assert "live_artifacts_mode=bool(request.live_artifacts_mode or request.canvas_mode)" in router_source
+    assert "live_artifacts_mode: bool = False" in workflow_source
+    assert "live_artifacts_mode=self.live_artifacts_mode" in workflow_source
+    assert "LIVE_ARTIFACTS_PROMPT" in prompts_source
+    assert "ANSWER_GENERATION_LIVE_ARTIFACTS_PROMPT" in prompts_source
+    assert "[Live Artifacts Inline Protocol - zh]" in prompts_source
+    assert "不要退回纯文本" in prompts_source
+    assert "不要放进 css、text、markdown 或 html 代码块" in prompts_source
+    assert "The actual answer content in Markdown" not in prompts_source.split("ANSWER_GENERATION_LIVE_ARTIFACTS_PROMPT", 1)[1]
+    assert "complete document with <!doctype html>" not in prompts_source
+
+
 def test_browser_modal_queries_status_inside_its_modal():
     source = (PROJECT_ROOT / "backend/static/js/modules/browser-modal.js").read_text(
         encoding="utf-8"
@@ -1338,6 +1641,25 @@ def test_browser_modal_queries_status_inside_its_modal():
 
     assert "modal.querySelector('.browser-status-overlay')" in source
     assert "document.querySelector('.browser-status-overlay')" not in source
+
+
+def test_browser_modal_supports_text_entry_for_manual_verification():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    modal_source = (PROJECT_ROOT / "backend/static/js/modules/browser-modal.js").read_text(
+        encoding="utf-8"
+    )
+    chat_router_source = (PROJECT_ROOT / "backend/app/routers/chat.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="browser-type-input"' in index_source
+    assert 'id="browser-type-send-btn"' in index_source
+    assert "sendTypedText" in modal_source
+    assert "{ action: 'type', text }" in modal_source
+    assert 'elif action == "type":' in chat_router_source
+    assert "await page.keyboard.type(text)" in chat_router_source
 
 
 def test_escape_shortcut_closes_topmost_modal_only():

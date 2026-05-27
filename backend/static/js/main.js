@@ -1,13 +1,13 @@
-import { initializeAuth, normalizeSettings } from './modules/auth.js';
+import { initializeAuth, normalizeSettings } from './modules/auth.js?v=1';
 import { state, setCurrentSessionId } from './modules/state.js';
-import { initUI, elements } from './modules/ui.js?v=2';
-import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=2';
-import { setupBrowserModal } from './modules/browser-modal.js';
-import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=11';
-import { setupSettingsModal } from './modules/settings-modal.js?v=22';
-import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=2';
+import { initUI, elements } from './modules/ui.js?v=8';
+import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=12';
+import { setupBrowserModal } from './modules/browser-modal.js?v=1';
+import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=17';
+import { setupSettingsModal } from './modules/settings-modal.js?v=33';
+import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=10';
 import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js?v=14';
-import * as API from './modules/api.js';
+import * as API from './modules/api.js?v=1';
 
 document.addEventListener('DOMContentLoaded', async () => {
     initUI();
@@ -79,15 +79,8 @@ function updateModelSelector(settings) {
         const models = getSupportedModelItems(provider.model_id);
         models.forEach(model => {
             const option = document.createElement('option');
-            let val = model;
-            let displayName = model;
-            const colonIdx = model.indexOf(':');
-            if (colonIdx !== -1) {
-                val = model.substring(0, colonIdx).trim();
-                displayName = model.substring(colonIdx + 1).trim();
-            } else {
-                displayName = val.includes('/') ? val.split('/').pop() : val;
-            }
+            const { modelId: val, displayName } = splitModelItem(model);
+            if (!val) return;
             option.value = val;
             option.textContent = `${displayName} · ${provider.name || providerId}`;
             option.title = `${providerId} / ${val}`;
@@ -120,15 +113,63 @@ function getSupportedModelItems(modelIds) {
         .filter(model => model && !isUnsupportedGemini25Model(model));
 }
 
+function splitModelItem(model) {
+    const raw = String(model || '').trim();
+    if (!raw) {
+        return { modelId: '', displayName: '' };
+    }
+    const aliasIdx = raw.indexOf('::');
+    if (aliasIdx !== -1) {
+        const modelId = raw.substring(0, aliasIdx).trim();
+        const displayName = raw.substring(aliasIdx + 2).trim();
+        if (modelId && displayName) {
+            return { modelId, displayName };
+        }
+    }
+    const colonIdx = raw.indexOf(':');
+    if (colonIdx !== -1) {
+        const modelId = raw.substring(0, colonIdx).trim();
+        const displayName = raw.substring(colonIdx + 1).trim();
+        const compactTag = /^[A-Za-z0-9._-]+$/.test(displayName);
+        const repeatedCompactName = compactTag
+            && modelId
+            && displayName
+            && modelId.toLowerCase() === displayName.toLowerCase();
+        const suffixCompactName = compactTag
+            && modelId
+            && displayName
+            && modelId.toLowerCase().endsWith(displayName.toLowerCase())
+            && /[-_.]/.test(modelId);
+        if (modelId && displayName && (
+            /\s/.test(displayName)
+            || !compactTag
+            || repeatedCompactName
+            || suffixCompactName
+        )) {
+            return { modelId, displayName };
+        }
+    }
+    return {
+        modelId: raw,
+        displayName: raw.includes('/') ? raw.split('/').pop() : raw,
+    };
+}
+
 function isUnsupportedGemini25Model(model) {
     return /(^|[^a-z0-9])gemini[\s._-]*2[\s._-]*5($|[^a-z0-9])/i.test(String(model || ''));
 }
 
 function restoreSessionFromUrl(chatHistory, loadChat) {
-    const pathMatch = window.location.pathname.match(/^\/c\/([a-zA-Z0-9_-]+)/);
+    const pathMatch = window.location.pathname.match(/^\/c\/([^/?#]+)\/?$/);
     if (!pathMatch) return;
 
-    const urlSessionId = pathMatch[1];
+    let urlSessionId = '';
+    try {
+        urlSessionId = decodeURIComponent(pathMatch[1]);
+    } catch (e) {
+        window.history.replaceState(null, '', '/');
+        return;
+    }
     const exists = chatHistory.some(h => h.id === urlSessionId);
     if (exists) {
         loadChat(urlSessionId);
@@ -148,7 +189,7 @@ function showHomeState() {
 function setupSystemThemeListener() {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if ((state.settings.theme || 'light') === 'auto') {
-            import('./modules/utils.js?v=2').then(m => m.applyTheme('auto'));
+            import('./modules/utils.js?v=3').then(m => m.applyTheme('auto'));
         }
     });
 }

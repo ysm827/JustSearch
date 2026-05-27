@@ -134,11 +134,23 @@ async def extract_page_content(page: Page, url: str) -> str:
     return ""
 
 
-async def install_resource_blocker(page: Page):
+async def install_resource_blocker(page: Page, should_block_url=None):
     """Abort requests for non-essential resources during content crawling."""
-    await page.route(
-        "**/*",
-        lambda route: route.abort()
-        if route.request.resource_type in _BLOCKED_RESOURCE_TYPES
-        else route.continue_(),
-    )
+    async def _handle_route(route):
+        request = route.request
+        if request.resource_type in _BLOCKED_RESOURCE_TYPES:
+            await route.abort()
+            return
+
+        if should_block_url:
+            try:
+                if should_block_url(request.url):
+                    await route.abort()
+                    return
+            except Exception:
+                await route.abort()
+                return
+
+        await route.continue_()
+
+    await page.route("**/*", _handle_route)

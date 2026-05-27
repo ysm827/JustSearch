@@ -71,8 +71,8 @@ async def get_github_stats():
 @router.get("/api/engines")
 async def get_engines():
     """Return list of available search engines."""
-    from ..search_engine import load_selectors, _config_cache
-    return {"engines": list(_config_cache.keys()) if _config_cache else ["duckduckgo"]}
+    from ..search_engine import get_all_engines
+    return {"engines": get_all_engines()}
 
 
 @router.get("/api/health")

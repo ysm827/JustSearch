@@ -1,9 +1,13 @@
 import { state, setCurrentSessionId } from './state.js';
-import { elements } from './ui.js?v=2';
-import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=11';
+import { elements } from './ui.js?v=8';
+import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=17';
 
 let popoverEl = null;
 let popoverTimeout = null;
+
+function encodeRouteSegment(value) {
+    return encodeURIComponent(String(value ?? ''));
+}
 
 function removeRecentChatsPopover() {
     if (popoverEl) {
@@ -43,7 +47,7 @@ function setupHistoryPopover(miniHistoryBtn, loadChat) {
             recentChats.forEach(chat => {
                 const item = document.createElement('a');
                 item.className = 'popover-item';
-                item.href = `/c/${chat.id}`;
+                item.href = `/c/${encodeRouteSegment(chat.id)}`;
                 item.textContent = chat.title || '新对话';
                 item.title = chat.title || '新对话';
                 item.addEventListener('click', (e) => {
@@ -213,7 +217,7 @@ export function setupSidebar(loadChat) {
             applyTheme(newTheme);
             updateThemeIcon();
 
-            const { saveSettingsAPI } = await import('./api.js');
+            const { saveSettingsAPI } = await import('./api.js?v=1');
             const { state } = await import('./state.js');
             if (state.settings) {
                 const newSettings = { ...state.settings, theme: newTheme };

@@ -121,30 +121,82 @@ export function stripMarkdown(mdText) {
     return text.trim();
 }
 
-export function createCopyButton(contentGetter) {
+export function createMessageActionButton(className, icon, title, onClick) {
     const btn = document.createElement('button');
-    btn.className = 'copy-btn';
-    btn.innerHTML = '<span class="material-symbols-rounded">content_copy</span>';
-    btn.title = '复制';
-    
-    btn.onclick = async (e) => {
+    btn.type = 'button';
+    btn.className = `message-action-btn ${className}`.trim();
+    btn.innerHTML = `<span class="material-symbols-rounded">${icon}</span>`;
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+    btn.onclick = onClick;
+    return btn;
+}
+
+export function createMessageActionRail(buttons, label = '消息操作') {
+    const rail = document.createElement('div');
+    rail.className = 'message-action-rail';
+    rail.setAttribute('role', 'toolbar');
+    rail.setAttribute('aria-label', label);
+
+    buttons.filter(Boolean).forEach((button) => rail.appendChild(button));
+    return rail;
+}
+
+export function createCopyButton(contentGetter) {
+    const btn = createMessageActionButton('copy-btn', 'content_copy', '复制', async (e) => {
         e.stopPropagation();
         const raw = typeof contentGetter === 'function' ? contentGetter() : contentGetter;
         if (!raw) return;
-        
+
         const text = stripMarkdown(raw);
-        
+
         try {
             await navigator.clipboard.writeText(text);
             const icon = btn.querySelector('span');
             icon.textContent = 'check';
+            btn.classList.add('is-success');
+            btn.title = '已复制';
+            btn.setAttribute('aria-label', '已复制');
             setTimeout(() => {
                 icon.textContent = 'content_copy';
-            }, 2000);
+                btn.classList.remove('is-success');
+                btn.title = '复制';
+                btn.setAttribute('aria-label', '复制');
+            }, 1600);
         } catch (err) {
             console.error('Failed to copy:', err);
         }
-    };
-    
+    });
+    btn.dataset.action = 'copy-message';
+
+    return btn;
+}
+
+export function createEditMessageButton(contentGetter, onEdit) {
+    const btn = createMessageActionButton('edit-message-btn', 'edit', '编辑', (e) => {
+        e.stopPropagation();
+        const raw = typeof contentGetter === 'function' ? contentGetter() : contentGetter;
+        if (!raw) return;
+        onEdit(raw);
+    });
+    btn.dataset.action = 'edit-message';
+    return btn;
+}
+
+export function createRegenerateButton(onRegenerate) {
+    const btn = createMessageActionButton('regenerate-btn', 'refresh', '重新生成', async (e) => {
+        e.stopPropagation();
+        await onRegenerate();
+    });
+    btn.dataset.action = 'regenerate-message';
+    return btn;
+}
+
+export function createDeleteMessageButton(onDelete) {
+    const btn = createMessageActionButton('msg-delete-btn', 'delete', '删除', async (e) => {
+        e.stopPropagation();
+        await onDelete();
+    });
+    btn.dataset.action = 'delete-message';
     return btn;
 }

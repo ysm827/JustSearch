@@ -23,11 +23,13 @@ from ..providers import (
     first_model_id,
     get_provider_by_id,
     is_unsupported_model_id,
+    require_provider_api_key,
 )
 from ..workflow import SearchWorkflow
 from ..interaction import get_interaction_session, mark_interaction_completed
 from ..rate_limiter import chat_limiter
 from ..logging_utils import set_request_id
+from ..search_engine import get_all_engines
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,9 @@ class ChatRequest(BaseModel):
     max_results: Optional[int] = None
     max_iterations: Optional[int] = None
     interactive_search: Optional[bool] = None
+    max_concurrent_pages: Optional[int] = None
+    live_artifacts_mode: Optional[bool] = None
+    canvas_mode: Optional[bool] = None
 
 
 async def _resolve_workflow_step_models(
@@ -69,6 +74,7 @@ async def _resolve_workflow_step_models(
         provider = get_provider_by_id(settings, provider_id)
         if not provider:
             raise HTTPException(status_code=400, detail=f"步骤 {step_id} 的 provider 不存在: {provider_id}")
+        require_provider_api_key(provider, f"步骤 {step_id} 的 provider")
 
         model = first_model_id(raw_step.get("model_id") or fallback_model or provider.get("model_id", ""))
         if not model:
@@ -100,6 +106,27 @@ def _safe_step_model_meta(step_model_configs: dict[str, dict[str, str]]) -> dict
         }
         for step_id, config in step_model_configs.items()
     }
+
+
+def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _resolve_search_engine(requested: str | None, saved: str | None) -> str:
+    valid_engines = set(get_all_engines())
+    engine = (requested or saved or "searxng").strip()
+    if requested and engine not in valid_engines:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的搜索引擎。可选: {', '.join(sorted(valid_engines))}",
+        )
+    if engine in valid_engines:
+        return engine
+    return "searxng"
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +252,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     provider = get_provider_by_id(defaults, provider_id)
     if not provider:
         raise HTTPException(status_code=400, detail=f"未找到 provider: {provider_id}")
+    require_provider_api_key(provider)
 
     api_key = provider.get("api_key", "")
 
@@ -237,13 +265,29 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         raise HTTPException(status_code=400, detail="Gemini 2.5 系列模型不再支持")
     workflow_step_models = await _resolve_workflow_step_models(defaults, provider_id, api_key, model)
 
-    search_engine = request.search_engine or defaults.get("search_engine", "duckduckgo")
-    max_results = request.max_results or defaults.get("max_results", 50)
-    max_iterations = request.max_iterations or defaults.get("max_iterations", 5)
+    search_engine = _resolve_search_engine(request.search_engine, defaults.get("search_engine", "searxng"))
+    max_results = _bounded_int(
+        request.max_results if request.max_results is not None else defaults.get("max_results", 50),
+        default=50,
+        minimum=1,
+        maximum=50,
+    )
+    max_iterations = _bounded_int(
+        request.max_iterations if request.max_iterations is not None else defaults.get("max_iterations", 5),
+        default=5,
+        minimum=1,
+        maximum=10,
+    )
     interactive_search = (
         request.interactive_search
         if request.interactive_search is not None
         else defaults.get("interactive_search", True)
+    )
+    max_concurrent_pages = _bounded_int(
+        request.max_concurrent_pages if request.max_concurrent_pages is not None else defaults.get("max_concurrent_pages", 3),
+        default=3,
+        minimum=1,
+        maximum=20,
     )
     session_id = request.session_id
     if not session_id:
@@ -257,8 +301,9 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
             api_key, base_url, model, search_engine, max_results,
             max_iterations, interactive_search,
             session_id=session_id,
-            max_concurrent_pages=int(defaults.get("max_concurrent_pages", 3)),
+            max_concurrent_pages=max_concurrent_pages,
             step_model_configs=workflow_step_models,
+            live_artifacts_mode=bool(request.live_artifacts_mode or request.canvas_mode),
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -283,7 +328,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
             queue.put_nowait({"type": "answer_chunk", "content": chunk})
 
         def source_callback(sources):
-            accumulated_sources.extend(sources)
+            accumulated_sources[:] = list(sources or [])
             queue.put_nowait({"type": "sources", "content": sources})
 
         def stats_callback(stats):

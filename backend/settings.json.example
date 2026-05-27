@@ -16,7 +16,7 @@
         "interaction": {"provider_id": "", "model_id": ""},
         "answer": {"provider_id": "", "model_id": ""}
     },
-    "search_engine": "duckduckgo",
+    "search_engine": "searxng",
     "max_results": 50,
     "max_iterations": 5,
     "interactive_search": true,

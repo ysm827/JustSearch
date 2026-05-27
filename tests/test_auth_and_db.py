@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
@@ -112,6 +112,85 @@ def test_access_control_allows_remote_api_with_query_token():
     asyncio.run(run())
 
 
+def test_html_bootstrap_includes_token_for_loopback_client(monkeypatch):
+    from backend.app import auth
+
+    monkeypatch.setenv("JUSTSEARCH_AUTH_ENABLED", "true")
+    monkeypatch.setattr(auth, "get_auth_token", lambda: "secret-token")
+
+    app = FastAPI()
+
+    @app.get("/")
+    async def index(request: Request):
+        return JSONResponse(auth.build_html_bootstrap_payload(request))
+
+    async def run():
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 4321))
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8000") as client:
+            response = await client.get("/")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "authEnabled": True,
+            "clientIsLoopback": True,
+            "authToken": "secret-token",
+        }
+
+    asyncio.run(run())
+
+
+def test_html_bootstrap_omits_token_when_remote_client_spoofs_localhost_host(monkeypatch):
+    from backend.app import auth
+
+    monkeypatch.setenv("JUSTSEARCH_AUTH_ENABLED", "true")
+    monkeypatch.setattr(auth, "get_auth_token", lambda: "secret-token")
+
+    app = FastAPI()
+
+    @app.get("/")
+    async def index(request: Request):
+        return JSONResponse(auth.build_html_bootstrap_payload(request))
+
+    async def run():
+        transport = httpx.ASGITransport(app=app, client=("203.0.113.10", 4321))
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8000") as client:
+            response = await client.get("/")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "authEnabled": True,
+            "clientIsLoopback": False,
+        }
+
+    asyncio.run(run())
+
+
+def test_html_bootstrap_omits_token_for_remote_page_host(monkeypatch):
+    from backend.app import auth
+
+    monkeypatch.setenv("JUSTSEARCH_AUTH_ENABLED", "true")
+    monkeypatch.setattr(auth, "get_auth_token", lambda: "secret-token")
+
+    app = FastAPI()
+
+    @app.get("/")
+    async def index(request: Request):
+        return JSONResponse(auth.build_html_bootstrap_payload(request))
+
+    async def run():
+        transport = httpx.ASGITransport(app=app, client=("203.0.113.10", 4321))
+        async with httpx.AsyncClient(transport=transport, base_url="http://example.com") as client:
+            response = await client.get("/")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "authEnabled": True,
+            "clientIsLoopback": False,
+        }
+
+    asyncio.run(run())
+
+
 def test_default_model_settings_use_deepseek_defaults():
     from backend.app.database import DEFAULT_SETTINGS
 
@@ -129,6 +208,7 @@ def test_default_model_settings_use_deepseek_defaults():
         "interaction",
         "answer",
     }
+    assert DEFAULT_SETTINGS["search_engine"] == "searxng"
     assert example_settings["default_provider_id"] == "deepseek"
     assert example_settings["providers"][0]["id"] == "deepseek"
     assert example_settings["providers"][0]["base_url"] == "https://api.deepseek.com/v1"
@@ -139,6 +219,18 @@ def test_default_model_settings_use_deepseek_defaults():
         "interaction",
         "answer",
     }
+    assert example_settings["search_engine"] == "searxng"
+
+
+def test_markdown_source_formatter_rejects_unsafe_urls():
+    from backend.app.routers.history import _format_source_markdown_item
+
+    assert _format_source_markdown_item(
+        {"title": "Unsafe [link]", "url": "javascript:alert(1)"}
+    ) == "- Unsafe \\[link\\]"
+    assert _format_source_markdown_item(
+        {"title": "Safe ] title", "url": "https://example.com/a)b"}
+    ) == "- [Safe \\] title](https://example.com/a%29b)"
 
 
 def test_save_chat_history_populates_fts_table(tmp_path):
@@ -178,6 +270,62 @@ def test_save_chat_history_populates_fts_table(tmp_path):
 
         assert total == 2
         assert matched == 1
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_cleanup_old_sessions_preserves_sessions_with_messages(tmp_path):
+    from datetime import datetime, timedelta
+    from sqlalchemy import select
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        await database.save_chat_history(
+            "old-with-message",
+            [{"role": "user", "content": "must survive"}],
+            title="Keep",
+        )
+
+        old_time = datetime.now() - timedelta(days=120)
+        async with await database.get_session() as session:
+            sess = (
+                await session.execute(
+                    select(database.ChatSession).where(database.ChatSession.id == "old-with-message")
+                )
+            ).scalar_one()
+            sess.created_at = old_time
+            sess.updated_at = old_time
+            session.add(
+                database.ChatSession(
+                    id="old-empty",
+                    title="Empty",
+                    created_at=old_time,
+                    updated_at=old_time,
+                )
+            )
+            await session.commit()
+
+        await database._cleanup_old_sessions(max_age_days=90)
+
+        assert await database.load_chat_history("old-with-message") is not None
+        assert await database.load_chat_history("old-empty") is None
 
         if database._engine is not None:
             await database._engine.dispose()
@@ -333,6 +481,50 @@ def test_import_history_package_adds_sessions_and_groups_without_overwriting(tmp
     asyncio.run(run())
 
 
+def test_import_history_package_ignores_non_scalar_group_id(tmp_path):
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+
+        summary = await database.import_history_package(
+            {
+                "type": "JustSearch-History",
+                "version": 1,
+                "history": [
+                    {
+                        "id": "bad-group-id",
+                        "title": "Bad Group ID",
+                        "group_id": ["not", "hashable"],
+                        "messages": [{"role": "user", "content": "hello"}],
+                    }
+                ],
+            }
+        )
+
+        imported = await database.load_chat_history("bad-group-id")
+
+        assert summary["imported_sessions"] == 1
+        assert imported["group_id"] is None
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_history_import_endpoint_accepts_json_package(tmp_path):
     from backend.app import database
     from backend.app.routers.history import router
@@ -381,6 +573,50 @@ def test_history_import_endpoint_accepts_json_package(tmp_path):
             "skipped_groups": 0,
         }
         assert (await database.load_chat_history("endpoint-session"))["title"] == "Endpoint Import"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_history_search_handles_fts_special_characters(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        await database.save_chat_history(
+            "fts-special",
+            [
+                {"role": "user", "content": "explain qwen2.5:7b behavior"},
+                {"role": "assistant", "content": "The token alpha-beta appears in content."},
+            ],
+            title="Tokenizer Edge",
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/history/search", params={"q": "alpha-beta"})
+
+        assert response.status_code == 200
+        assert response.json()[0]["id"] == "fts-special"
 
         if database._engine is not None:
             await database._engine.dispose()
@@ -548,6 +784,37 @@ def test_validate_key_allows_empty_api_key_for_local_provider():
     asyncio.run(run())
 
 
+def test_validate_key_rejects_empty_api_key_for_remote_provider():
+    from unittest.mock import patch
+    from backend.app.routers.settings import router
+
+    async def run():
+        app = FastAPI()
+        app.include_router(router)
+
+        with patch("backend.app.routers.settings.create_openai_client") as mock_create:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/api/settings/validate-key",
+                    json={
+                        "provider_id": "deepseek",
+                        "api_key": "",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-v4-pro",
+                    },
+                )
+
+            assert response.status_code == 200
+            assert response.json() == {
+                "valid": False,
+                "error": "请先填写 API 密钥",
+            }
+            mock_create.assert_not_called()
+
+    asyncio.run(run())
+
+
 def test_validate_key_rejects_gemini_25_models():
     from unittest.mock import patch
     from backend.app.routers.settings import router
@@ -575,6 +842,44 @@ def test_validate_key_rejects_gemini_25_models():
                 "error": "Gemini 2.5 系列模型不再支持",
             }
             mock_create.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_validate_key_reports_provider_subscription_failure():
+    from unittest.mock import AsyncMock, patch
+    from backend.app.routers.settings import router
+
+    async def run():
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=Exception(
+                "Error code: 403 - {'code': 'SUBSCRIPTION_NOT_FOUND', "
+                "'message': 'No active subscription found for this group'}"
+            )
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+
+        with patch("backend.app.routers.settings.create_openai_client", return_value=mock_client):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/api/settings/validate-key",
+                    json={
+                        "provider_id": "deepseek",
+                        "api_key": "sk-test",
+                        "base_url": "https://inferaichat.com/v1",
+                        "model_id": "deepseek-v4-pro",
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "valid": False,
+            "error": "模型服务返回 403：当前 API Key 所属账户没有可用订阅，请在模型服务后台开通/续订后重试。",
+        }
 
     asyncio.run(run())
 
@@ -676,6 +981,68 @@ def test_settings_api_saves_multiple_providers_and_masks_keys(tmp_path):
     asyncio.run(run())
 
 
+def test_settings_api_partial_update_preserves_existing_values(tmp_path):
+    from backend.app import database
+    from backend.app.routers.settings import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "theme": "light",
+                "search_engine": "searxng",
+                "max_results": 17,
+                "max_iterations": 4,
+                "interactive_search": False,
+                "max_concurrent_pages": 6,
+            }
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post("/api/settings", json={"theme": "dark"})
+            loaded_response = await client.get("/api/settings")
+
+        assert response.status_code == 200
+        saved = response.json()["settings"]
+        loaded = loaded_response.json()
+        assert saved["theme"] == "dark"
+        assert saved["search_engine"] == "searxng"
+        assert saved["max_results"] == 17
+        assert saved["max_iterations"] == 4
+        assert saved["interactive_search"] is False
+        assert saved["max_concurrent_pages"] == 6
+        assert loaded["search_engine"] == "searxng"
+
+        raw_settings = await database.load_settings()
+        assert raw_settings["theme"] == "dark"
+        assert raw_settings["search_engine"] == "searxng"
+        assert raw_settings["max_results"] == 17
+        assert raw_settings["max_iterations"] == 4
+        assert raw_settings["interactive_search"] is False
+        assert raw_settings["max_concurrent_pages"] == 6
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_settings_api_preserves_masked_provider_key_when_id_changes(tmp_path):
     from backend.app import database
     from backend.app.routers.settings import router
@@ -749,8 +1116,72 @@ def test_settings_api_preserves_masked_provider_key_when_id_changes(tmp_path):
     asyncio.run(run())
 
 
+def test_settings_api_default_provider_switch_updates_primary_legacy_fields(tmp_path):
+    from backend.app import database
+    from backend.app.routers.settings import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "api_key": "deepseek-secret",
+                "base_url": "https://api.deepseek.com/v1",
+                "model_id": "deepseek-chat",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "deepseek-secret",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-chat",
+                    },
+                    {
+                        "id": "openai",
+                        "name": "OpenAI",
+                        "api_key": "openai-secret",
+                        "base_url": "https://api.openai.com/v1",
+                        "model_id": "gpt-4.1",
+                    },
+                ],
+            }
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post("/api/settings", json={"default_provider_id": "openai"})
+
+        assert response.status_code == 200
+        raw_settings = await database.load_settings()
+        assert raw_settings["default_provider_id"] == "openai"
+        assert raw_settings["api_key"] == "openai-secret"
+        assert raw_settings["base_url"] == "https://api.openai.com/v1"
+        assert raw_settings["model_id"] == "gpt-4.1"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_provider_normalization_strips_gemini_25_models():
     from backend.app.providers import (
+        first_model_id,
         is_unsupported_model_id,
         mask_provider_secrets,
         normalize_providers,
@@ -792,6 +1223,14 @@ def test_provider_normalization_strips_gemini_25_models():
     )
     assert masked["model_id"] == "gpt-4.1"
     assert masked["providers"][0]["model_id"] == "gpt-4.1"
+    assert first_model_id("gpt-4.1:GPT 4.1") == "gpt-4.1"
+    assert first_model_id("gpt-5.5::5.5") == "gpt-5.5"
+    assert first_model_id("gpt-5.5:5.5") == "gpt-5.5"
+    assert first_model_id("deepseek-v4-pro:pro") == "deepseek-v4-pro"
+    assert first_model_id("gpt-5.5:gpt-5.5") == "gpt-5.5"
+    assert first_model_id("deepseek-chat:DeepSeek 聊天") == "deepseek-chat"
+    assert first_model_id("qwen2.5:7b") == "qwen2.5:7b"
+    assert first_model_id("qwen2.5:7b::Qwen 7B") == "qwen2.5:7b"
 
 
 def test_loaded_settings_backfills_legacy_api_into_default_provider():
@@ -954,6 +1393,106 @@ def test_workflow_step_model_resolution_allows_empty_local_api_key():
     assert resolved["answer"]["api_key"] == ""
 
 
+def test_workflow_step_model_resolution_rejects_remote_provider_without_api_key():
+    from fastapi import HTTPException
+    from backend.app.routers.chat import _resolve_workflow_step_models
+
+    settings = {
+        "providers": [
+            {
+                "id": "deepseek",
+                "name": "DeepSeek",
+                "api_key": "",
+                "base_url": "https://api.deepseek.com/v1",
+                "model_id": "deepseek-v4-pro",
+            },
+        ],
+        "workflow_step_models": {
+            "analysis": {"provider_id": "deepseek", "model_id": "deepseek-v4-pro"},
+        },
+    }
+
+    try:
+        asyncio.run(
+            _resolve_workflow_step_models(
+                settings,
+                "deepseek",
+                "",
+                "deepseek-v4-pro",
+            )
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert exc.detail == "请先在设置中配置 API 密钥（DeepSeek）。"
+    else:
+        raise AssertionError("expected missing remote provider key to be rejected")
+
+
+def test_chat_endpoint_rejects_remote_provider_without_api_key(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    class UnexpectedWorkflow:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("chat endpoint should fail before starting workflow")
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-v4-pro",
+                    },
+                ],
+            }
+        )
+
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "missing-key-test",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "请先在设置中配置 API 密钥（DeepSeek）。"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
     from backend.app import database
     from backend.app.routers.chat import router
@@ -973,6 +1512,8 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
             session_id=None,
             max_concurrent_pages=3,
             step_model_configs=None,
+            canvas_mode=False,
+            live_artifacts_mode=False,
         ):
             captured.update(
                 {
@@ -986,6 +1527,8 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
                     "session_id": session_id,
                     "max_concurrent_pages": max_concurrent_pages,
                     "step_model_configs": step_model_configs,
+                    "canvas_mode": canvas_mode,
+                    "live_artifacts_mode": live_artifacts_mode,
                 }
             )
 
@@ -1063,6 +1606,8 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
                     "query": "hello",
                     "session_id": "provider-test",
                     "provider_id": "openai",
+                    "max_concurrent_pages": 9,
+                    "canvas_mode": True,
                 },
             )
             body = response.text
@@ -1076,11 +1621,462 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
         assert captured["max_results"] == 7
         assert captured["max_iterations"] == 3
         assert captured["interactive_search"] is False
+        assert captured["max_concurrent_pages"] == 9
+        assert captured["canvas_mode"] is False
+        assert captured["live_artifacts_mode"] is True
         assert captured["step_model_configs"]["analysis"]["provider_id"] == "deepseek"
         assert captured["step_model_configs"]["analysis"]["api_key"] == "deepseek-secret"
         assert captured["step_model_configs"]["analysis"]["model"] == "deepseek-chat"
         assert captured["step_model_configs"]["interaction"]["provider_id"] == "openai"
         assert captured["step_model_configs"]["interaction"]["model"] == "gpt-4.1"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_chat_endpoint_clamps_request_search_limits(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(
+            self,
+            api_key,
+            base_url,
+            model,
+            search_engine,
+            max_results,
+            max_iterations,
+            interactive_search,
+            session_id=None,
+            max_concurrent_pages=3,
+            step_model_configs=None,
+            canvas_mode=False,
+            live_artifacts_mode=False,
+        ):
+            captured.update(
+                {
+                    "max_results": max_results,
+                    "max_iterations": max_iterations,
+                    "max_concurrent_pages": max_concurrent_pages,
+                }
+            )
+
+        async def run(
+            self,
+            query,
+            progress_callback,
+            stream_callback,
+            context_messages,
+            source_callback,
+            stats_callback,
+        ):
+            return f"answer for {query}"
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "deepseek-secret",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-chat",
+                    },
+                ],
+                "max_results": 8,
+                "max_iterations": 4,
+                "max_concurrent_pages": 6,
+            }
+        )
+
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "limit-clamp-test",
+                    "provider_id": "deepseek",
+                    "max_results": 500,
+                    "max_iterations": -2,
+                    "max_concurrent_pages": 0,
+                },
+            )
+
+        assert response.status_code == 200
+        assert captured == {
+            "max_results": 50,
+            "max_iterations": 1,
+            "max_concurrent_pages": 1,
+        }
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_chat_endpoint_defaults_to_searxng_when_no_engine_is_saved(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(
+            self,
+            api_key,
+            base_url,
+            model,
+            search_engine,
+            max_results,
+            max_iterations,
+            interactive_search,
+            session_id=None,
+            max_concurrent_pages=3,
+            step_model_configs=None,
+            canvas_mode=False,
+            live_artifacts_mode=False,
+        ):
+            captured["search_engine"] = search_engine
+            captured["live_artifacts_mode"] = live_artifacts_mode
+
+        async def run(
+            self,
+            query,
+            progress_callback,
+            stream_callback,
+            context_messages,
+            source_callback,
+            stats_callback,
+        ):
+            return f"answer for {query}"
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "deepseek-secret",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-chat",
+                    },
+                ],
+            }
+        )
+
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "default-engine-test",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 200
+        assert captured["search_engine"] == "searxng"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_chat_endpoint_rejects_unknown_requested_search_engine(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    class UnexpectedWorkflow:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("invalid search engine should fail before workflow starts")
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "deepseek-secret",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-chat",
+                    },
+                ],
+            }
+        )
+
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "bad-engine-test",
+                    "provider_id": "deepseek",
+                    "search_engine": "not-a-real-engine",
+                },
+            )
+
+        assert response.status_code == 400
+        assert "不支持的搜索引擎" in response.json()["detail"]
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_chat_endpoint_falls_back_when_saved_search_engine_is_unknown(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(
+            self,
+            api_key,
+            base_url,
+            model,
+            search_engine,
+            max_results,
+            max_iterations,
+            interactive_search,
+            session_id=None,
+            max_concurrent_pages=3,
+            step_model_configs=None,
+            canvas_mode=False,
+            live_artifacts_mode=False,
+        ):
+            captured["search_engine"] = search_engine
+
+        async def run(
+            self,
+            query,
+            progress_callback,
+            stream_callback,
+            context_messages,
+            source_callback,
+            stats_callback,
+        ):
+            return f"answer for {query}"
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "search_engine": "retired-engine",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "deepseek-secret",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-chat",
+                    },
+                ],
+            }
+        )
+
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "saved-bad-engine-test",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 200
+        assert captured["search_engine"] == "searxng"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_chat_endpoint_saves_latest_source_snapshot_without_duplicates(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    class FakeWorkflow:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def run(
+            self,
+            query,
+            progress_callback,
+            stream_callback,
+            context_messages,
+            source_callback,
+            stats_callback,
+        ):
+            source_callback([
+                {"id": 1, "title": "A", "url": "https://a.example"},
+                {"id": 2, "title": "B", "url": "https://b.example"},
+            ])
+            source_callback([
+                {"id": 1, "title": "A", "url": "https://a.example"},
+                {"id": 2, "title": "B", "url": "https://b.example"},
+                {"id": 3, "title": "C", "url": "https://c.example"},
+            ])
+            stats_callback({"sites_searched": 3})
+            return f"answer for {query}"
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "deepseek-secret",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-chat",
+                    },
+                ],
+            }
+        )
+
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "source-snapshot-test",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 200
+        history = await database.load_chat_history("source-snapshot-test")
+        assistant = history["messages"][1]
+        assert [source["id"] for source in assistant["sources"]] == [1, 2, 3]
 
         if database._engine is not None:
             await database._engine.dispose()
@@ -1109,6 +2105,8 @@ def test_chat_endpoint_allows_local_provider_without_api_key(tmp_path, monkeypat
             session_id=None,
             max_concurrent_pages=3,
             step_model_configs=None,
+            canvas_mode=False,
+            live_artifacts_mode=False,
         ):
             captured.update(
                 {
@@ -1116,6 +2114,7 @@ def test_chat_endpoint_allows_local_provider_without_api_key(tmp_path, monkeypat
                     "base_url": base_url,
                     "model": model,
                     "step_model_configs": step_model_configs,
+                    "live_artifacts_mode": live_artifacts_mode,
                 }
             )
 
@@ -1402,5 +2401,35 @@ def test_check_search_engines_reports_recent_failure_reason(monkeypatch):
                 "error": "验证/反爬页面",
             }
         ]
+
+    asyncio.run(run())
+
+
+def test_engines_endpoint_returns_full_configured_engine_list(monkeypatch):
+    from backend.app import search_engine
+    from backend.app.routers.stats import router
+
+    monkeypatch.setattr(search_engine, "_config_cache", {})
+    monkeypatch.setattr(search_engine, "_config_mtime", 0.0)
+
+    app = FastAPI()
+    app.include_router(router)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/engines")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "engines": [
+                "google",
+                "bing",
+                "duckduckgo",
+                "sogou",
+                "brave",
+                "searxng",
+            ]
+        }
 
     asyncio.run(run())

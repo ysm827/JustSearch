@@ -1,9 +1,9 @@
-import { authFetch } from './auth.js';
+import { authFetch } from './auth.js?v=1';
 import { setCurrentSessionId, state } from './state.js';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=2';
-import { renderHistory } from './history-view.js?v=11';
-import * as API from './api.js';
+import { elements, showConfirm } from './ui.js?v=8';
+import { renderHistory } from './history-view.js?v=17';
+import * as API from './api.js?v=1';
 
 const WORKFLOW_STEPS = [
     { id: 'analysis', label: '问题分析' },
@@ -11,6 +11,15 @@ const WORKFLOW_STEPS = [
     { id: 'interaction', label: '页面交互' },
     { id: 'answer', label: '最终回答' },
 ];
+
+const PROVIDER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+const SETTINGS_SAVE_STATES = {
+    saved: { icon: 'check_circle', text: '已保存' },
+    pending: { icon: 'sync', text: '待保存' },
+    saving: { icon: 'progress_activity', text: '保存中' },
+    invalid: { icon: 'error', text: '需要补全' },
+    error: { icon: 'warning', text: '保存失败' },
+};
 
 let isApplyingSettingsForm = false;
 let requestSettingsAutoSave = () => {};
@@ -168,11 +177,16 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
     let saveAgain = false;
     let lastSavedPayload = '';
 
+    setSettingsSaveStatus('saved');
+
     function rememberCurrentSettingsPayload() {
         const currentSettings = collectSettingsForm();
         lastSavedPayload = canAutoSaveSettings(currentSettings)
             ? JSON.stringify(currentSettings)
             : '';
+        updateProviderValidationUI(currentSettings);
+        updateProviderCountLabel(currentSettings.providers.length);
+        setSettingsSaveStatus('saved');
     }
 
     async function persistSettings() {
@@ -183,26 +197,34 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         }
 
         const newSettings = collectSettingsForm();
-        if (!canAutoSaveSettings(newSettings)) {
+        const validation = validateSettingsForm(newSettings);
+        updateProviderValidationUI(newSettings, validation);
+        updateProviderCountLabel(newSettings.providers.length);
+        if (!validation.ok) {
+            setSettingsSaveStatus('invalid', validation.message);
             return false;
         }
 
         const payload = JSON.stringify(newSettings);
         if (payload === lastSavedPayload) {
+            setSettingsSaveStatus('saved');
             return true;
         }
 
         saveInFlight = true;
+        setSettingsSaveStatus('saving');
         try {
             if (await API.saveSettingsAPI(newSettings)) {
                 markSavedProviderIdentities();
                 lastSavedPayload = JSON.stringify(collectSettingsForm());
+                setSettingsSaveStatus('saved');
                 updateModelSelector(state.settings);
                 if (typeof onSettingsSaved === 'function') {
                     onSettingsSaved();
                 }
                 return true;
             }
+            setSettingsSaveStatus('error', '自动保存失败，请稍后重试');
             showToast('自动保存设置失败', 'error');
             return false;
         } finally {
@@ -217,6 +239,11 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
     requestSettingsAutoSave = ({ immediate = false } = {}) => {
         if (isApplyingSettingsForm) return;
         if (saveTimeout) clearTimeout(saveTimeout);
+        const settings = collectSettingsForm();
+        const validation = validateSettingsForm(settings);
+        updateProviderValidationUI(settings, validation);
+        updateProviderCountLabel(settings.providers.length);
+        setSettingsSaveStatus(validation.ok ? 'pending' : 'invalid', validation.ok ? '' : validation.message);
         saveTimeout = setTimeout(persistSettings, immediate ? 0 : 700);
     };
 
@@ -341,7 +368,7 @@ function fillSettingsForm(settings) {
     isApplyingSettingsForm = true;
     try {
         document.getElementById('theme-select').value = settings.theme || 'light';
-        document.getElementById('engine-select').value = settings.search_engine || 'duckduckgo';
+        document.getElementById('engine-select').value = settings.search_engine || 'searxng';
         document.getElementById('max-results-input').value = settings.max_results || 50;
         document.getElementById('max-iterations-input').value = settings.max_iterations || 5;
         renderProviderList(settings.providers || [], settings.default_provider_id || '');
@@ -352,6 +379,9 @@ function fillSettingsForm(settings) {
         );
         document.getElementById('interactive-search-input').checked = settings.interactive_search !== undefined ? settings.interactive_search : true;
         document.getElementById('max-concurrent-pages-input').value = settings.max_concurrent_pages || 10;
+        updateProviderValidationUI();
+        updateProviderCountLabel(collectProvidersForm().length);
+        setSettingsSaveStatus('saved');
     } finally {
         isApplyingSettingsForm = false;
     }
@@ -374,23 +404,118 @@ function collectSettingsForm() {
 }
 
 function canAutoSaveSettings(settings) {
-    const providers = Array.isArray(settings?.providers) ? settings.providers : [];
-    if (providers.length === 0) return false;
+    return validateSettingsForm(settings).ok;
+}
 
-    const providerIds = new Set();
-    const providerIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
-    for (const provider of providers) {
+function validateSettingsForm(settings) {
+    const providers = Array.isArray(settings?.providers) ? settings.providers : [];
+    const errors = [];
+    const providerIds = new Map();
+
+    if (providers.length === 0) {
+        errors.push({ message: '至少需要一个 Provider' });
+    }
+
+    providers.forEach((provider, index) => {
         const id = String(provider.id || '').trim();
         const baseUrl = String(provider.base_url || '').trim();
         const modelId = String(provider.model_id || '').trim();
-        if (!id || !baseUrl || !modelId || !providerIdPattern.test(id) || providerIds.has(id)) {
-            return false;
+
+        if (!id) {
+            errors.push({ index, field: 'id', message: 'Provider ID 不能为空' });
+        } else if (!PROVIDER_ID_PATTERN.test(id)) {
+            errors.push({ index, field: 'id', message: '仅支持字母、数字、下划线和连字符' });
+        } else if (providerIds.has(id)) {
+            errors.push({ index, field: 'id', message: 'Provider ID 重复' });
+            errors.push({ index: providerIds.get(id), field: 'id', message: 'Provider ID 重复' });
+        } else {
+            providerIds.set(id, index);
         }
-        providerIds.add(id);
-    }
+
+        if (!baseUrl) {
+            errors.push({ index, field: 'base_url', message: 'API 基础地址不能为空' });
+        }
+
+        if (!modelId) {
+            errors.push({ index, field: 'model_id', message: '至少添加一个模型' });
+        }
+    });
 
     const defaultProviderId = String(settings.default_provider_id || '').trim();
-    return !defaultProviderId || providerIds.has(defaultProviderId);
+    if (defaultProviderId && !providerIds.has(defaultProviderId)) {
+        errors.push({ message: '默认 Provider 不存在' });
+    }
+
+    return {
+        ok: errors.length === 0,
+        errors,
+        message: errors[0]?.message || '',
+    };
+}
+
+function setSettingsSaveStatus(status, message = '') {
+    const el = document.getElementById('settings-save-status');
+    if (!el) return;
+
+    const nextStatus = SETTINGS_SAVE_STATES[status] ? status : 'saved';
+    const stateConfig = SETTINGS_SAVE_STATES[nextStatus];
+    el.className = `settings-save-status is-${nextStatus}`;
+    const icon = el.querySelector('.material-symbols-rounded');
+    const text = el.querySelector('span:last-child');
+    if (icon) {
+        icon.textContent = stateConfig.icon;
+    }
+    if (text) {
+        text.textContent = message || stateConfig.text;
+    }
+}
+
+function updateProviderCountLabel(count) {
+    const label = document.getElementById('provider-count-label');
+    if (!label) return;
+    label.textContent = `${count || 0} 个连接`;
+}
+
+function updateProviderValidationUI(settings = collectSettingsForm(), validation = validateSettingsForm(settings)) {
+    clearProviderValidationUI();
+    const cards = Array.from(document.querySelectorAll('.provider-card'));
+    validation.errors.forEach((error) => {
+        if (typeof error.index !== 'number') return;
+        const card = cards[error.index];
+        if (!card) return;
+        const fieldMap = {
+            id: '.provider-id-input',
+            base_url: '.provider-base-url-input',
+            model_id: '.model-settings-group',
+        };
+        const target = card.querySelector(fieldMap[error.field]);
+        if (target) {
+            markProviderFieldError(target, error.message);
+        }
+    });
+}
+
+function clearProviderValidationUI() {
+    document.querySelectorAll('.provider-field-error').forEach(el => el.remove());
+    document.querySelectorAll('.provider-card .has-error').forEach(el => el.classList.remove('has-error'));
+    document.querySelectorAll('.provider-card [aria-invalid="true"]').forEach(el => {
+        el.removeAttribute('aria-invalid');
+    });
+}
+
+function markProviderFieldError(target, message) {
+    const group = target.classList.contains('form-group') || target.classList.contains('model-settings-group')
+        ? target
+        : target.closest('.form-group');
+    if (!group) return;
+    group.classList.add('has-error');
+    if ('setAttribute' in target && target.tagName !== 'DIV') {
+        target.setAttribute('aria-invalid', 'true');
+    }
+    const error = document.createElement('div');
+    error.className = 'provider-field-error';
+    error.textContent = message;
+    group.appendChild(error);
 }
 
 function setupEngineCheckControls() {
@@ -489,12 +614,12 @@ function renderEngineCheckResults(data) {
 
 function getEngineDisplayName(engine) {
     const names = {
-        duckduckgo: 'DuckDuckGo',
-        google: 'Google',
         bing: 'Bing',
-        sogou: '搜狗',
+        sogou: '搜狗（中文备用）',
+        searxng: 'SearXNG（默认，自托管）',
+        duckduckgo: 'DuckDuckGo（易触发验证）',
+        google: 'Google（易触发验证码）',
         brave: 'Brave Search',
-        searxng: 'SearXNG',
     };
     return names[engine] || engine || 'Unknown';
 }
@@ -529,7 +654,7 @@ async function validateApiKey(e) {
                 base_url: baseUrl,
                 model_id: (() => {
                     let first = modelId.split(',')[0].trim();
-                    return first.includes(':') ? first.split(':')[0].trim() : first;
+                    return splitModelItem(first).modelId;
                 })(),
             }),
         });
@@ -600,6 +725,8 @@ function renderProviderList(providers, defaultProviderId, options = {}) {
                 : null;
         container.appendChild(createProviderCard(provider, fallbackDefault, index, { collapsed }));
     });
+    updateProviderCountLabel(items.length);
+    syncDefaultProviderBadges();
     refreshWorkflowStepModelOptions();
 }
 
@@ -701,10 +828,8 @@ function getConfiguredModelOptions(providers) {
         if (!providerId) return;
 
         getModelItems(provider.model_id).forEach((modelValue) => {
-            const colonIdx = modelValue.indexOf(':');
-            const modelId = colonIdx === -1 ? modelValue.trim() : modelValue.substring(0, colonIdx).trim();
+            const { modelId, displayName } = splitModelItem(modelValue);
             if (!modelId) return;
-            const displayName = getModelDisplayName(modelValue);
             const providerName = String(provider.name || providerId).trim() || providerId;
             options.push({
                 value: encodeStepModelValue(providerId, modelId),
@@ -764,15 +889,20 @@ function createProviderCard(provider, defaultProviderId, index, options = {}) {
     const card = document.createElement('div');
     card.className = 'provider-card collapsed';
     const providerId = provider.id || `provider-${index + 1}`;
+    const isDefaultProvider = providerId === defaultProviderId;
     card.dataset.savedProviderId = provider.previous_id || providerId;
     card.dataset.liveProviderId = providerId;
     const radioId = `default-provider-${index}`;
     const providerSummary = formatProviderSummary(provider);
+    card.classList.toggle('is-default', isDefaultProvider);
     card.innerHTML = `
         <div class="provider-card-header">
             <button type="button" class="provider-collapse-btn" aria-expanded="false">
                 <span class="provider-collapse-copy">
-                    <span class="provider-card-name">${escapeHtml(provider.name || providerId)}</span>
+                    <span class="provider-title-row">
+                        <span class="provider-card-name">${escapeHtml(provider.name || providerId)}</span>
+                        <span class="provider-default-badge">默认</span>
+                    </span>
                     <span class="provider-card-subtitle">${escapeHtml(providerId)}</span>
                     <span class="provider-summary-row" aria-hidden="true">
                         <span class="provider-summary-pill provider-summary-base-url">${escapeHtml(providerSummary.baseUrl)}</span>
@@ -783,11 +913,11 @@ function createProviderCard(provider, defaultProviderId, index, options = {}) {
                 <span class="material-symbols-rounded provider-collapse-icon">expand_more</span>
             </button>
             <div class="provider-card-actions">
-                <label class="provider-default-label" for="${radioId}">
-                    <input type="radio" id="${radioId}" name="default-provider-radio" value="${escapeHtml(providerId)}" ${providerId === defaultProviderId ? 'checked' : ''}>
+                <label class="provider-default-label" for="${radioId}" title="设为默认 Provider">
+                    <input type="radio" id="${radioId}" name="default-provider-radio" value="${escapeHtml(providerId)}" ${isDefaultProvider ? 'checked' : ''}>
                     <span>默认</span>
                 </label>
-                <button type="button" class="remove-provider-btn" title="删除 Provider">
+                <button type="button" class="remove-provider-btn" title="删除 Provider" aria-label="删除 Provider">
                     <span class="material-symbols-rounded">delete</span>
                 </button>
             </div>
@@ -844,16 +974,20 @@ function createProviderCard(provider, defaultProviderId, index, options = {}) {
     idInput.addEventListener('input', () => {
         const previousProviderId = card.dataset.liveProviderId || card.dataset.savedProviderId || providerId;
         const nextProviderId = idInput.value.trim();
-        card.dataset.liveProviderId = nextProviderId;
+        if (nextProviderId) {
+            card.dataset.liveProviderId = nextProviderId;
+        }
         radio.value = nextProviderId;
         const displayName = card.querySelector('.provider-name-input').value.trim() || nextProviderId;
         card.querySelector('.provider-card-name').textContent = displayName;
         card.querySelector('.provider-card-subtitle').textContent = nextProviderId;
         updateProviderSummary(card);
-        const providerIdMap = previousProviderId && nextProviderId
-            ? new Map([[previousProviderId, nextProviderId]])
-            : null;
-        refreshWorkflowStepModelOptions({ providerIdMap });
+        if (nextProviderId) {
+            const providerIdMap = previousProviderId
+                ? new Map([[previousProviderId, nextProviderId]])
+                : null;
+            refreshWorkflowStepModelOptions({ providerIdMap });
+        }
         requestSettingsAutoSave();
     });
     card.querySelector('.provider-name-input').addEventListener('input', () => {
@@ -894,7 +1028,10 @@ function createProviderCard(provider, defaultProviderId, index, options = {}) {
     });
 
     card.querySelector('.provider-validate-key-btn').addEventListener('click', validateApiKey);
-    radio.addEventListener('change', () => requestSettingsAutoSave({ immediate: true }));
+    radio.addEventListener('change', () => {
+        syncDefaultProviderBadges();
+        requestSettingsAutoSave({ immediate: true });
+    });
     card.querySelector('.provider-api-key-input').addEventListener('input', () => {
         updateProviderSummary(card);
         requestSettingsAutoSave();
@@ -903,7 +1040,9 @@ function createProviderCard(provider, defaultProviderId, index, options = {}) {
         updateProviderSummary(card);
         requestSettingsAutoSave();
     });
-    card.querySelector('.remove-provider-btn').addEventListener('click', () => {
+    card.querySelector('.remove-provider-btn').addEventListener('click', async () => {
+        const providerName = card.querySelector('.provider-card-name')?.textContent?.trim() || providerId;
+        if (!(await showConfirm(`确定删除 ${providerName} 吗？`, '删除 Provider'))) return;
         const currentDefaultProviderId = getSelectedDefaultProviderId();
         const providers = Array.from(document.querySelectorAll('.provider-card'))
             .filter(providerCard => providerCard !== card)
@@ -922,6 +1061,13 @@ function createProviderCard(provider, defaultProviderId, index, options = {}) {
     return card;
 }
 
+function syncDefaultProviderBadges() {
+    document.querySelectorAll('.provider-card').forEach((card) => {
+        const radio = card.querySelector('input[name="default-provider-radio"]');
+        card.classList.toggle('is-default', Boolean(radio?.checked));
+    });
+}
+
 function setupProviderModelList(providerCard) {
     const container = providerCard.querySelector('.model-list-container');
     const addButton = providerCard.querySelector('.provider-add-model-btn');
@@ -937,10 +1083,12 @@ function setupProviderModelList(providerCard) {
             addModelRow('', '');
         } else {
             items.forEach(item => {
-                const colonIdx = item.indexOf(':');
+                const { modelId, displayName } = splitModelItem(item);
                 addModelRow(
-                    colonIdx === -1 ? item : item.substring(0, colonIdx).trim(),
-                    colonIdx === -1 ? '' : item.substring(colonIdx + 1).trim(),
+                    modelId,
+                    displayName === modelId || displayName === (modelId.includes('/') ? modelId.split('/').pop() : modelId)
+                        ? ''
+                        : displayName,
                 );
             });
         }
@@ -954,7 +1102,7 @@ function setupProviderModelList(providerCard) {
                 const id = row.querySelector('.model-id-input').value.trim();
                 const name = row.querySelector('.model-name-input').value.trim();
                 if (!id) return '';
-                return name ? `${id}:${name}` : id;
+                return name ? `${id}::${name}` : id;
             })
             .filter(model => model && !isUnsupportedGemini25Model(model))
             .join(', ');
@@ -1063,12 +1211,49 @@ function isUnsupportedGemini25Model(model) {
 }
 
 function getModelDisplayName(modelValue) {
+    return splitModelItem(modelValue).displayName;
+}
+
+function splitModelItem(modelValue) {
     const raw = String(modelValue || '').trim();
+    if (!raw) {
+        return { modelId: '', displayName: '' };
+    }
+    const aliasIdx = raw.indexOf('::');
+    if (aliasIdx !== -1) {
+        const modelId = raw.substring(0, aliasIdx).trim();
+        const displayName = raw.substring(aliasIdx + 2).trim();
+        if (modelId && displayName) {
+            return { modelId, displayName };
+        }
+    }
     const colonIdx = raw.indexOf(':');
     if (colonIdx !== -1) {
-        return raw.substring(colonIdx + 1).trim() || raw.substring(0, colonIdx).trim();
+        const modelId = raw.substring(0, colonIdx).trim();
+        const displayName = raw.substring(colonIdx + 1).trim();
+        const compactTag = /^[A-Za-z0-9._-]+$/.test(displayName);
+        const repeatedCompactName = compactTag
+            && modelId
+            && displayName
+            && modelId.toLowerCase() === displayName.toLowerCase();
+        const suffixCompactName = compactTag
+            && modelId
+            && displayName
+            && modelId.toLowerCase().endsWith(displayName.toLowerCase())
+            && /[-_.]/.test(modelId);
+        if (modelId && displayName && (
+            /\s/.test(displayName)
+            || !compactTag
+            || repeatedCompactName
+            || suffixCompactName
+        )) {
+            return { modelId, displayName };
+        }
     }
-    return raw.includes('/') ? raw.split('/').pop() : raw;
+    return {
+        modelId: raw,
+        displayName: raw.includes('/') ? raw.split('/').pop() : raw,
+    };
 }
 
 function collectProvidersForm() {
@@ -1118,3 +1303,10 @@ function escapeHtml(str) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 }
+
+export const __settingsModalTestHooks = {
+    collectProvidersForm,
+    collectWorkflowStepModels,
+    renderProviderList,
+    renderWorkflowStepModels,
+};

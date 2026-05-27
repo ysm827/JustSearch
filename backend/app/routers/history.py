@@ -3,6 +3,7 @@ History router – /api/history endpoints
 """
 
 import logging
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Body, Query
 from sqlalchemy import text as sql_text
@@ -20,6 +21,55 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _build_safe_fts_query(query: str) -> str:
+    """Build an FTS5 query from arbitrary user text without exposing query syntax."""
+    terms = [
+        term.strip()
+        for term in str(query or "").split()
+        if term.strip()
+    ]
+    if not terms:
+        terms = [str(query or "").strip()]
+
+    phrases = []
+    for term in terms:
+        escaped = term.replace('"', '""')
+        if escaped:
+            phrases.append(f'"{escaped}"')
+    return " ".join(phrases)
+
+
+def _escape_markdown_link_text(value: object) -> str:
+    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+    return (
+        text
+        .replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
+
+
+def _safe_markdown_url(value: object) -> str:
+    raw = str(value or "").strip()
+    if any(ch in raw for ch in (" ", "\t", "\r", "\n", "<", ">")):
+        return ""
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return raw.replace(")", "%29")
+
+
+def _format_source_markdown_item(source: object) -> str:
+    source = source if isinstance(source, dict) else {}
+    raw_url = source.get("url", "")
+    title = source.get("title") or raw_url or "来源"
+    text = _escape_markdown_link_text(title) or "来源"
+    safe_url = _safe_markdown_url(raw_url)
+    if not safe_url:
+        return f"- {text}"
+    return f"- [{text}]({safe_url})"
+
+
 @router.get("/api/history")
 async def get_history_endpoint():
     return await list_chats()
@@ -28,6 +78,7 @@ async def get_history_endpoint():
 @router.get("/api/history/search")
 async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=200)):
     """Full-text search across all chat messages using FTS5."""
+    fts_query = _build_safe_fts_query(q)
     async with await get_session() as session:
         try:
             result = await session.execute(
@@ -38,7 +89,7 @@ async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=2
                     "WHERE chat_messages_fts MATCH :query "
                     "ORDER BY cs.updated_at DESC LIMIT 20"
                 ),
-                {"query": q},
+                {"query": fts_query},
             )
             rows = result.fetchall()
             return [
@@ -223,9 +274,7 @@ async def export_chat(session_id: str, format: str = "markdown"):
             if sources:
                 md_lines.append("### 参考资料\n")
                 for src in sources:
-                    url = src.get("url", "")
-                    src_title = src.get("title", "")
-                    md_lines.append(f"- [{src_title}]({url})")
+                    md_lines.append(_format_source_markdown_item(src))
                 md_lines.append("")
 
     return Response(

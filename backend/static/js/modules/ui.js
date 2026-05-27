@@ -1,6 +1,17 @@
-import { createCopyButton } from './utils.js?v=2';
-import { extractSources, renderWithCitations } from './source-renderer.js?v=2';
+import {
+    createCopyButton,
+    createDeleteMessageButton,
+    createEditMessageButton,
+    createMessageActionRail,
+    createRegenerateButton
+} from './utils.js?v=3';
+import { extractSources, renderWithCitations } from './source-renderer.js?v=3';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=2';
 import { state } from './state.js';
+
+const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;
+const USER_MESSAGE_COLLAPSE_LINE_THRESHOLD = 8;
+const MESSAGE_GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 /**
  * 自定义确认弹窗（替代浏览器原生 confirm）。
@@ -107,7 +118,138 @@ function initScrollBehavior() {
     });
 }
 
-export function renderMessages(messages) {
+function findPreviousUserContent(messages, fromIndex) {
+    for (let i = fromIndex - 1; i >= 0; i -= 1) {
+        if (messages[i]?.role === 'user' && messages[i]?.content) {
+            return messages[i].content;
+        }
+    }
+    return '';
+}
+
+function parseMessageTimestamp(value) {
+    if (!value) return null;
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isGroupedWithPrevious(message, previousMessage) {
+    if (!message || !previousMessage) return false;
+    if (normalizeMessageRole(message.role) !== normalizeMessageRole(previousMessage.role)) return false;
+    const currentTime = parseMessageTimestamp(message.timestamp);
+    const previousTime = parseMessageTimestamp(previousMessage.timestamp);
+    if (currentTime === null || previousTime === null) return false;
+    return currentTime - previousTime >= 0 && currentTime - previousTime < MESSAGE_GROUP_WINDOW_MS;
+}
+
+function shouldCollapseUserMessageContent(content) {
+    const text = String(content || '');
+    if (text.length > USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD) return true;
+    return (text.match(/\n/g)?.length || 0) + 1 > USER_MESSAGE_COLLAPSE_LINE_THRESHOLD;
+}
+
+function normalizeMessageRole(role) {
+    return role === 'model' ? 'assistant' : role;
+}
+
+function createMessageAvatar(role) {
+    const avatar = document.createElement('div');
+    const avatarRoleClass = role === 'assistant'
+        ? 'assistant-avatar'
+        : role === 'error'
+            ? 'error-avatar'
+            : 'user-avatar';
+    avatar.className = `message-avatar ${avatarRoleClass}`;
+    avatar.setAttribute('aria-hidden', 'true');
+
+    if (role === 'assistant') {
+        const img = document.createElement('img');
+        img.src = '/static/assets/justsearch-favicon.png';
+        img.alt = '';
+        avatar.appendChild(img);
+    } else if (role === 'error') {
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-rounded';
+        icon.textContent = 'warning';
+        avatar.appendChild(icon);
+    } else {
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-rounded';
+        icon.textContent = 'person';
+        avatar.appendChild(icon);
+    }
+
+    return avatar;
+}
+
+export function createMessageShell(role, options = {}) {
+    const normalizedRole = normalizeMessageRole(role);
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${normalizedRole}`;
+    msgDiv.dataset.messageRole = normalizedRole;
+    if (options.grouped) {
+        msgDiv.classList.add('grouped');
+    }
+    if (options.timestamp) {
+        msgDiv.dataset.messageTimestamp = options.timestamp;
+    }
+
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'message-row';
+
+    const sideColumn = document.createElement('div');
+    sideColumn.className = 'message-side';
+    sideColumn.appendChild(createMessageAvatar(normalizedRole));
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content message-content-container';
+
+    if (normalizedRole === 'user') {
+        rowDiv.appendChild(contentDiv);
+        rowDiv.appendChild(sideColumn);
+    } else {
+        rowDiv.appendChild(sideColumn);
+        rowDiv.appendChild(contentDiv);
+    }
+
+    msgDiv.appendChild(rowDiv);
+    return { msgDiv, rowDiv, contentDiv, sideColumn };
+}
+
+function renderUserMessageContent(content, contentDiv) {
+    const textDiv = document.createElement('div');
+    textDiv.className = 'message-user-text';
+    textDiv.textContent = content || '';
+    contentDiv.appendChild(textDiv);
+
+    if (!shouldCollapseUserMessageContent(content)) return;
+
+    contentDiv.classList.add('is-collapsible', 'is-collapsed');
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'message-collapse-toggle';
+    toggle.setAttribute('aria-expanded', 'false');
+
+    const label = document.createElement('span');
+    label.textContent = '展开';
+    const icon = document.createElement('span');
+    icon.className = 'material-symbols-rounded';
+    icon.textContent = 'expand_more';
+    toggle.appendChild(label);
+    toggle.appendChild(icon);
+
+    toggle.addEventListener('click', () => {
+        const expanded = contentDiv.classList.toggle('is-expanded');
+        contentDiv.classList.toggle('is-collapsed', !expanded);
+        toggle.setAttribute('aria-expanded', String(expanded));
+        label.textContent = expanded ? '折叠' : '展开';
+        icon.textContent = expanded ? 'expand_less' : 'expand_more';
+    });
+
+    contentDiv.appendChild(toggle);
+}
+
+export function renderMessages(messages, actionCallbacks = {}) {
     elements.chatContainer.innerHTML = '';
     
     if (!messages || messages.length === 0) {
@@ -119,88 +261,95 @@ export function renderMessages(messages) {
     elements.heroSection.style.display = 'none';
     
     messages.forEach((msg, idx) => {
-        appendMessage(msg.role, msg.content, msg.logs, msg.sources, msg.stats, idx, msg.timestamp);
+        const previousMessage = idx > 0 ? messages[idx - 1] : null;
+        appendMessage(msg.role, msg.content, msg.logs, msg.sources, msg.stats, idx, msg.timestamp, {
+            ...actionCallbacks,
+            isGrouped: isGroupedWithPrevious(msg, previousMessage),
+            previousUserContent: normalizeMessageRole(msg.role) === 'assistant' ? findPreviousUserContent(messages, idx) : ''
+        });
     });
     
     scrollToBottom();
 }
 
-export function appendMessage(role, content, logs = null, sources = null, stats = null, messageIndex = null, timestamp = null) {
-    const msgDiv = document.createElement('div');
-    msgDiv.className = `message ${role}`;
-    msgDiv.dataset.messageRole = role;
-    
-    if (role === 'assistant' && logs && logs.length > 0) {
-         const siteCount = (stats && stats.sites_searched) ? stats.sites_searched : ((sources && sources.length) ? sources.length : 0);
-         msgDiv.appendChild(createLogContainer(logs, siteCount));
+function stageMessageForEdit(content, actionCallbacks = {}) {
+    if (typeof actionCallbacks.onEdit === 'function') {
+        actionCallbacks.onEdit(content);
+        return;
     }
 
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'message-content message-content-container';
-    
-    if (role === 'assistant') {
-        contentDiv.classList.add('markdown-body');
-        const resolvedSources = (sources && sources.length > 0) ? sources : extractSources(content);
-        contentDiv.innerHTML = renderWithCitations(content, resolvedSources);
-    } else {
-        contentDiv.textContent = content;
-    }
-    
-    const copyBtn = createCopyButton(content);
-    contentDiv.appendChild(copyBtn);
+    if (!elements.userInput) return;
+    elements.userInput.value = content;
+    elements.userInput.dispatchEvent(new Event('input', { bubbles: true }));
+    elements.userInput.focus({ preventScroll: true });
+    scrollToBottom();
+}
 
-    // Delete button (only for loaded history messages)
+function createMessageActions({ role, content, msgDiv, messageIndex, actionCallbacks }) {
+    const normalizedRole = normalizeMessageRole(role);
+    const buttons = [createCopyButton(content)];
+
+    if (normalizedRole === 'user') {
+        buttons.push(createEditMessageButton(content, (value) => {
+            stageMessageForEdit(value, actionCallbacks);
+        }));
+    }
+
+    if (normalizedRole === 'assistant' && actionCallbacks.previousUserContent && typeof actionCallbacks.onRegenerate === 'function') {
+        buttons.push(createRegenerateButton(() => actionCallbacks.onRegenerate(actionCallbacks.previousUserContent, { messageIndex })));
+    }
+
     if (messageIndex !== null) {
-        const deleteMsgBtn = document.createElement('button');
-        deleteMsgBtn.className = 'msg-delete-btn';
-        deleteMsgBtn.title = '删除此条消息';
-        deleteMsgBtn.innerHTML = '<span class="material-symbols-rounded">delete</span>';
-        deleteMsgBtn.onclick = async (e) => {
-            e.stopPropagation();
+        buttons.push(createDeleteMessageButton(async () => {
             if (!await showConfirm('确定要删除这条消息吗？', '删除消息')) return;
-            const { deleteMessageAPI } = await import('./api.js');
+            const { deleteMessageAPI } = await import('./api.js?v=1');
             const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
             if (ok) {
                 msgDiv.remove();
+                if (typeof actionCallbacks.onMessageDeleted === 'function') {
+                    await actionCallbacks.onMessageDeleted(messageIndex);
+                }
             } else {
                 const { showToast } = await import('./toast.js');
                 showToast('删除失败', 'error');
             }
-        };
-        contentDiv.appendChild(deleteMsgBtn);
+        }));
     }
-    
-    msgDiv.appendChild(contentDiv);
 
-    // Add timestamp — use provided timestamp or current time
-    const timeDiv = document.createElement('div');
-    timeDiv.className = 'message-time';
-    if (timestamp) {
-        // Try to parse ISO timestamp or date string
-        try {
-            const d = new Date(timestamp);
-            const now = new Date();
-            const isToday = d.toDateString() === now.toDateString();
-            const hours = d.getHours().toString().padStart(2, '0');
-            const minutes = d.getMinutes().toString().padStart(2, '0');
-            if (isToday) {
-                timeDiv.textContent = `${hours}:${minutes}`;
-            } else {
-                // Show date for older messages
-                const month = (d.getMonth() + 1).toString().padStart(2, '0');
-                const day = d.getDate().toString().padStart(2, '0');
-                timeDiv.textContent = `${month}-${day} ${hours}:${minutes}`;
-            }
-        } catch {
-            timeDiv.textContent = timestamp;
-        }
-    } else {
-        const now = new Date();
-        const hours = now.getHours().toString().padStart(2, '0');
-        const minutes = now.getMinutes().toString().padStart(2, '0');
-        timeDiv.textContent = `${hours}:${minutes}`;
+    return createMessageActionRail(buttons, normalizedRole === 'assistant' ? '助手消息操作' : '用户消息操作');
+}
+
+export function appendMessage(role, content, logs = null, sources = null, stats = null, messageIndex = null, timestamp = null, actionCallbacks = {}) {
+    const normalizedRole = normalizeMessageRole(role);
+    const { msgDiv, contentDiv, sideColumn } = createMessageShell(role, {
+        grouped: Boolean(actionCallbacks.isGrouped),
+        timestamp
+    });
+
+    if (normalizedRole === 'assistant' && logs && logs.length > 0) {
+         const siteCount = (stats && stats.sites_searched) ? stats.sites_searched : ((sources && sources.length) ? sources.length : 0);
+         contentDiv.appendChild(createLogContainer(logs, siteCount));
     }
-    msgDiv.appendChild(timeDiv);
+
+    if (normalizedRole === 'assistant') {
+        contentDiv.classList.add('markdown-body');
+        const resolvedSources = (sources && sources.length > 0) ? sources : extractSources(content);
+        const answerBody = document.createElement('div');
+        answerBody.className = 'message-answer-body';
+        answerBody.dataset.liveArtifactsMessageId = `history-${messageIndex ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        if (!getInlineLiveArtifact(content, answerBody.dataset.liveArtifactsMessageId, false)) {
+            answerBody.innerHTML = renderWithCitations(content, resolvedSources);
+        }
+        renderLiveArtifactsForMessage(answerBody, content, {
+            messageId: answerBody.dataset.liveArtifactsMessageId,
+            isStreaming: false,
+        });
+        contentDiv.appendChild(answerBody);
+    } else {
+        renderUserMessageContent(content, contentDiv);
+    }
+
+    sideColumn.appendChild(createMessageActions({ role: normalizedRole, content, msgDiv, messageIndex, actionCallbacks }));
 
     elements.chatContainer.appendChild(msgDiv);
     return { msgDiv, contentDiv };
@@ -327,7 +476,7 @@ export function createDynamicLogContainer() {
     
     const statusText = document.createElement('span');
     statusText.className = 'log-status-text';
-    statusText.textContent = '正在搜索...';
+    statusText.textContent = '正在思考...';
     
     statusLeft.appendChild(spinner);
     statusLeft.appendChild(statusText);

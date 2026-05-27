@@ -51,6 +51,7 @@ venv.bak/
 # User Data (Browser data, logs, etc.)
 user_data/
 backend/user_data/
+backups/
 
 # Database
 data/

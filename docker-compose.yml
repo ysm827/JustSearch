@@ -2,18 +2,29 @@ services:
   justsearch:
     build: .
     container_name: justsearch
+    depends_on:
+      - searxng
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
       - ./user_data:/app/user_data
     environment:
       - HEADLESS=${HEADLESS:-true}
-      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000,http://localhost,http://127.0.0.1}
       - MAX_CONCURRENT_PAGES=${MAX_CONCURRENT_PAGES:-10}
       - JUSTSEARCH_AUTH_ENABLED=${JUSTSEARCH_AUTH_ENABLED:-true}
+      - SEARXNG_SEARCH_URL=${SEARXNG_SEARCH_URL:-http://searxng:8080/search?q={query}&format=html}
     env_file:
       - path: .env
         required: false
     command: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: justsearch-searxng
+    environment:
+      - BASE_URL=${SEARXNG_BASE_URL:-http://localhost:8080/}
+      - INSTANCE_NAME=${SEARXNG_INSTANCE_NAME:-JustSearch SearXNG}
     restart: unless-stopped

@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 import uuid
 from typing import List, Dict, Callable, Any, Optional
 from .llm_client import LLMClient
@@ -10,10 +11,11 @@ from .engine_health import engine_health
 
 logger = logging.getLogger(__name__)
 _SEARCH_BATCH_TIMEOUT_SECONDS = 60.0
+_MAX_TOTAL_SEARCH_SECONDS = 180.0
 _WORKFLOW_LLM_STEPS = ("analysis", "relevance", "interaction", "answer")
 
 class SearchWorkflow:
-    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "duckduckgo", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_concurrent_pages: int = 3, step_model_configs: Optional[dict] = None):
+    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "searxng", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_concurrent_pages: int = 3, step_model_configs: Optional[dict] = None, live_artifacts_mode: bool = False, canvas_mode: Optional[bool] = None):
         self.llm = LLMClient(api_key, base_url, model)
         self._initial_default_llm = self.llm
         self.step_llms = self._build_step_llms(
@@ -29,10 +31,19 @@ class SearchWorkflow:
         self.interactive_search = interactive_search
         self.session_id = session_id
         self.max_concurrent_pages = max_concurrent_pages
+        self.live_artifacts_mode = bool(live_artifacts_mode or canvas_mode)
         # Content cache: url -> content (avoid re-crawling same URL across iterations)
         self._content_cache: Dict[str, str] = {}
         # Minimum content length to be considered useful (chars)
         self._min_content_length = 150
+
+    def _is_invalid_crawl_content(self, content: Any) -> bool:
+        if not isinstance(content, str):
+            return True
+        stripped = content.strip()
+        if not stripped or stripped == "[CRAWL_TIMEOUT]":
+            return True
+        return stripped.startswith(("错误:", "爬取页面时出错:"))
 
     def _build_step_llms(
         self,
@@ -66,6 +77,30 @@ class SearchWorkflow:
             return self.llm
         return client or self.llm
 
+    def _decode_bing_redirect_url(self, url: str) -> str:
+        try:
+            from urllib.parse import parse_qs, urlparse
+
+            parsed = urlparse(url)
+            hostname = (parsed.hostname or "").lower().rstrip(".")
+            if hostname != "bing.com" and not hostname.endswith(".bing.com"):
+                return ""
+            if not parsed.path.startswith("/ck/a"):
+                return ""
+
+            u_val = parse_qs(parsed.query).get("u", [""])[0]
+            if not u_val.startswith("a1"):
+                return ""
+
+            encoded = u_val[2:]
+            padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
+            decoded = base64.urlsafe_b64decode(padded).decode("utf-8", errors="ignore")
+            if decoded.startswith(("http://", "https://")):
+                return decoded
+        except Exception:
+            pass
+        return ""
+
     def _usage_totals(self) -> tuple[int, int]:
         seen = set()
         prompt_tokens = 0
@@ -84,16 +119,9 @@ class SearchWorkflow:
         if not url:
             return ''
         # 提取 Bing redirect URL 中的真实目标
-        if 'bing.com/ck/a' in url and 'u=a1' in url:
-            try:
-                idx = url.index('u=a1')
-                encoded = url[idx + 4:]  # 跳过 'u=a1'
-                # URL-safe base64 解码
-                padded = encoded + '=' * (4 - len(encoded) % 4)
-                decoded = base64.urlsafe_b64decode(padded).decode('utf-8', errors='ignore')
-                return decoded.lower().rstrip('/')
-            except Exception:
-                pass
+        decoded_bing_url = self._decode_bing_redirect_url(url)
+        if decoded_bing_url:
+            return decoded_bing_url.lower().rstrip('/')
         # Strip common tracking parameters
         try:
             from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
@@ -123,15 +151,9 @@ class SearchWorkflow:
         """将 Bing redirect URL 解析为真实目标 URL（用于显示）。"""
         if not url:
             return url
-        if 'bing.com/ck/a' in url and 'u=a1' in url:
-            try:
-                idx = url.index('u=a1')
-                encoded = url[idx + 4:]
-                padded = encoded + '=' * (4 - len(encoded) % 4)
-                decoded = base64.urlsafe_b64decode(padded).decode('utf-8', errors='ignore')
-                return decoded
-            except Exception:
-                pass
+        decoded_bing_url = self._decode_bing_redirect_url(url)
+        if decoded_bing_url:
+            return decoded_bing_url
         return url
 
     def _format_references(self, answer: str, sources: List[Dict]) -> str:
@@ -155,6 +177,19 @@ class SearchWorkflow:
             
         return answer + ref_section
 
+    def _format_partial_answer(self, answer: str, sources: List[Dict], reason: str) -> str:
+        answer = (answer or "").strip()
+        if not answer:
+            return ""
+
+        prefix = (
+            f"⚠️ {reason}，以下是基于已收集资料整理的临时答案，可能仍不完整。\n\n"
+        )
+        return self._format_references(prefix + answer, sources)
+
+    def _remaining_seconds(self, start_time: float) -> float:
+        return max(0.0, _MAX_TOTAL_SEARCH_SECONDS - (time.monotonic() - start_time))
+
     async def _handle_direct_url(self, url: str, visited_urls: set,
                                   progress_callback: Callable[[str], None],
                                   user_input: str, source_id_counter: int) -> tuple:
@@ -162,14 +197,15 @@ class SearchWorkflow:
         progress_callback(f"目标 URL: {url}")
         
         new_sources = []
-        if url not in visited_urls:
+        visit_key = self._normalize_url(url)
+        if visit_key not in visited_urls:
             content = await self.browser.crawl_page(url, log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self._llm_for_step("interaction"), session_id=self.session_id)
-            visited_urls.add(url)
-            source_id_counter += 1
+            visited_urls.add(visit_key)
             # 过滤超时/空内容
-            if content == "[CRAWL_TIMEOUT]" or not content:
-                progress_callback(f"跳过超时/空页面: {url}")
+            if self._is_invalid_crawl_content(content):
+                progress_callback(f"跳过无效页面: {url}")
                 return [], source_id_counter
+            source_id_counter += 1
             new_sources.append({
                 "id": source_id_counter, 
                 "url": url, 
@@ -302,19 +338,21 @@ class SearchWorkflow:
 
         for res in search_results:
             if res['id'] in relevant_id_set:
-                if res['url'] not in visited_urls and res['url'] not in seen_urls_in_batch:
+                normalized_url = self._normalize_url(res.get('url', ''))
+                if normalized_url not in visited_urls and normalized_url not in seen_urls_in_batch:
                     to_crawl.append(res)
-                    seen_urls_in_batch.add(res['url'])
-                elif res['url'] in visited_urls:
+                    seen_urls_in_batch.add(normalized_url)
+                elif normalized_url in visited_urls:
                     already_visited.append(res)
         
         # 如果所有相关结果都已访问，从未访问的非相关结果中补充
         if not to_crawl:
             # 先尝试已访问的 URL 对应的搜索结果页面中是否有其他候选
             for res in search_results:
-                if res['url'] not in visited_urls and res['url'] not in seen_urls_in_batch and res['id'] not in relevant_id_set:
+                normalized_url = self._normalize_url(res.get('url', ''))
+                if normalized_url not in visited_urls and normalized_url not in seen_urls_in_batch and res['id'] not in relevant_id_set:
                     to_crawl.append(res)
-                    seen_urls_in_batch.add(res['url'])
+                    seen_urls_in_batch.add(normalized_url)
                     if len(to_crawl) >= 3:
                         break
         
@@ -342,7 +380,8 @@ class SearchWorkflow:
         uncached_indices: list = []
 
         for i, item in enumerate(to_crawl):
-            cached = self._content_cache.get(item['url'])
+            cache_key = self._normalize_url(item.get('url', ''))
+            cached = self._content_cache.get(cache_key)
             if cached:
                 cached_contents[i] = cached
                 progress_callback(f"  ✓ 使用缓存: {item.get('title', '?')[:50]}")
@@ -363,28 +402,31 @@ class SearchWorkflow:
             tasks = [_crawl_with_semaphore(
                 self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self._llm_for_step("interaction"), session_id=self.session_id)
             ) for item in uncached_items]
-            contents = await asyncio.gather(*tasks)
-            # Build URL-to-index map for efficient lookup
-            url_to_item = {item['url']: (idx, item) for idx, item in zip(uncached_indices, uncached_items)}
+            contents = await asyncio.gather(*tasks, return_exceptions=True)
             # Cache results
-            for content, (orig_idx, item) in zip(contents, url_to_item.values()):
+            for content, orig_idx, item in zip(contents, uncached_indices, uncached_items):
+                if isinstance(content, Exception):
+                    logger.warning("[Workflow] 爬取页面异常: %s: %s", item.get('url', '')[:80], content)
+                    progress_callback(f"跳过爬取异常页面: {item.get('url', '')}")
+                    cached_contents[orig_idx] = ""
+                    continue
                 cached_contents[orig_idx] = content
-                if content and content != "[CRAWL_TIMEOUT]":
-                    self._content_cache[item['url']] = content
+                if not self._is_invalid_crawl_content(content):
+                    self._content_cache[self._normalize_url(item.get('url', ''))] = content
 
         new_sources = []
         for i, item in enumerate(to_crawl):
-            visited_urls.add(item['url'])
-            source_id_counter += 1
+            visited_urls.add(self._normalize_url(item.get('url', '')))
             content = cached_contents.get(i, "")
-            content_len = len(content) if content else 0
+            content_len = len(content) if isinstance(content, str) else 0
             # 过滤超时/空内容
-            if content == "[CRAWL_TIMEOUT]" or not content:
+            if self._is_invalid_crawl_content(content):
                 logger.warning("[Workflow] 跳过无效页面: %s (len=%d)", item['url'][:80], content_len)
-                progress_callback(f"跳过超时/空页面: {item['url']}")
+                progress_callback(f"跳过无效页面: {item['url']}")
                 continue
             logger.info("[Workflow] 爬取成功: %s (len=%d)", item['url'][:80], content_len)
             # [07] Structure Data
+            source_id_counter += 1
             new_sources.append({
                 "id": source_id_counter,
                 "title": item['title'],
@@ -405,18 +447,17 @@ class SearchWorkflow:
             visited_urls = set()
             search_history = []
             last_feedback = "" 
+            last_partial_answer = ""
             source_id_counter = 0
             total_search_results = 0
-            import time
             start_time = time.monotonic()
-            _MAX_TOTAL_SECONDS = 180  # 3 minutes total timeout
             
             while iteration < self.max_iterations:
                 iteration += 1
                 # Total timeout check
                 elapsed = time.monotonic() - start_time
-                if elapsed > _MAX_TOTAL_SECONDS:
-                    progress_callback(f"已超过总搜索时限 ({_MAX_TOTAL_SECONDS}秒)，正在整理现有结果...")
+                if elapsed > _MAX_TOTAL_SEARCH_SECONDS:
+                    progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
                     logger.info("[Workflow] 总搜索超时 (%.1fs), 已完成 %d 次迭代", elapsed, iteration - 1)
                     break
                 if iteration == 1:
@@ -438,7 +479,14 @@ class SearchWorkflow:
                     )
                 
                 # Pass conversation history to help understand context (e.g. "it", "he")
-                analysis = await self._llm_for_step("analysis").analyze_task(analysis_input, history)
+                try:
+                    analysis = await asyncio.wait_for(
+                        self._llm_for_step("analysis").analyze_task(analysis_input, history),
+                        timeout=max(1.0, self._remaining_seconds(start_time)),
+                    )
+                except asyncio.TimeoutError:
+                    progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
+                    break
                 logger.info("[Workflow] 任务分析结果: type=%s, data=%s", analysis.get("type", ""), json.dumps(analysis, ensure_ascii=False)[:150])
                 
                 new_sources = []
@@ -446,19 +494,33 @@ class SearchWorkflow:
                 if analysis.get("type") == "direct":
                     raw_url = analysis.get("url")
                     url = raw_url
-                    new_sources, source_id_counter = await self._handle_direct_url(
-                        url, visited_urls, progress_callback, user_input, source_id_counter
-                    )
+                    try:
+                        new_sources, source_id_counter = await asyncio.wait_for(
+                            self._handle_direct_url(
+                                url, visited_urls, progress_callback, user_input, source_id_counter
+                            ),
+                            timeout=max(1.0, self._remaining_seconds(start_time)),
+                        )
+                    except asyncio.TimeoutError:
+                        progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
+                        break
                 else:
                     search_queries = analysis.get("queries", [])
                     # Fallback for single query or if model returns old format
                     if not search_queries and analysis.get("query"):
                         search_queries = [analysis.get("query")]
                     
-                    new_sources, source_id_counter, search_count = await self._handle_search(
-                        search_queries, search_history, visited_urls, iteration,
-                        progress_callback, user_input, source_id_counter
-                    )
+                    try:
+                        new_sources, source_id_counter, search_count = await asyncio.wait_for(
+                            self._handle_search(
+                                search_queries, search_history, visited_urls, iteration,
+                                progress_callback, user_input, source_id_counter
+                            ),
+                            timeout=max(1.0, self._remaining_seconds(start_time)),
+                        )
+                    except asyncio.TimeoutError:
+                        progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
+                        break
                     total_search_results += search_count
                 
                 accumulated_sources.extend(new_sources)
@@ -481,7 +543,20 @@ class SearchWorkflow:
                 if source_callback:
                     source_callback(accumulated_sources)
                 
-                result = await self._llm_for_step("answer").generate_answer(user_input, accumulated_sources, history, stream_callback)
+                try:
+                    result = await asyncio.wait_for(
+                        self._llm_for_step("answer").generate_answer(
+                            user_input,
+                            accumulated_sources,
+                            history,
+                            stream_callback,
+                            live_artifacts_mode=self.live_artifacts_mode,
+                        ),
+                        timeout=max(1.0, self._remaining_seconds(start_time)),
+                    )
+                except asyncio.TimeoutError:
+                    progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
+                    break
                 
                 if result.get("status") == "sufficient":
                     progress_callback("答案状态: 充分")
@@ -497,20 +572,27 @@ class SearchWorkflow:
                             "completion_tokens": completion_tokens,
                             "total_seconds": round(total_elapsed, 1),
                         })
+                    if self.live_artifacts_mode:
+                        return final_answer
                     return self._format_references(final_answer, accumulated_sources)
                 else:
-                    last_feedback = result.get("answer")
+                    last_partial_answer = result.get("answer", "")
+                    last_feedback = result.get("missing_info") or last_partial_answer
                     if iteration < self.max_iterations:
                         progress_callback(f"⚠️ 已有信息不足以完整回答，正在进行第 {iteration + 1} 轮深度搜索...")
                         # Include specific missing info in the feedback
-                        missing = result.get("answer", "")[:200]
+                        missing = last_feedback[:200]
                         if missing:
                             progress_callback(f"缺失信息: {missing}")
                     else:
                         progress_callback(f"已达到最大迭代次数 ({self.max_iterations})，正在整理现有结果...")
                     
                     if iteration >= self.max_iterations:
-                         final_answer = f"经过 {iteration} 次尝试后，我无法找到完全充分的答案。以下是基于现有信息的结果：\n\n{result.get('answer')}"
+                         final_answer = self._format_partial_answer(
+                             last_partial_answer,
+                             accumulated_sources,
+                             f"经过 {iteration} 次尝试后，仍无法确认资料足够完整"
+                         )
                          if stats_callback:
                              prompt_tokens, completion_tokens = self._usage_totals()
                              stats_callback({
@@ -522,6 +604,23 @@ class SearchWorkflow:
                              })
                          return final_answer
             
+            if last_partial_answer and accumulated_sources:
+                if stats_callback:
+                    prompt_tokens, completion_tokens = self._usage_totals()
+                    stats_callback({
+                        "sites_searched": total_search_results,
+                        "sites_crawled": len(visited_urls),
+                        "iterations": iteration,
+                        "total_seconds": round(time.monotonic() - start_time, 1),
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                    })
+                return self._format_partial_answer(
+                    last_partial_answer,
+                    accumulated_sources,
+                    "已达到本次搜索的时间限制"
+                )
+
             return "多次尝试后未能生成有效答案。建议您尝试：\n1. 换用不同的关键词重新提问\n2. 简化问题，分步骤提问\n3. 切换搜索引擎后重试"
             
         finally:

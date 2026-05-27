@@ -238,7 +238,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
     page = await get_new_page()
     await stealth.apply_stealth_async(page)
     # Block non-essential resources to speed up crawling
-    await install_resource_blocker(page)
+    await install_resource_blocker(page, should_block_url=is_private_url)
 
     try:
         if log_func:
@@ -253,7 +253,18 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         try:
             if log_func:
                 log_func(f"浏览器: 正在加载页面...")
-            await page.goto(final_url, wait_until="domcontentloaded", timeout=20000)
+            response = await page.goto(final_url, wait_until="domcontentloaded", timeout=20000)
+            navigated_url = (
+                getattr(page, "url", "")
+                or getattr(response, "url", "")
+                or final_url
+            )
+            if navigated_url != final_url:
+                if is_private_url(navigated_url):
+                    if log_func:
+                        log_func(f"浏览器: 拒绝访问跳转后的内网地址 {navigated_url}")
+                    return "错误: 不允许访问内网地址"
+                final_url = navigated_url
         except Exception as e:
             err_msg = str(e)
             is_timeout = "Timeout" in err_msg or "timeout" in err_msg
@@ -715,7 +726,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
 
         if log_func:
             log_func(f"浏览器: 正在提取页面内容...")
-        content = await extract_page_content(page, url)
+        content = await extract_page_content(page, final_url)
 
         # Extract OpenGraph metadata for better context
         og = await extract_og_metadata(page)

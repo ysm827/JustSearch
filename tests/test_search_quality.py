@@ -1,11 +1,17 @@
+import base64
 import asyncio
 from contextlib import asynccontextmanager
 
 from backend.app import browser_manager
+from backend.app import page_crawler
+from backend.app import search_engine
 from backend.app import workflow as workflow_module
+from backend.app.crawler import content as crawler_content
 from backend.app.crawler import redirects
+from backend.app.crawler import security
 from backend.app.browser_manager import BrowserManager
 from backend.app.engine_health import EngineHealthMonitor, engine_health
+from backend.app.search_result_cleanup import is_search_engine_internal_page
 from backend.app.workflow import SearchWorkflow
 
 
@@ -24,6 +30,208 @@ def test_resolve_redirect_url_extracts_sogou_script_target(monkeypatch):
     monkeypatch.setattr(redirects, "_fetch_sogou_redirect_html", fake_fetch, raising=False)
 
     assert asyncio.run(redirects.resolve_redirect_url(wrapper_url)) == target_url
+
+
+def test_resolve_redirect_url_ignores_sogou_lookalike_domain(monkeypatch):
+    wrapper_url = "https://evil-sogou.com/link?url=opaque-token"
+    called = []
+
+    async def fake_fetch(url):
+        called.append(url)
+        return '<script>window.location.replace("https://example.com/article")</script>'
+
+    monkeypatch.setattr(redirects, "_fetch_sogou_redirect_html", fake_fetch, raising=False)
+
+    assert asyncio.run(redirects.resolve_redirect_url(wrapper_url)) == wrapper_url
+    assert called == []
+
+
+def test_resolve_redirect_url_ignores_redirect_markers_on_non_engine_domains():
+    target = "https://example.com/article"
+    encoded_target = base64.urlsafe_b64encode(target.encode("utf-8")).decode("ascii").rstrip("=")
+    bing_lookalike = f"https://example.test/bing.com/ck/a?u=a1{encoded_target}"
+    google_lookalike = (
+        "https://example.test/google.com/url?q=https%3A%2F%2Fexample.com%2Farticle"
+    )
+    duck_lookalike = (
+        "https://example.test/duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Farticle"
+    )
+
+    assert asyncio.run(redirects.resolve_redirect_url(bing_lookalike)) == bing_lookalike
+    assert asyncio.run(redirects.resolve_redirect_url(google_lookalike)) == google_lookalike
+    assert asyncio.run(redirects.resolve_redirect_url(duck_lookalike)) == duck_lookalike
+
+
+def test_resolve_redirect_url_extracts_google_target_param():
+    google_url = "https://www.google.com/url?sa=t&q=https%3A%2F%2Fexample.com%2Farticle"
+
+    assert asyncio.run(redirects.resolve_redirect_url(google_url)) == "https://example.com/article"
+
+
+def test_resource_blocker_aborts_private_document_requests():
+    class FakeRequest:
+        def __init__(self, url, resource_type):
+            self.url = url
+            self.resource_type = resource_type
+
+    class FakeRoute:
+        def __init__(self, url, resource_type):
+            self.request = FakeRequest(url, resource_type)
+            self.aborted = False
+            self.continued = False
+
+        async def abort(self):
+            self.aborted = True
+
+        async def continue_(self):
+            self.continued = True
+
+    class FakePage:
+        async def route(self, _pattern, handler):
+            self.handler = handler
+
+    async def run_case():
+        page = FakePage()
+        await crawler_content.install_resource_blocker(
+            page,
+            should_block_url=lambda url: "127.0.0.1" in url,
+        )
+
+        private_route = FakeRoute("http://127.0.0.1/admin", "document")
+        await page.handler(private_route)
+
+        public_route = FakeRoute("https://example.com/page", "document")
+        await page.handler(public_route)
+
+        return private_route, public_route
+
+    private_route, public_route = asyncio.run(run_case())
+
+    assert private_route.aborted is True
+    assert private_route.continued is False
+    assert public_route.aborted is False
+    assert public_route.continued is True
+
+
+def test_crawl_page_blocks_private_url_after_browser_redirect(monkeypatch):
+    class FakeResponse:
+        url = "http://127.0.0.1/admin"
+
+    class FakePage:
+        url = "https://public.example/start"
+
+        async def route(self, *_args):
+            return None
+
+        async def goto(self, *_args, **_kwargs):
+            self.url = "http://127.0.0.1/admin"
+            return FakeResponse()
+
+        async def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        async def evaluate(self, *_args):
+            return False
+
+    class FakeStealth:
+        async def apply_stealth_async(self, _page):
+            return None
+
+    fake_page = FakePage()
+    released = []
+
+    async def fake_get_new_page():
+        return fake_page
+
+    async def fake_release_page(page):
+        released.append(page)
+
+    async def fake_resolve(url, log_func=None):
+        return url
+
+    async def fake_extract(_page, _url):
+        return "internal secret"
+
+    async def fake_og(_page):
+        return {}
+
+    monkeypatch.setattr(page_crawler, "get_context_pool_status", lambda: {"active_contexts": 1})
+    monkeypatch.setattr(page_crawler, "get_new_page", fake_get_new_page)
+    monkeypatch.setattr(page_crawler, "release_page", fake_release_page)
+    monkeypatch.setattr(page_crawler, "resolve_redirect_url", fake_resolve)
+    monkeypatch.setattr(page_crawler, "is_private_url", lambda url: "127.0.0.1" in str(url))
+    monkeypatch.setattr(page_crawler, "extract_page_content", fake_extract)
+    monkeypatch.setattr(page_crawler, "extract_og_metadata", fake_og)
+
+    result = asyncio.run(
+        page_crawler.crawl_page("https://public.example/start", FakeStealth())
+    )
+
+    assert result == "错误: 不允许访问内网地址"
+    assert released == [fake_page]
+
+
+def test_crawl_page_prefers_page_url_when_response_url_is_original(monkeypatch):
+    class FakeResponse:
+        url = "https://public.example/start"
+
+    class FakePage:
+        url = "https://public.example/start"
+
+        async def route(self, *_args):
+            return None
+
+        async def goto(self, *_args, **_kwargs):
+            self.url = "http://127.0.0.1/admin"
+            return FakeResponse()
+
+        async def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        async def evaluate(self, *_args):
+            return False
+
+    class FakeStealth:
+        async def apply_stealth_async(self, _page):
+            return None
+
+    fake_page = FakePage()
+
+    async def fake_get_new_page():
+        return fake_page
+
+    async def fake_release_page(_page):
+        return None
+
+    async def fake_resolve(url, log_func=None):
+        return url
+
+    async def fake_extract(_page, _url):
+        raise AssertionError("private redirect targets must not be extracted")
+
+    monkeypatch.setattr(page_crawler, "get_context_pool_status", lambda: {"active_contexts": 1})
+    monkeypatch.setattr(page_crawler, "get_new_page", fake_get_new_page)
+    monkeypatch.setattr(page_crawler, "release_page", fake_release_page)
+    monkeypatch.setattr(page_crawler, "resolve_redirect_url", fake_resolve)
+    monkeypatch.setattr(page_crawler, "is_private_url", lambda url: "127.0.0.1" in str(url))
+    monkeypatch.setattr(page_crawler, "extract_page_content", fake_extract)
+
+    result = asyncio.run(
+        page_crawler.crawl_page("https://public.example/start", FakeStealth())
+    )
+
+    assert result == "错误: 不允许访问内网地址"
+
+
+def test_private_url_blocks_direct_198_18_address_but_allows_proxy_resolved_domain(monkeypatch):
+    def fake_getaddrinfo(hostname, *_args, **_kwargs):
+        assert hostname == "example.test"
+        return [(None, None, None, None, ("198.18.0.12", 0))]
+
+    monkeypatch.setattr(security.socket, "getaddrinfo", fake_getaddrinfo)
+
+    assert security.is_private_url("http://198.18.0.12/status") is True
+    assert security.is_private_url("https://example.test/page") is False
 
 
 def test_fallback_text_extract_cleans_multiline_search_titles():
@@ -111,6 +319,61 @@ def test_search_result_postprocessing_resolves_sogou_wrappers_and_skips_search_p
     assert len(results) == 1
     assert results[0]["id"] == 1
     assert results[0]["url"] == article_url
+
+
+def test_search_result_postprocessing_skips_common_search_engine_internal_pages(monkeypatch):
+    async def fake_resolve(url, log_func=None):
+        return url
+
+    monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve, raising=False)
+
+    manager = BrowserManager(engine="google", max_results=10)
+    results = asyncio.run(
+        manager._postprocess_search_results(
+            [
+                {
+                    "id": 1,
+                    "title": "Google Search",
+                    "url": "https://www.google.com/search?q=FastAPI",
+                    "snippet": "",
+                },
+                {
+                    "id": 2,
+                    "title": "Bing Search",
+                    "url": "https://www.bing.com/search?q=FastAPI",
+                    "snippet": "",
+                },
+                {
+                    "id": 3,
+                    "title": "DuckDuckGo Search",
+                    "url": "https://duckduckgo.com/?q=FastAPI",
+                    "snippet": "",
+                },
+                {
+                    "id": 4,
+                    "title": "Brave Search",
+                    "url": "https://search.brave.com/search?q=FastAPI",
+                    "snippet": "",
+                },
+                {
+                    "id": 5,
+                    "title": "FastAPI CORS",
+                    "url": "https://fastapi.tiangolo.com/tutorial/cors/",
+                    "snippet": "allow_origins controls allowed origins.",
+                },
+            ]
+        )
+    )
+
+    assert len(results) == 1
+    assert results[0]["id"] == 1
+    assert results[0]["url"] == "https://fastapi.tiangolo.com/tutorial/cors/"
+
+
+def test_search_engine_internal_page_detection_preserves_real_subdomain_results():
+    assert is_search_engine_internal_page("https://www.google.com/search?q=FastAPI") is True
+    assert is_search_engine_internal_page("https://developers.google.com/search?q=FastAPI") is False
+    assert is_search_engine_internal_page("https://learn.microsoft.com/search/?terms=FastAPI") is False
 
 
 def test_search_web_records_wait_selector_timeout_as_selector_failure(monkeypatch):
@@ -649,6 +912,34 @@ def test_engine_health_prefers_stable_fallback_order_over_config_order():
     assert fallback == "bing"
 
 
+def test_engine_health_prefers_self_hosted_searxng_after_bing_and_sogou_fail():
+    monitor = EngineHealthMonitor()
+    for engine in ("bing", "sogou", "brave"):
+        monitor.record(engine, success=False, reason="blocked")
+        monitor.record(engine, success=False, reason="blocked")
+        monitor.record(engine, success=False, reason="blocked")
+
+    fallback = monitor.get_fallback(
+        "brave",
+        ["google", "bing", "duckduckgo", "sogou", "brave", "searxng"],
+    )
+
+    assert fallback == "searxng"
+
+
+def test_searxng_search_url_can_be_overridden_for_self_hosting(monkeypatch):
+    monkeypatch.setenv(
+        "SEARXNG_SEARCH_URL",
+        "http://searxng:8080/search?q={query}&format=html",
+    )
+    monkeypatch.setattr(search_engine, "_config_cache", {})
+    monkeypatch.setattr(search_engine, "_config_mtime", 0.0)
+
+    config = search_engine.load_selectors("searxng")
+
+    assert config["base_url"] == "http://searxng:8080/search?q={query}&format=html"
+
+
 def test_workflow_records_batch_timeouts_in_engine_health(monkeypatch):
     async def never_finishes(*_args, **_kwargs):
         await asyncio.sleep(10)
@@ -737,6 +1028,216 @@ def test_workflow_records_low_quality_and_skips_crawl_when_no_results_are_releva
     assert stats["healthy"] is True
 
 
+def test_workflow_crawl_batch_keeps_successful_pages_when_one_fails():
+    class FakeBrowser:
+        async def crawl_page(self, url, **_kwargs):
+            if url == "https://example.com/bad":
+                raise RuntimeError("boom")
+            return f"content for {url}"
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="test-model",
+        search_engine="searxng",
+        max_results=3,
+    )
+    workflow.browser = FakeBrowser()
+    progress = []
+
+    sources, counter = asyncio.run(
+        workflow._crawl_and_collect(
+            [
+                {"id": 1, "title": "Good", "url": "https://example.com/good"},
+                {"id": 2, "title": "Bad", "url": "https://example.com/bad"},
+            ],
+            set(),
+            progress.append,
+            "query",
+            0,
+        )
+    )
+
+    assert counter == 1
+    assert sources == [
+        {
+            "id": 1,
+            "title": "Good",
+            "url": "https://example.com/good",
+            "date": "",
+            "content": "content for https://example.com/good",
+        }
+    ]
+    assert any("跳过爬取异常页面" in item for item in progress)
+
+
+def test_workflow_source_ids_do_not_skip_failed_pages():
+    class FakeBrowser:
+        async def crawl_page(self, url, **_kwargs):
+            if url.endswith("/empty"):
+                return ""
+            return f"content for {url}"
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="test-model",
+        search_engine="searxng",
+        max_results=3,
+    )
+    workflow.browser = FakeBrowser()
+
+    sources, counter = asyncio.run(
+        workflow._crawl_and_collect(
+            [
+                {"id": 1, "title": "Empty", "url": "https://example.com/empty"},
+                {"id": 2, "title": "Good", "url": "https://example.com/good"},
+            ],
+            set(),
+            lambda _msg: None,
+            "query",
+            0,
+        )
+    )
+
+    assert counter == 1
+    assert [source["id"] for source in sources] == [1]
+
+
+def test_workflow_skips_crawler_error_strings():
+    class FakeBrowser:
+        async def crawl_page(self, *_args, **_kwargs):
+            return "爬取页面时出错: boom"
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="test-model",
+        search_engine="searxng",
+        max_results=3,
+    )
+    workflow.browser = FakeBrowser()
+    progress = []
+
+    sources, counter = asyncio.run(
+        workflow._crawl_and_collect(
+            [
+                {"id": 1, "title": "Broken", "url": "https://example.com/broken"},
+            ],
+            set(),
+            progress.append,
+            "query",
+            0,
+        )
+    )
+
+    assert sources == []
+    assert counter == 0
+    assert workflow._content_cache == {}
+    assert any("跳过无效页面" in item for item in progress)
+
+
+def test_workflow_direct_url_skips_blocked_private_error():
+    class FakeBrowser:
+        async def crawl_page(self, *_args, **_kwargs):
+            return "错误: 不允许访问内网地址"
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="test-model",
+        search_engine="searxng",
+        max_results=3,
+    )
+    workflow.browser = FakeBrowser()
+    progress = []
+
+    sources, counter = asyncio.run(
+        workflow._handle_direct_url(
+            "http://127.0.0.1/admin",
+            set(),
+            progress.append,
+            "query",
+            0,
+        )
+    )
+
+    assert sources == []
+    assert counter == 0
+    assert any("跳过无效页面" in item for item in progress)
+
+
+def test_workflow_decodes_bing_redirect_with_following_query_params():
+    target_url = "https://Example.com/Docs?A=1"
+    encoded_target = base64.urlsafe_b64encode(target_url.encode("utf-8")).decode("ascii").rstrip("=")
+    bing_url = f"https://www.bing.com/ck/a?u=a1{encoded_target}&ntb=1"
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="test-model",
+        search_engine="searxng",
+        max_results=3,
+    )
+
+    assert workflow._resolve_url(bing_url) == target_url
+    assert workflow._normalize_url(bing_url) == "https://example.com/docs?a=1"
+
+
+def test_workflow_deduplicates_visited_urls_after_normalization():
+    class FakeLLM:
+        async def assess_relevance(self, _query, _snippets):
+            return [1, 2]
+
+    class FakeBrowser:
+        engine = "searxng"
+        engine_config = {"searxng": {}}
+
+        async def search_web(self, *_args, **_kwargs):
+            return [
+                {
+                    "id": 1,
+                    "title": "Tracked",
+                    "url": "https://example.com/page?utm_source=newsletter",
+                    "snippet": "tracked",
+                },
+                {
+                    "id": 2,
+                    "title": "Canonical",
+                    "url": "https://example.com/page",
+                    "snippet": "canonical",
+                },
+            ]
+
+        async def crawl_page(self, *_args, **_kwargs):
+            raise AssertionError("already visited canonical URL should not be crawled")
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="test-model",
+        search_engine="searxng",
+        max_results=3,
+    )
+    workflow.llm = FakeLLM()
+    workflow.browser = FakeBrowser()
+
+    sources, counter, result_count = asyncio.run(
+        workflow._handle_search(
+            ["example page"],
+            [],
+            {"https://example.com/page"},
+            1,
+            lambda _msg: None,
+            "example page",
+            0,
+        )
+    )
+
+    assert sources == []
+    assert counter == 0
+    assert result_count == 1
+
+
 def test_workflow_routes_llm_calls_to_configured_step_clients():
     calls = []
 
@@ -749,7 +1250,7 @@ def test_workflow_routes_llm_calls_to_configured_step_clients():
         total_prompt_tokens = 11
         total_completion_tokens = 7
 
-        async def generate_answer(self, _query, _sources, _history, _stream_callback):
+        async def generate_answer(self, _query, _sources, _history, _stream_callback, canvas_mode=False, live_artifacts_mode=False):
             calls.append("answer")
             return {"status": "sufficient", "answer": "done"}
 
@@ -795,3 +1296,138 @@ def test_workflow_routes_llm_calls_to_configured_step_clients():
     assert calls == ["analysis", "answer"]
     assert stats["prompt_tokens"] == 11
     assert stats["completion_tokens"] == 7
+
+
+def test_workflow_does_not_append_markdown_references_to_live_artifacts():
+    class AnalysisLLM:
+        async def analyze_task(self, _query, _history):
+            return {"type": "search", "queries": ["Live Artifacts"]}
+
+    class AnswerLLM:
+        total_prompt_tokens = 2
+        total_completion_tokens = 3
+
+        async def generate_answer(
+            self,
+            _query,
+            _sources,
+            _history,
+            _stream_callback,
+            canvas_mode=False,
+            live_artifacts_mode=False,
+        ):
+            assert live_artifacts_mode is True
+            return {
+                "status": "sufficient",
+                "answer": '<section style="display:block;width:100%;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;"><h2>Live</h2><p>引用 [1]</p></section>',
+            }
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="fallback-model",
+        search_engine="searxng",
+        max_results=3,
+        live_artifacts_mode=True,
+    )
+    workflow.step_llms["analysis"] = AnalysisLLM()
+    workflow.step_llms["answer"] = AnswerLLM()
+
+    async def fake_handle_search(*_args, **_kwargs):
+        return (
+            [
+                {
+                    "id": 1,
+                    "title": "Live Artifacts source",
+                    "url": "https://example.com/live-artifacts",
+                    "content": "Live Artifacts source content.",
+                }
+            ],
+            1,
+            1,
+        )
+
+    workflow._handle_search = fake_handle_search
+
+    result = asyncio.run(
+        workflow.run(
+            "Live Artifacts",
+            lambda _msg: None,
+            None,
+            [],
+            None,
+            lambda _data: None,
+        )
+    )
+
+    assert result.startswith("<section")
+    assert "### 参考资料" not in result
+    assert "\n\n---" not in result
+
+
+def test_workflow_returns_partial_answer_when_time_limit_hits_after_insufficient_result(monkeypatch):
+    class AnalysisLLM:
+        async def analyze_task(self, _query, _history):
+            return {"type": "search", "queries": ["SearXNG 是什么"]}
+
+    class AnswerLLM:
+        total_prompt_tokens = 3
+        total_completion_tokens = 5
+
+        async def generate_answer(self, _query, _sources, _history, _stream_callback, canvas_mode=False, live_artifacts_mode=False):
+            return {
+                "status": "insufficient",
+                "missing_info": "缺少官方隐私说明",
+                "answer": "SearXNG 是一个免费的开源元搜索引擎。",
+            }
+
+    monkeypatch.setattr(workflow_module, "_MAX_TOTAL_SEARCH_SECONDS", 0.01)
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="fallback-model",
+        search_engine="searxng",
+        max_results=3,
+    )
+    workflow.step_llms["analysis"] = AnalysisLLM()
+    workflow.step_llms["answer"] = AnswerLLM()
+
+    async def fake_handle_search(*_args, **_kwargs):
+        await asyncio.sleep(0.02)
+        return (
+            [
+                {
+                    "id": 1,
+                    "title": "SearXNG docs",
+                    "url": "https://docs.searxng.org/",
+                    "content": "SearXNG is a free internet metasearch engine.",
+                }
+            ],
+            1,
+            1,
+        )
+
+    workflow._handle_search = fake_handle_search
+    progress = []
+    stats = {}
+
+    result = asyncio.run(
+        workflow.run(
+            "SearXNG 是什么",
+            progress.append,
+            None,
+            [],
+            None,
+            lambda data: stats.update(data),
+        )
+    )
+
+    assert "已达到本次搜索的时间限制" in result
+    assert "SearXNG 是一个免费的开源元搜索引擎。" in result
+    assert "多次尝试后未能生成有效答案" not in result
+    assert "[SearXNG docs](https://docs.searxng.org/)" in result
+    assert any("已超过总搜索时限" in item for item in progress)
+    assert stats["sites_searched"] == 1
+    assert stats["prompt_tokens"] == 3
+    assert stats["completion_tokens"] == 5

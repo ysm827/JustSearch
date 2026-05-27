@@ -148,7 +148,7 @@
     font-weight: 600;
     color: var(--sb-text-primary);
     cursor: pointer;
-    letter-spacing: -0.3px;
+    letter-spacing: 0;
     transition: background-color var(--transition-fast);
 }
 

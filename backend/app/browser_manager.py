@@ -64,7 +64,7 @@ def _blocked_search_reason(content: str, current_url: str = "") -> str:
 
 
 class BrowserManager:
-    def __init__(self, engine: str = "duckduckgo", max_results: int = 50):
+    def __init__(self, engine: str = "searxng", max_results: int = 50):
         self.stealth = Stealth()
         self.engine = engine
         self.max_results = max_results
@@ -462,15 +462,44 @@ class BrowserManager:
             items = await page.evaluate(r"""(maxResults) => {
                 const results = [];
                 const anchors = document.querySelectorAll('a[href^="http"]');
-                // 搜索引擎自身域名，用于过滤
-                const engineDomains = ['google.com', 'bing.com', 'duckduckgo.com', 'sogou.com'];
+                function hostMatches(hostname, domain) {
+                    return hostname === domain || hostname.endsWith('.' + domain);
+                }
+
+                function isSearchEngineUtilityUrl(href) {
+                    try {
+                        const parsed = new URL(href);
+                        const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+                        if (hostMatches(host, 'google.com')) {
+                            if (parsed.pathname === '/url') {
+                                return !parsed.searchParams.has('url') && !parsed.searchParams.has('q');
+                            }
+                            return parsed.pathname === '/search';
+                        }
+                        if (hostMatches(host, 'bing.com')) {
+                            return parsed.pathname === '/search';
+                        }
+                        if (hostMatches(host, 'duckduckgo.com')) {
+                            if (parsed.pathname.startsWith('/l/')) {
+                                return !parsed.searchParams.has('uddg');
+                            }
+                            return parsed.pathname === '/' && parsed.searchParams.has('q');
+                        }
+                        if (hostMatches(host, 'sogou.com')) {
+                            return parsed.pathname === '/web';
+                        }
+                    } catch (e) {
+                        return true;
+                    }
+                    return false;
+                }
+
                 let count = 0;
                 for (const a of anchors) {
                     if (count >= maxResults) break;
                     const href = a.href;
-                    // 跳过搜索引擎自身的导航链接和域名
-                    if (href.includes('search?') || href.includes('/l/')) continue;
-                    if (engineDomains.some(d => href.includes(d))) continue;
+                    // 跳过搜索引擎自身的导航链接，但保留 developers.google.com 等合法结果
+                    if (isSearchEngineUtilityUrl(href)) continue;
                     const title = (a.innerText || a.textContent || '').trim();
                     if (title.length < 5 || title.length > 200) continue;
                     // 获取附近的文本作为摘要

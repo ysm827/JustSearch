@@ -1,4 +1,4 @@
-import { buildAuthenticatedUrl } from './auth.js';
+import { buildAuthenticatedUrl } from './auth.js?v=1';
 import {
     createChatGroupAPI,
     deleteChatGroupAPI,
@@ -6,14 +6,20 @@ import {
     fetchHistory,
     moveChatToGroupAPI,
     renameChatAPI,
+    searchHistory,
     updateChatGroupAPI
-} from './api.js';
+} from './api.js?v=1';
 import { state } from './state.js';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=2';
+import { elements, showConfirm } from './ui.js?v=8';
 
 let _fullHistory = [];
 let _chatGroups = [];
+let _historySearchRequestSeq = 0;
+
+function encodeRouteSegment(value) {
+    return encodeURIComponent(String(value ?? ''));
+}
 
 export function getCachedHistory() {
     return _fullHistory;
@@ -154,7 +160,7 @@ function createHistoryItem(chat, currentSessionId, callbacks) {
         '<svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>',
         (e) => {
             e.stopPropagation();
-            const url = `${window.location.origin}/c/${chat.id}`;
+            const url = `${window.location.origin}/c/${encodeRouteSegment(chat.id)}`;
             navigator.clipboard.writeText(url).then(() => {
                 showToast('对话链接已复制', 'success');
             }).catch(() => {
@@ -170,7 +176,7 @@ function createHistoryItem(chat, currentSessionId, callbacks) {
         '<svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>',
         (e) => {
             e.stopPropagation();
-            window.open(buildAuthenticatedUrl(`/api/history/${chat.id}/export`), '_blank');
+            window.open(buildAuthenticatedUrl(`/api/history/${encodeRouteSegment(chat.id)}/export`), '_blank');
         }
     ));
 
@@ -356,20 +362,25 @@ function renderUngroupedDropTarget(hasGroups, isEmpty = false) {
     elements.historyList.appendChild(dropTarget);
 }
 
-export function renderHistory(history, currentSessionId, callbacks, groups = _chatGroups) {
-    _fullHistory = history || [];
+export function renderHistory(history, currentSessionId, callbacks, groups = _chatGroups, options = {}) {
+    const visibleHistory = history || [];
+    if (options.updateCache !== false) {
+        _fullHistory = visibleHistory;
+    }
     if (Array.isArray(groups)) {
         _chatGroups = groups;
     }
 
-    const searchTerm = elements.historySearchInput ? elements.historySearchInput.value.trim().toLowerCase() : '';
+    const searchTerm = options.searchTermOverride !== undefined
+        ? String(options.searchTermOverride || '').trim().toLowerCase()
+        : (elements.historySearchInput ? elements.historySearchInput.value.trim().toLowerCase() : '');
 
     elements.historyList.innerHTML = '';
 
-    let filtered = _fullHistory;
-    if (searchTerm) {
+    let filtered = visibleHistory;
+    if (searchTerm && !options.skipLocalFilter) {
         const terms = searchTerm.split(/\s+/).filter(t => t);
-        filtered = _fullHistory.filter(chat => {
+        filtered = visibleHistory.filter(chat => {
             const title = (chat.title || '新对话').toLowerCase();
             return terms.every(term => title.includes(term));
         });
@@ -571,6 +582,7 @@ function closeHistorySearch(callbacks) {
     if (!historySearchOpenBtn || !historySearchBox || !historySearchInput) return;
 
     historySearchInput.value = '';
+    _historySearchRequestSeq += 1;
     historySearchBox.hidden = true;
     historySearchOpenBtn.hidden = false;
     renderHistory(getCachedHistory(), state.currentSessionId, callbacks, getCachedGroups());
@@ -589,8 +601,21 @@ export function setupHistorySearch(callbacks) {
     let searchTimeout;
     searchInput.addEventListener('input', () => {
         clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-            renderHistory(getCachedHistory(), state.currentSessionId, callbacks, getCachedGroups());
+        searchTimeout = setTimeout(async () => {
+            const term = searchInput.value.trim();
+            const requestSeq = ++_historySearchRequestSeq;
+            if (!term) {
+                renderHistory(getCachedHistory(), state.currentSessionId, callbacks, getCachedGroups());
+                return;
+            }
+
+            const results = await searchHistory(term);
+            if (requestSeq !== _historySearchRequestSeq) return;
+            renderHistory(results, state.currentSessionId, callbacks, getCachedGroups(), {
+                updateCache: false,
+                skipLocalFilter: true,
+                searchTermOverride: term,
+            });
         }, 200);
     });
     searchInput.addEventListener('keydown', (event) => {

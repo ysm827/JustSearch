@@ -12,12 +12,23 @@ from starlette.requests import Request
 
 _AUTH_TOKEN_CACHE: str | None = None
 _TOKEN_ENV_VAR = "JUSTSEARCH_AUTH_TOKEN"
+_TOKEN_FILE_ENV_VAR = "JUSTSEARCH_AUTH_TOKEN_FILE"
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _PROTECTED_HTTP_PREFIXES = ("/api",)
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_DATA_DIR = _PROJECT_ROOT / "data"
+_LEGACY_AUTH_TOKEN_PATH = Path(__file__).resolve().parents[1] / ".auth_token"
 
 
 def get_auth_token_path() -> Path:
-    return Path(__file__).resolve().parents[1] / ".auth_token"
+    configured = os.getenv(_TOKEN_FILE_ENV_VAR, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return _DATA_DIR / ".auth_token"
+
+
+def get_legacy_auth_token_path() -> Path:
+    return _LEGACY_AUTH_TOKEN_PATH
 
 
 def is_auth_enabled() -> bool:
@@ -38,6 +49,13 @@ def is_loopback_host(host: str | None) -> bool:
     return normalized == "127.0.0.1"
 
 
+def get_request_host(request: Request) -> str:
+    host = request.headers.get("host", "").strip()
+    if not host:
+        return ""
+    return urlparse(f"//{host}").hostname or ""
+
+
 def get_auth_token() -> str:
     global _AUTH_TOKEN_CACHE
 
@@ -52,21 +70,49 @@ def get_auth_token() -> str:
     token_path = get_auth_token_path()
     token_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if token_path.exists():
-        existing = token_path.read_text(encoding="utf-8").strip()
-        if existing:
-            _AUTH_TOKEN_CACHE = existing
-            return existing
+    existing = _read_token_file(token_path)
+    if existing:
+        _AUTH_TOKEN_CACHE = existing
+        return existing
+
+    migrated = _migrate_legacy_auth_token(token_path)
+    if migrated:
+        _AUTH_TOKEN_CACHE = migrated
+        return migrated
 
     token = secrets.token_urlsafe(32)
+    _write_token_file(token_path, token)
+
+    _AUTH_TOKEN_CACHE = token
+    return token
+
+
+def _read_token_file(token_path: Path) -> str:
+    if not token_path.exists():
+        return ""
+    return token_path.read_text(encoding="utf-8").strip()
+
+
+def _write_token_file(token_path: Path, token: str) -> None:
+    token_path.parent.mkdir(parents=True, exist_ok=True)
     token_path.write_text(token, encoding="utf-8")
     try:
         os.chmod(token_path, 0o600)
     except OSError:
         pass
 
-    _AUTH_TOKEN_CACHE = token
-    return token
+
+def _migrate_legacy_auth_token(token_path: Path) -> str:
+    legacy_path = get_legacy_auth_token_path()
+    if legacy_path == token_path:
+        return ""
+
+    existing = _read_token_file(legacy_path)
+    if not existing:
+        return ""
+
+    _write_token_file(token_path, existing)
+    return existing
 
 
 def get_bearer_token(headers) -> str:
@@ -129,12 +175,12 @@ def build_html_bootstrap_payload(request: Request) -> dict:
             "clientIsLoopback": False,
         }
     client_host = request.client.host if request.client else None
-    loopback_client = is_loopback_host(client_host)
+    trusted_local_page = is_loopback_host(client_host)
     payload = {
         "authEnabled": True,
-        "clientIsLoopback": loopback_client,
+        "clientIsLoopback": trusted_local_page,
     }
-    if loopback_client:
+    if trusted_local_page:
         payload["authToken"] = get_auth_token()
     return payload
 

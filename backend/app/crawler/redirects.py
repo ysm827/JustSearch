@@ -7,22 +7,21 @@ import urllib.parse
 async def resolve_redirect_url(url: str, log_func=None) -> str:
     """Resolve search-engine redirect URLs to their final target URLs."""
     final_url = url
-    if (
-        "bing.com/ck/a" not in url
-        and "google.com/url" not in url
-        and "duckduckgo.com/l/" not in url
-        and not _is_sogou_link_url(url)
-    ):
+    is_bing = _is_bing_redirect_url(url)
+    is_google = _is_google_redirect_url(url)
+    is_duckduckgo = _is_duckduckgo_redirect_url(url)
+    is_sogou = _is_sogou_link_url(url)
+    if not (is_bing or is_google or is_duckduckgo or is_sogou):
         return final_url
 
     if log_func:
         log_func("浏览器: 检测到重定向 URL，正在尝试提取目标...")
 
-    if "duckduckgo.com/l/" in url:
+    if is_duckduckgo:
         try:
             parsed = urllib.parse.urlparse(url)
             params = urllib.parse.parse_qs(parsed.query)
-            if "uddg" in params:
+            if "uddg" in params and _is_http_url(params["uddg"][0]):
                 final_url = params["uddg"][0]
                 if log_func:
                     log_func(f"浏览器: 提取 DuckDuckGo 重定向 URL 成功: {final_url}")
@@ -30,7 +29,7 @@ async def resolve_redirect_url(url: str, log_func=None) -> str:
             if log_func:
                 log_func(f"浏览器: 提取 DuckDuckGo 重定向 URL 失败: {e}")
 
-    elif "bing.com/ck/a" in url:
+    elif is_bing:
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qs(parsed.query)
         if "u" in params:
@@ -39,14 +38,31 @@ async def resolve_redirect_url(url: str, log_func=None) -> str:
                 try:
                     b64_part = u_val[2:]
                     b64_part += "=" * ((4 - len(b64_part) % 4) % 4)
-                    final_url = base64.b64decode(b64_part).decode("utf-8")
-                    if log_func:
-                        log_func(f"浏览器: 提取 Bing 重定向 URL 成功: {final_url}")
+                    decoded_url = base64.urlsafe_b64decode(b64_part).decode("utf-8")
+                    if _is_http_url(decoded_url):
+                        final_url = decoded_url
+                        if log_func:
+                            log_func(f"浏览器: 提取 Bing 重定向 URL 成功: {final_url}")
                 except Exception as e:
                     if log_func:
                         log_func(f"浏览器: 提取 Bing 重定向 URL 失败: {e}")
 
-    elif _is_sogou_link_url(url):
+    elif is_google:
+        try:
+            parsed = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed.query)
+            for key in ("url", "q"):
+                candidate = params.get(key, [""])[0]
+                if _is_http_url(candidate):
+                    final_url = candidate
+                    if log_func:
+                        log_func(f"浏览器: 提取 Google 重定向 URL 成功: {final_url}")
+                    break
+        except Exception as e:
+            if log_func:
+                log_func(f"浏览器: 提取 Google 重定向 URL 失败: {e}")
+
+    elif is_sogou:
         try:
             html_text = await _fetch_sogou_redirect_html(url)
             extracted_url = _extract_html_redirect_url(html_text)
@@ -61,6 +77,44 @@ async def resolve_redirect_url(url: str, log_func=None) -> str:
     return final_url
 
 
+def _hostname_matches(hostname: str, domain: str) -> bool:
+    hostname = (hostname or "").lower().rstrip(".")
+    domain = domain.lower()
+    return hostname == domain or hostname.endswith(f".{domain}")
+
+
+def _is_http_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+
+
+def _is_bing_redirect_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    return _hostname_matches(parsed.hostname or "", "bing.com") and parsed.path.startswith("/ck/a")
+
+
+def _is_google_redirect_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    return _hostname_matches(parsed.hostname or "", "google.com") and parsed.path == "/url"
+
+
+def _is_duckduckgo_redirect_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    return _hostname_matches(parsed.hostname or "", "duckduckgo.com") and parsed.path.startswith("/l/")
+
+
 def _is_sogou_link_url(url: str) -> bool:
     """Return True for Sogou result-wrapper URLs."""
     try:
@@ -69,7 +123,7 @@ def _is_sogou_link_url(url: str) -> bool:
         return False
 
     hostname = parsed.hostname or ""
-    return hostname.endswith("sogou.com") and parsed.path.startswith("/link")
+    return _hostname_matches(hostname, "sogou.com") and parsed.path.startswith("/link")
 
 
 async def _fetch_sogou_redirect_html(url: str) -> str:
@@ -77,7 +131,7 @@ async def _fetch_sogou_redirect_html(url: str) -> str:
     import httpx
 
     async with httpx.AsyncClient(
-        follow_redirects=True,
+        follow_redirects=False,
         timeout=10.0,
         headers={"User-Agent": "JustSearch/1.0"},
     ) as client:

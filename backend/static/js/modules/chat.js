@@ -1,10 +1,15 @@
-import { state, setCurrentSessionId, setIsProcessing, setAbortController } from './state.js';
-import { createCopyButton } from './utils.js?v=2';
-import { updateActiveHistoryItem } from './history-view.js';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm } from './ui.js?v=2';
-import { renderWithCitations } from './source-renderer.js?v=2';
+import { state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js';
+import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
+import { updateActiveHistoryItem } from './history-view.js?v=17';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=8';
+import { renderWithCitations } from './source-renderer.js?v=3';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=2';
 import { showToast } from './toast.js';
-import * as API from './api.js';
+import * as API from './api.js?v=1';
+
+function chatRoute(sessionId) {
+    return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
+}
 
 /**
  * 设置聊天处理器：发送消息、加载/删除对话、输入框自动调整等。
@@ -28,16 +33,43 @@ export function setupChatHandler(elements, renderHistory) {
         renderHistory(history, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat }, groups);
     }
 
+    function stageMessageForInput(text) {
+        elements.userInput.value = text;
+        elements.userInput.dispatchEvent(new Event('input', { bubbles: true }));
+        resetInputHeight();
+        elements.userInput.focus({ preventScroll: true });
+        scrollToBottom();
+        showToast('已填入输入框，可修改后发送', 'info');
+    }
+
+    async function regenerateFromPrompt(prompt) {
+        if (!prompt || state.isProcessing) return;
+        await handleSendMessage(prompt);
+    }
+
+    async function refreshAfterMessageDeleted() {
+        if (state.currentSessionId) {
+            await loadChat(state.currentSessionId);
+        }
+        await refreshHistory();
+        showToast('消息已删除', 'success');
+    }
+
     async function loadChat(sessionId) {
         setCurrentSessionId(sessionId);
         updateActiveHistoryItem(sessionId);
         // 更新浏览器地址栏
-        if (window.location.pathname !== `/c/${sessionId}`) {
-            history.pushState({ sessionId }, '', `/c/${sessionId}`);
+        const route = chatRoute(sessionId);
+        if (window.location.pathname !== route) {
+            history.pushState({ sessionId }, '', route);
         }
         const data = await API.fetchChat(sessionId);
         if (data) {
-            renderMessages(data.messages);
+            renderMessages(data.messages, {
+                onEdit: stageMessageForInput,
+                onRegenerate: regenerateFromPrompt,
+                onMessageDeleted: refreshAfterMessageDeleted
+            });
         }
     }
 
@@ -85,24 +117,25 @@ export function setupChatHandler(elements, renderHistory) {
         elements.sendBtn.classList.remove('inactive', 'active');
         elements.sendBtn.classList.add('processing');
 
-        appendMessage('user', text);
+        appendMessage('user', text, null, null, null, null, null, {
+            onEdit: stageMessageForInput
+        });
         scrollToBottom();
 
         // Assistant Message Placeholder
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message assistant';
-        msgDiv.dataset.messageRole = 'assistant';
+        const { msgDiv, contentDiv: answerDiv, sideColumn } = createMessageShell('assistant');
 
         const { logContainer, logSummary, logDetails, spinner, statusText, expandIcon } = createDynamicLogContainer();
         const seenLogs = new Set(); // 去重
-        msgDiv.appendChild(logContainer);
+        answerDiv.classList.add('markdown-body');
+        answerDiv.appendChild(logContainer);
 
-        const answerDiv = document.createElement('div');
-        answerDiv.className = 'message-content message-content-container markdown-body';
         const contentWrapper = document.createElement('div');
+        contentWrapper.className = 'message-answer-body';
+        const liveArtifactMessageId = `stream-${Date.now().toString(36)}`;
+        contentWrapper.dataset.liveArtifactsMessageId = liveArtifactMessageId;
         contentWrapper.innerHTML = '<span class="blinking-cursor"></span>';
         answerDiv.appendChild(contentWrapper);
-        msgDiv.appendChild(answerDiv);
         elements.chatContainer.appendChild(msgDiv);
         scrollToBottom();
 
@@ -111,21 +144,13 @@ export function setupChatHandler(elements, renderHistory) {
 
         let currentAnswerBuffer = '';
         const copyBtn = createCopyButton(() => currentAnswerBuffer);
-        answerDiv.appendChild(copyBtn);
-
-        // 重新生成按钮
-        const regenBtn = document.createElement('button');
-        regenBtn.className = 'regenerate-btn';
-        regenBtn.title = '重新生成';
-        regenBtn.innerHTML = '<span class="material-symbols-rounded">refresh</span>';
-        regenBtn.onclick = async (e) => {
-            e.stopPropagation();
+        const regenBtn = createRegenerateButton(async () => {
             // 移除当前助手消息
             msgDiv.remove();
             // 重新发送
             await handleSendMessage(lastUserMessage);
-        };
-        answerDiv.appendChild(regenBtn);
+        });
+        sideColumn.appendChild(createMessageActionRail([copyBtn, regenBtn], '助手消息操作'));
 
         let currentSources = [];
         let hasReceivedChunk = false;
@@ -147,13 +172,15 @@ export function setupChatHandler(elements, renderHistory) {
             await API.streamChat(text, {
                 model: selectedModel,
                 providerId: selectedProviderId,
+                liveArtifactsMode: state.liveArtifactsMode,
                 signal: controller.signal,
                 onMeta: (meta) => {
                     const sessionId = typeof meta === 'string' ? meta : meta.session_id;
                     if (sessionId) {
                         setCurrentSessionId(sessionId);
-                        if (window.location.pathname !== `/c/${sessionId}`) {
-                            history.replaceState({ sessionId }, '', `/c/${sessionId}`);
+                        const route = chatRoute(sessionId);
+                        if (window.location.pathname !== route) {
+                            history.replaceState({ sessionId }, '', route);
                         }
                     }
                 },
@@ -193,12 +220,24 @@ export function setupChatHandler(elements, renderHistory) {
                         contentWrapper.innerHTML = '';
                     }
                     currentAnswerBuffer += chunk;
-                    contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
+                    if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, true)) {
+                        contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
+                    }
+                    renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
+                        messageId: liveArtifactMessageId,
+                        isStreaming: true,
+                    });
                     if (!userScrolled) scrollToBottom();
                 },
                 onAnswer: (finalAnswer, sessionId) => {
                     currentAnswerBuffer = finalAnswer;
-                    contentWrapper.innerHTML = renderWithCitations(finalAnswer, currentSources);
+                    if (!getInlineLiveArtifact(finalAnswer, liveArtifactMessageId, false)) {
+                        contentWrapper.innerHTML = renderWithCitations(finalAnswer, currentSources);
+                    }
+                    renderLiveArtifactsForMessage(contentWrapper, finalAnswer, {
+                        messageId: liveArtifactMessageId,
+                        isStreaming: false,
+                    });
                     setCurrentSessionId(sessionId);
                     refreshHistory();
                 },
@@ -415,6 +454,16 @@ export function setupChatHandler(elements, renderHistory) {
         });
     }
 
+    const quickLiveArtifactsBtn = document.getElementById('quick-live-artifacts-btn');
+    if (quickLiveArtifactsBtn) {
+        quickLiveArtifactsBtn.addEventListener('click', () => {
+            const nextValue = !state.liveArtifactsMode;
+            setLiveArtifactsMode(nextValue);
+            syncQuickSettingsFromState();
+            showToast(`Live Artifacts ${nextValue ? '已开启' : '已关闭'}`, 'info');
+        });
+    }
+
     syncQuickSettingsFromState();
 
     return { loadChat, deleteChat };
@@ -424,10 +473,11 @@ export function syncQuickSettingsFromState() {
     const quickEngineName = document.getElementById('quick-engine-name');
     const quickEngineDropdown = document.getElementById('quick-engine-dropdown');
     const quickInteractiveBtn = document.getElementById('quick-interactive-btn');
+    const quickLiveArtifactsBtn = document.getElementById('quick-live-artifacts-btn');
     
     if (!state.settings) return;
     
-    const engine = state.settings.search_engine || 'duckduckgo';
+    const engine = state.settings.search_engine || 'searxng';
     const engineNames = {
         'duckduckgo': 'DuckDuckGo',
         'google': 'Google',
@@ -462,5 +512,20 @@ export function syncQuickSettingsFromState() {
     const interactive = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
     if (quickInteractiveBtn) {
         quickInteractiveBtn.classList.toggle('active', interactive);
+    }
+
+    if (quickLiveArtifactsBtn) {
+        const active = Boolean(state.liveArtifactsMode);
+        quickLiveArtifactsBtn.classList.toggle('active', active);
+        quickLiveArtifactsBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        quickLiveArtifactsBtn.setAttribute(
+            'aria-label',
+            active
+                ? 'Live Artifacts 提示已激活。点击移除。'
+                : '加载 Live Artifacts 提示并保存设置'
+        );
+        quickLiveArtifactsBtn.title = active
+            ? 'Live Artifacts 提示已激活。点击移除。'
+            : '加载 Live Artifacts 提示并保存';
     }
 }

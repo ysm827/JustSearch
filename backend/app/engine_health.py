@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 _FALLBACK_PRIORITY = [
     "bing",
     "sogou",
+    "searxng",
     "brave",
     "google",
-    "searxng",
     "duckduckgo",
 ]
 

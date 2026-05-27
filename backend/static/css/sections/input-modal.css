@@ -301,9 +301,19 @@
     align-items: center;
 }
 
+.quick-live-artifacts-wrapper {
+    display: flex;
+    align-items: center;
+}
+
 #quick-interactive-btn.active {
     background-color: var(--amc-success-bg);
     color: var(--amc-success-text);
+}
+
+#quick-live-artifacts-btn.active {
+    background-color: var(--primary-light);
+    color: var(--primary);
 }
 
 #quick-interactive-btn.active .icon-svg,
@@ -311,7 +321,13 @@
     color: var(--amc-success-text);
 }
 
-.interactive-status-badge {
+#quick-live-artifacts-btn.active .icon-svg,
+#quick-live-artifacts-btn.active .toolbar-symbol {
+    color: var(--primary);
+}
+
+.interactive-status-badge,
+.live-artifacts-status-badge {
     display: inline-block;
     width: 6px;
     height: 6px;
@@ -324,6 +340,11 @@
 #quick-interactive-btn.active .interactive-status-badge {
     background-color: var(--amc-success-text);
     box-shadow: 0 0 4px var(--amc-success-text);
+}
+
+#quick-live-artifacts-btn.active .live-artifacts-status-badge {
+    background-color: var(--primary);
+    box-shadow: 0 0 4px var(--primary);
 }
 
 /* Submit/Send Button - Morphing and Animations */
@@ -462,7 +483,7 @@
     margin: 0;
     font-size: 18px;
     font-weight: 700;
-    letter-spacing: -0.3px;
+    letter-spacing: 0;
 }
 
 .modal-body {
@@ -817,6 +838,13 @@
     padding-bottom: 2px;
 }
 
+.api-settings-heading {
+    align-items: flex-start;
+    flex-direction: row;
+    justify-content: space-between;
+    gap: 16px;
+}
+
 .settings-section-kicker {
     color: var(--text-muted);
     font-size: 11px;
@@ -831,6 +859,49 @@
     font-size: 20px;
     font-weight: 650;
     line-height: 1.25;
+}
+
+.settings-save-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--amc-radius);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.settings-save-status .material-symbols-rounded {
+    font-size: 16px;
+}
+
+.settings-save-status.is-saved {
+    border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+    background: var(--success-light);
+    color: var(--success);
+}
+
+.settings-save-status.is-pending,
+.settings-save-status.is-saving {
+    border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+    background: var(--primary-light);
+    color: var(--primary);
+}
+
+.settings-save-status.is-invalid,
+.settings-save-status.is-error {
+    border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+    background: var(--warning-light);
+    color: var(--warning);
+}
+
+.settings-save-status.is-saving .material-symbols-rounded {
+    animation: api-verify-spin 0.85s linear infinite;
 }
 
 .settings-card {
@@ -1746,14 +1817,44 @@
 .provider-list-container {
     display: flex;
     flex-direction: column;
+    gap: 12px;
+}
+
+.api-settings-card {
     gap: 14px;
+}
+
+.api-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding-bottom: 2px;
+}
+
+.api-card-title {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.api-card-subtitle,
+.workflow-model-subtitle {
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.35;
 }
 
 .workflow-model-card {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    margin-top: 14px;
+    margin-top: 8px;
+    padding: 14px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--amc-radius);
+    background: color-mix(in srgb, var(--bg-secondary) 58%, transparent);
 }
 
 .workflow-model-header {
@@ -1804,7 +1905,14 @@
     flex-direction: column;
     gap: 0;
     border-radius: var(--amc-radius);
-    background: color-mix(in srgb, var(--bg-input) 84%, transparent);
+    border: 1px solid var(--border-light);
+    background: var(--bg-input);
+    box-shadow: var(--shadow-xs);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+}
+
+.provider-card:hover {
+    border-color: var(--border);
 }
 
 .provider-card-header {
@@ -1812,7 +1920,7 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    padding: 12px 0;
+    padding: 14px;
 }
 
 .provider-collapse-btn {
@@ -1837,11 +1945,39 @@
     min-width: 0;
 }
 
+.provider-title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
 .provider-card-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--text-primary);
     font-size: 14px;
     font-weight: 700;
     line-height: 1.2;
+}
+
+.provider-default-badge {
+    display: none;
+    flex: 0 0 auto;
+    min-height: 20px;
+    padding: 3px 7px;
+    border-radius: var(--amc-radius);
+    background: var(--primary-light);
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.provider-card.is-default .provider-default-badge {
+    display: inline-flex;
+    align-items: center;
 }
 
 .provider-card-subtitle {
@@ -1892,7 +2028,7 @@
 .provider-card-actions {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-shrink: 0;
 }
 
@@ -1923,7 +2059,7 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
-    padding: 0 0 14px;
+    padding: 0 14px 14px;
 }
 
 .provider-card.collapsed .provider-card-body {
@@ -1934,6 +2070,20 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 12px;
+}
+
+.provider-card .form-group.has-error input,
+.provider-card .form-group.has-error select,
+.model-settings-group.has-error .model-panel-toggle {
+    border-color: var(--warning);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 14%, transparent);
+}
+
+.provider-field-error {
+    margin-top: 6px;
+    color: var(--warning);
+    font-size: 12px;
+    line-height: 1.35;
 }
 
 .remove-provider-btn {
@@ -2098,4 +2248,73 @@
 
 .add-model-btn .material-symbols-rounded {
     font-size: 18px;
+}
+
+@media (max-width: 760px) {
+    .api-settings-heading {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .settings-save-status {
+        align-self: flex-start;
+    }
+
+    .api-card-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    #add-provider-btn {
+        width: 100%;
+    }
+
+    .provider-card-header {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .provider-collapse-btn {
+        width: 100%;
+    }
+
+    .provider-card-actions {
+        justify-content: space-between;
+        width: 100%;
+    }
+
+    .provider-grid,
+    .workflow-step-models-container {
+        grid-template-columns: 1fr;
+    }
+
+    .model-row {
+        align-items: stretch;
+        display: grid;
+        grid-template-columns: 1fr 1fr 36px;
+    }
+}
+
+@media (max-width: 480px) {
+    .settings-panels {
+        padding: 20px 16px;
+    }
+
+    .provider-card-header {
+        padding: 13px;
+    }
+
+    .provider-card-body {
+        padding: 0 13px 13px;
+    }
+
+    .model-row {
+        grid-template-columns: 1fr;
+    }
+
+    .model-row .remove-model-btn {
+        justify-self: end;
+    }
 }

@@ -5,6 +5,8 @@ import {
     buildAuthenticatedUrl,
     buildAuthHeaders,
     buildBrowserWebSocketUrl,
+    clearAuthRetryFlag,
+    handleUnauthorizedResponse,
     initializeAuth,
     normalizeSettings,
     resolveClientAuth,
@@ -73,6 +75,19 @@ test('buildBrowserWebSocketUrl uses current auth token by default', () => {
     );
 });
 
+test('buildBrowserWebSocketUrl encodes session id path segment', () => {
+    const result = buildBrowserWebSocketUrl(
+        { protocol: 'https:', host: 'example.com' },
+        'session?x=1#frag',
+        'secret-token',
+    );
+
+    assert.equal(
+        result,
+        'wss://example.com/ws/browser/session%3Fx%3D1%23frag?token=secret-token',
+    );
+});
+
 test('buildAuthenticatedUrl appends token when available', () => {
     assert.equal(
         buildAuthenticatedUrl('/api/history/export/all?format=markdown', 'secret-token'),
@@ -81,10 +96,58 @@ test('buildAuthenticatedUrl appends token when available', () => {
     assert.equal(buildAuthenticatedUrl('/api/history/export/all', ''), '/api/history/export/all');
 });
 
+test('api path helper encodes ids before route interpolation', async () => {
+    globalThis.document = {
+        addEventListener: () => {},
+    };
+    globalThis.window = {
+        markdownit: () => ({
+            render: value => String(value || ''),
+            utils: { escapeHtml: value => String(value || '') },
+        }),
+        DOMPurify: { sanitize: value => String(value || '') },
+        hljs: { getLanguage: () => false, highlightAuto: value => ({ value }) },
+    };
+
+    const { __apiTestHooks } = await import('../../backend/static/js/modules/api.js?test=path-encoding');
+
+    assert.equal(__apiTestHooks.encodePathSegment('id?x=1#frag'), 'id%3Fx%3D1%23frag');
+});
+
 test('normalizeSettings turns nullish values into an empty object', () => {
     assert.deepEqual(normalizeSettings(null), {});
     assert.deepEqual(normalizeSettings(undefined), {});
     assert.deepEqual(normalizeSettings({ model_id: 'demo-model' }), {
         model_id: 'demo-model',
     });
+});
+
+test('handleUnauthorizedResponse clears stale token and reloads once', () => {
+    const local = new Map([['justsearch_auth_token', 'stale-token']]);
+    const session = new Map();
+    let reloads = 0;
+    const win = {
+        localStorage: {
+            removeItem: (key) => local.delete(key),
+        },
+        sessionStorage: {
+            getItem: (key) => session.get(key) || '',
+            setItem: (key, value) => session.set(key, value),
+            removeItem: (key) => session.delete(key),
+        },
+        location: {
+            reload: () => { reloads += 1; },
+        },
+    };
+
+    assert.equal(handleUnauthorizedResponse({ status: 401 }, win), true);
+    assert.equal(local.has('justsearch_auth_token'), false);
+    assert.equal(session.get('justsearch_auth_retry'), '1');
+    assert.equal(reloads, 1);
+
+    assert.equal(handleUnauthorizedResponse({ status: 401 }, win), false);
+    assert.equal(reloads, 1);
+
+    clearAuthRetryFlag(win);
+    assert.equal(session.has('justsearch_auth_retry'), false);
 });

@@ -1,10 +1,12 @@
-import { buildBrowserWebSocketUrl } from './auth.js';
+import { buildBrowserWebSocketUrl } from './auth.js?v=1';
 import { state } from './state.js';
 
 export function setupBrowserModal() {
     const modal = document.getElementById('browser-modal');
     const closeBtn = document.getElementById('browser-close-btn');
     const completeBtn = document.getElementById('browser-complete-btn');
+    const typeInput = document.getElementById('browser-type-input');
+    const typeSendBtn = document.getElementById('browser-type-send-btn');
     const img = document.getElementById('browser-viewport');
 
     if (!modal) return;
@@ -12,12 +14,29 @@ export function setupBrowserModal() {
 
     let ws = null;
 
+    function updateTypeSendState() {
+        if (!typeSendBtn || !typeInput) return;
+        typeSendBtn.disabled = !ws || ws.readyState !== WebSocket.OPEN || typeInput.value.length === 0;
+    }
+
+    function sendTypedText() {
+        if (!ws || ws.readyState !== WebSocket.OPEN || !typeInput) return;
+        const text = typeInput.value;
+        if (!text) return;
+
+        ws.send(JSON.stringify({ action: 'type', text }));
+        typeInput.value = '';
+        updateTypeSendState();
+        typeInput.focus();
+    }
+
     closeBtn.addEventListener('click', () => {
         modal.classList.remove('active');
         if (ws) {
             ws.close();
             ws = null;
         }
+        updateTypeSendState();
     });
 
     completeBtn.addEventListener('click', () => {
@@ -27,6 +46,20 @@ export function setupBrowserModal() {
             completeBtn.textContent = '正在提交...';
         }
     });
+
+    if (typeSendBtn) {
+        typeSendBtn.addEventListener('click', sendTypedText);
+    }
+
+    if (typeInput) {
+        typeInput.addEventListener('input', updateTypeSendState);
+        typeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendTypedText();
+            }
+        });
+    }
 
     img.addEventListener('mousedown', (e) => {
         if (!ws || img.style.display === 'none') return;
@@ -55,18 +88,26 @@ export function setupBrowserModal() {
         img.style.display = 'none';
         completeBtn.disabled = false;
         completeBtn.textContent = '完成验证，继续执行';
+        if (typeInput) {
+            typeInput.value = '';
+        }
+        updateTypeSendState();
 
         const wsUrl = buildBrowserWebSocketUrl(window.location, sessionId);
 
         if (ws) ws.close();
-        ws = new WebSocket(wsUrl);
+        const activeWs = new WebSocket(wsUrl);
+        ws = activeWs;
 
-        ws.onopen = () => {
+        activeWs.onopen = () => {
+            if (ws !== activeWs) return;
             status.textContent = '已连接。等待画面...';
+            updateTypeSendState();
             img.focus();
         };
 
-        ws.onmessage = (event) => {
+        activeWs.onmessage = (event) => {
+            if (ws !== activeWs) return;
             const data = JSON.parse(event.data);
             if (data.type === 'frame') {
                 status.style.display = 'none';
@@ -74,23 +115,29 @@ export function setupBrowserModal() {
                 img.src = `data:image/jpeg;base64,${data.image}`;
             } else if (data.type === 'status' && data.msg === 'Completed') {
                 modal.classList.remove('active');
-                if (ws) {
-                    ws.close();
+                if (ws === activeWs) {
+                    activeWs.close();
                     ws = null;
                 }
+                updateTypeSendState();
             }
         };
 
-        ws.onclose = () => {
+        activeWs.onclose = () => {
+            if (ws !== activeWs) return;
+            ws = null;
+            updateTypeSendState();
             if (modal.classList.contains('active') && completeBtn.textContent !== '正在提交...') {
                 status.style.display = 'block';
                 status.textContent = '连接已断开 (会话可能已结束)';
             }
         };
 
-        ws.onerror = (e) => {
+        activeWs.onerror = (e) => {
+            if (ws !== activeWs) return;
             console.error("WS Error", e);
             status.textContent = '连接错误';
+            updateTypeSendState();
         };
     };
 }

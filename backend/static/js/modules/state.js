@@ -3,6 +3,7 @@ export const state = {
     settings: {},
     isProcessing: false,
     abortController: null,
+    liveArtifactsMode: false,
     openBrowserModal: null,
     connectionStatus: 'connected', // connected | disconnected | reconnecting
     lastActivityTime: Date.now(),
@@ -22,4 +23,8 @@ export function setIsProcessing(flag) {
 
 export function setAbortController(controller) {
     state.abortController = controller;
+}
+
+export function setLiveArtifactsMode(flag) {
+    state.liveArtifactsMode = Boolean(flag);
 }

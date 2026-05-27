@@ -114,18 +114,69 @@
 
     .message {
         max-width: 100%;
-        padding-inline: 34px;
+        margin-top: 20px;
+        padding-inline: 0;
     }
 
-    .message.assistant .copy-btn,
-    .message.assistant .regenerate-btn,
-    .message.assistant .msg-delete-btn {
-        left: -32px;
+    .message.grouped {
+        margin-top: 6px;
     }
 
-    .message.user .copy-btn,
-    .message.user .msg-delete-btn {
-        right: -32px;
+    .message-row {
+        gap: 8px;
+    }
+
+    .message-side {
+        flex-basis: 32px;
+        width: 32px;
+        min-height: 32px;
+        top: 10px;
+    }
+
+    .message-avatar {
+        width: 28px;
+        height: 28px;
+    }
+
+    .message-avatar img {
+        width: 26px;
+        height: 26px;
+    }
+
+    .message-avatar .material-symbols-rounded {
+        font-size: 26px;
+    }
+
+    .message.user .message-content {
+        max-width: calc(100% - 40px);
+        padding: 12px 14px;
+        border-radius: 14px;
+        border-top-right-radius: 4px;
+    }
+
+    .message.assistant .message-content,
+    .message.error .message-content {
+        max-width: calc(100% - 40px);
+    }
+
+    .message.error .message-content {
+        padding: 12px 14px;
+    }
+
+    .message-action-rail {
+        gap: 2px;
+        opacity: 1;
+        pointer-events: auto;
+        transform: none;
+    }
+
+    .message-action-btn,
+    .copy-btn,
+    .regenerate-btn,
+    .edit-message-btn,
+    .msg-delete-btn {
+        width: 28px;
+        height: 28px;
     }
 
     .log-container {

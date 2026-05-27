@@ -59,5 +59,18 @@ def is_search_engine_internal_page(url: str) -> bool:
     except Exception:
         return False
 
-    hostname = (parsed.hostname or "").removeprefix("www.")
-    return hostname == "sogou.com" and parsed.path.startswith("/web")
+    hostname = (parsed.hostname or "").lower().rstrip(".").removeprefix("www.")
+    path = parsed.path or "/"
+    query = urllib.parse.parse_qs(parsed.query)
+
+    if hostname == "google.com":
+        return path in {"/search", "/url"} or path.startswith("/sorry/")
+    if hostname == "bing.com":
+        return path in {"/search", "/ck/a"}
+    if hostname == "duckduckgo.com":
+        return ((path in {"/", "/html/", "/html"} and "q" in query) or path.startswith("/l/"))
+    if hostname == "sogou.com":
+        return path.startswith(("/web", "/link"))
+    if hostname == "search.brave.com":
+        return path == "/search"
+    return False

@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
     <link rel="preconnect" href="https://www.google.com">
-    <link rel="stylesheet" href="/static/css/style.css?v=15">
+    <link rel="stylesheet" href="/static/css/style.css?v=24">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet">
@@ -211,6 +211,13 @@
                                 <span class="interactive-status-badge"></span>
                             </button>
                         </div>
+                        <div class="quick-live-artifacts-wrapper">
+                            <button id="quick-live-artifacts-btn" class="toolbar-btn" aria-label="加载 Live Artifacts 提示并保存设置" title="加载 Live Artifacts 提示并保存" aria-pressed="false">
+                                <span class="material-symbols-rounded toolbar-symbol" aria-hidden="true">auto_awesome</span>
+                                <span>Live Artifacts</span>
+                                <span class="live-artifacts-status-badge"></span>
+                            </button>
+                        </div>
                     </div>
                     <div class="input-toolbar-right">
                         <button id="send-btn" aria-label="发送消息">
@@ -288,15 +295,15 @@
                                 <div class="form-group settings-field-row">
                                     <div class="settings-field-copy">
                                         <label for="engine-select">搜索引擎</label>
-                                        <span class="field-desc">设置默认用于实时检索的搜索服务。</span>
+                                        <span class="field-desc">默认使用自托管 SearXNG，必要时可切换其它引擎。</span>
                                     </div>
                                     <select id="engine-select">
-                                        <option value="duckduckgo">DuckDuckGo</option>
-                                        <option value="google">Google</option>
+                                        <option value="searxng">SearXNG（默认，自托管）</option>
                                         <option value="bing">Bing</option>
-                                        <option value="sogou">搜狗 (Sogou)</option>
-                                        <option value="brave">Brave Search</option>
-                                        <option value="searxng">SearXNG</option>
+                                        <option value="sogou">搜狗（中文备用）</option>
+                                        <option value="duckduckgo">DuckDuckGo（易触发验证）</option>
+                                        <option value="google">Google（易触发验证码）</option>
+                                        <option value="brave">Brave Search（易触发验证）</option>
                                     </select>
                                 </div>
                                 <div class="form-group settings-field-row engine-check-row">
@@ -345,20 +352,35 @@
 
                         <!-- Tab 3: API Settings -->
                         <div id="tab-api" class="settings-panel" role="tabpanel">
-                            <div class="settings-section-heading">
-                                <div class="settings-section-kicker">Connection</div>
-                                <div class="panel-header-title">API 设置</div>
+                            <div class="settings-section-heading api-settings-heading">
+                                <div>
+                                    <div class="settings-section-kicker">Connection</div>
+                                    <div class="panel-header-title">API 设置</div>
+                                </div>
+                                <div id="settings-save-status" class="settings-save-status is-saved" role="status" aria-live="polite">
+                                    <span class="material-symbols-rounded">check_circle</span>
+                                    <span>已保存</span>
+                                </div>
                             </div>
                             <div class="settings-card api-settings-card">
+                                <div class="api-card-header">
+                                    <div>
+                                        <div class="api-card-title">Providers</div>
+                                        <div id="provider-count-label" class="api-card-subtitle">0 个连接</div>
+                                    </div>
+                                    <button type="button" id="add-provider-btn" class="add-model-btn">
+                                        <span class="material-symbols-rounded">add</span>
+                                        <span>添加 Provider</span>
+                                    </button>
+                                </div>
                                 <div id="provider-list-container" class="provider-list-container"></div>
-                                <button type="button" id="add-provider-btn" class="add-model-btn">
-                                    <span class="material-symbols-rounded">add</span>
-                                    <span>添加 Provider</span>
-                                </button>
                             </div>
                             <div class="settings-card workflow-model-card">
                                 <div class="workflow-model-header">
-                                    <div class="workflow-model-title">步骤模型</div>
+                                    <div>
+                                        <div class="workflow-model-title">步骤模型</div>
+                                        <div class="workflow-model-subtitle">未指定时跟随聊天栏默认模型</div>
+                                    </div>
                                 </div>
                                 <div id="workflow-step-models-container" class="workflow-step-models-container"></div>
                             </div>
@@ -505,13 +527,19 @@
                     <div id="browser-status" class="browser-status-overlay">正在连接...</div>
                 </div>
                 <div class="browser-controls">
-                    <p class="instruction">请在上方区域点击以解决验证码。</p>
+                    <p class="instruction">可在上方画面点击、滚动，或向当前焦点输入文本。</p>
+                    <div class="browser-input-row">
+                        <input type="text" id="browser-type-input" placeholder="输入验证码或文本" aria-label="向浏览器输入文本" autocomplete="off">
+                        <button type="button" id="browser-type-send-btn" class="browser-icon-btn" title="发送输入" aria-label="发送输入">
+                            <span class="material-symbols-rounded">keyboard_return</span>
+                        </button>
+                    </div>
                     <button id="browser-complete-btn" class="primary-btn">完成验证，继续执行</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=24"></script>
+    <script type="module" src="/static/js/main.js?v=36"></script>
 </body>
 </html>

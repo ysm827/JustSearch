@@ -18,7 +18,6 @@
    UI Polishing overrides
    ======================================== */
 .message-content {
-    line-height: 1.8;
     font-size: 15px;
     letter-spacing: 0;
     word-break: break-word;
@@ -27,31 +26,6 @@
 
 .message.user .message-content {
     box-shadow: var(--shadow-sm);
-}
-
-/* Message timestamps — show on hover */
-.message-time {
-    font-size: 11px;
-    color: var(--text-muted);
-    margin-top: 4px;
-    line-height: 1;
-    opacity: 0;
-    transition: opacity 0.2s;
-    user-select: none;
-}
-
-.message.user .message-time {
-    align-self: flex-end;
-    padding-right: 4px;
-}
-
-.message.assistant .message-time {
-    align-self: flex-start;
-    padding-left: 0;
-}
-
-.message:hover .message-time {
-    opacity: 0.72;
 }
 
 [data-theme="dark"] .message.user .message-content {
@@ -154,7 +128,6 @@
 }
 
 .log-spinner {
-    font-size: 18px;
     transition: color var(--transition-smooth);
 }
 
@@ -322,11 +295,11 @@
 
 /* Typography line heights */
 .hero-title {
-    letter-spacing: -1.5px;
+    letter-spacing: 0;
 }
 
 .hero-subtitle {
-    letter-spacing: -0.2px;
+    letter-spacing: 0;
     line-height: 1.6;
 }
 

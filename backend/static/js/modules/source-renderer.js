@@ -1,10 +1,26 @@
-import { md } from './utils.js?v=2';
+import { md } from './utils.js?v=3';
 
 const _faviconCache = new Map();
+
+function getSafeExternalUrl(url) {
+    try {
+        const rawUrl = String(url || '').trim();
+        const parsedUrl = new URL(rawUrl);
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            return '';
+        }
+        return rawUrl;
+    } catch {
+        return '';
+    }
+}
 
 function getFaviconUrl(url) {
     try {
         const parsedUrl = new URL(url);
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            return null;
+        }
         const domain = parsedUrl.hostname;
         if (_faviconCache.has(domain)) {
             return _faviconCache.get(domain);
@@ -30,6 +46,10 @@ export function extractSources(text) {
 export function renderWithCitations(text, sources) {
     const html = md.render(text);
     if (!sources || sources.length === 0) return html;
+    const sourceById = new Map(
+        sources
+            .map((source, index) => [String(source.id ?? index + 1), source])
+    );
 
     const div = document.createElement('div');
     div.innerHTML = html;
@@ -73,17 +93,19 @@ export function renderWithCitations(text, sources) {
             linkSpan.className = 'citation-group';
 
             ids.forEach((id, idx) => {
-                const sourceIndex = parseInt(id) - 1;
-                if (sourceIndex >= 0 && sourceIndex < sources.length) {
-                    const source = sources[sourceIndex];
+                const source = sourceById.get(id);
+                if (source) {
+                    const safeUrl = getSafeExternalUrl(source.url);
                     const anchor = document.createElement('a');
-                    anchor.href = source.url;
+                    anchor.href = safeUrl || '#';
                     anchor.className = 'citation-link';
-                    anchor.target = '_blank';
-                    anchor.rel = 'noopener noreferrer';
+                    if (safeUrl) {
+                        anchor.target = '_blank';
+                        anchor.rel = 'noopener noreferrer';
+                    }
                     anchor.title = source.title || source.url;
 
-                    const faviconUrl = getFaviconUrl(source.url);
+                    const faviconUrl = getFaviconUrl(safeUrl);
                     if (faviconUrl) {
                         const img = document.createElement('img');
                         img.src = faviconUrl;
@@ -130,7 +152,8 @@ export function renderWithCitations(text, sources) {
         const ol = document.createElement('ol');
         sources.forEach((source, idx) => {
             const li = document.createElement('li');
-            li.id = `ref-${idx + 1}`;
+            li.id = `ref-${source.id ?? idx + 1}`;
+            li.value = Number(source.id) || idx + 1;
 
             const faviconUrl = getFaviconUrl(source.url);
             if (faviconUrl) {
@@ -144,10 +167,13 @@ export function renderWithCitations(text, sources) {
             }
 
             const anchor = document.createElement('a');
-            anchor.href = source.url;
+            const safeUrl = getSafeExternalUrl(source.url);
+            anchor.href = safeUrl || '#';
             anchor.textContent = source.title || source.url;
-            anchor.target = '_blank';
-            anchor.rel = 'noopener noreferrer';
+            if (safeUrl) {
+                anchor.target = '_blank';
+                anchor.rel = 'noopener noreferrer';
+            }
 
             li.appendChild(anchor);
             ol.appendChild(li);

@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import time
+import copy
 
 logger = logging.getLogger(__name__)
 
@@ -9,8 +10,27 @@ logger = logging.getLogger(__name__)
 _config_cache: dict = {}
 _config_mtime: float = 0.0
 
+_SEARCH_URL_ENV_OVERRIDES = {
+    "searxng": ("SEARXNG_SEARCH_URL", "JUSTSEARCH_SEARXNG_SEARCH_URL"),
+}
 
-def load_selectors(engine: str = "duckduckgo") -> dict:
+
+def _apply_env_overrides(config: dict) -> dict:
+    """Return selector config with deployment-specific search URLs applied."""
+    result = copy.deepcopy(config)
+    for engine, env_names in _SEARCH_URL_ENV_OVERRIDES.items():
+        engine_config = result.get(engine)
+        if not isinstance(engine_config, dict):
+            continue
+        for env_name in env_names:
+            override = os.getenv(env_name, "").strip()
+            if override:
+                engine_config["base_url"] = override
+                break
+    return result
+
+
+def load_selectors(engine: str = "searxng") -> dict:
     """Load search engine CSS selectors from config file.
     
     Supports hot-reload: if the config file has been modified since last load,
@@ -33,21 +53,21 @@ def load_selectors(engine: str = "duckduckgo") -> dict:
     except OSError as e:
         logger.error("[SearchEngine] 加载搜索引擎配置失败: %s", e)
     
-    config = _config_cache
+    config = _apply_env_overrides(_config_cache)
     if not config:
         # Fallback default
         config = {
-            "duckduckgo": {
-                "base_url": "https://duckduckgo.com/?q={query}",
+            "searxng": {
+                "base_url": "https://searx.be/search?q={query}&format=html",
                 "selectors": {
-                    "result_container": ["article[data-testid='result']", ".react-results--main li"],
-                    "title": "h2",
-                    "link": "a[data-testid='result-title-a']",
-                    "snippet": "[data-testid='result-snippet']",
-                    "date": ".result__timestamp"
+                    "result_container": ["article.result", ".result"],
+                    "title": "h3 a",
+                    "link": "h3 a",
+                    "snippet": ".content, p",
+                    "date": ""
                 },
                 "captcha_check": [],
-                "wait_selector": "#react-layout, .react-results--main"
+                "wait_selector": "#results, .result"
             }
         }
 
@@ -56,8 +76,8 @@ def load_selectors(engine: str = "duckduckgo") -> dict:
 
     if engine in config:
         return config[engine]
-    # Engine not in config — return full config (caller will fallback to duckduckgo)
-    return config.get("duckduckgo", {})
+    # Engine not in config — return the stable default engine.
+    return config.get("searxng", {})
 
 
 def get_all_engines() -> list:
@@ -65,4 +85,4 @@ def get_all_engines() -> list:
     global _config_cache
     if not _config_cache:
         load_selectors()  # Force load
-    return list(_config_cache.keys()) if _config_cache else ["duckduckgo"]
+    return list(_config_cache.keys()) if _config_cache else ["searxng"]

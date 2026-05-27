@@ -1,6 +1,10 @@
 import { state, setSettings } from './state.js';
-import { authFetch } from './auth.js';
+import { authFetch } from './auth.js?v=1';
 import { applyTheme } from './utils.js';
+
+function encodePathSegment(value) {
+    return encodeURIComponent(String(value ?? ''));
+}
 
 export async function fetchSettings() {
     try {
@@ -112,7 +116,7 @@ export async function createChatGroupAPI(title = '新分组') {
 
 export async function updateChatGroupAPI(groupId, changes) {
     try {
-        const res = await authFetch(`/api/history/groups/${groupId}`, {
+        const res = await authFetch(`/api/history/groups/${encodePathSegment(groupId)}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(changes)
@@ -128,7 +132,7 @@ export async function updateChatGroupAPI(groupId, changes) {
 
 export async function deleteChatGroupAPI(groupId) {
     try {
-        const res = await authFetch(`/api/history/groups/${groupId}`, {
+        const res = await authFetch(`/api/history/groups/${encodePathSegment(groupId)}`, {
             method: 'DELETE'
         });
         return res.ok;
@@ -140,7 +144,7 @@ export async function deleteChatGroupAPI(groupId) {
 
 export async function moveChatToGroupAPI(sessionId, groupId) {
     try {
-        const res = await authFetch(`/api/history/${sessionId}/group`, {
+        const res = await authFetch(`/api/history/${encodePathSegment(sessionId)}/group`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ group_id: groupId })
@@ -154,7 +158,7 @@ export async function moveChatToGroupAPI(sessionId, groupId) {
 
 export async function deleteChatAPI(sessionId) {
     try {
-        const res = await authFetch(`/api/history/${sessionId}`, {
+        const res = await authFetch(`/api/history/${encodePathSegment(sessionId)}`, {
             method: 'DELETE'
         });
         return res.ok;
@@ -166,7 +170,7 @@ export async function deleteChatAPI(sessionId) {
 
 export async function renameChatAPI(sessionId, newTitle) {
     try {
-        const res = await authFetch(`/api/history/${sessionId}`, {
+        const res = await authFetch(`/api/history/${encodePathSegment(sessionId)}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: newTitle })
@@ -277,7 +281,7 @@ export async function searchHistory(query) {
 
 export async function fetchChat(sessionId) {
     try {
-        const res = await authFetch(`/api/history/${sessionId}`);
+        const res = await authFetch(`/api/history/${encodePathSegment(sessionId)}`);
         if (res.ok) {
             return await res.json();
         }
@@ -286,6 +290,10 @@ export async function fetchChat(sessionId) {
     }
     return null;
 }
+
+export const __apiTestHooks = {
+    encodePathSegment,
+};
 
 // Cache GitHub stars in memory to avoid repeated requests
 let _githubStarsCache = null;
@@ -314,12 +322,65 @@ export async function fetchGitHubStats() {
 }
 
 export async function streamChat(query, callbacks) {
-    const { onLog, onAnswerChunk, onAnswer, onSources, onStats, onError, onDone, onMeta, signal, model, providerId } = callbacks;
+    const { onLog, onAnswerChunk, onAnswer, onSources, onStats, onError, onDone, onMeta, signal, model, providerId, liveArtifactsMode } = callbacks;
 
     const MAX_RETRIES = 2;
     const RETRY_DELAYS = [2000, 5000]; // 渐进式重试延迟
+    let doneEmitted = false;
+
+    const emitDone = () => {
+        if (doneEmitted) return;
+        doneEmitted = true;
+        if (onDone) onDone();
+    };
+
+    const handleSsePayload = (dataStr) => {
+        if (dataStr === '[DONE]') {
+            emitDone();
+            return true;
+        }
+
+        try {
+            const event = JSON.parse(dataStr);
+
+            if (event.type === 'meta' && onMeta) {
+                onMeta(event);
+            }
+            else if (event.type === 'log' && onLog) {
+                onLog(event.content);
+            }
+            else if (event.type === 'sources' && onSources) {
+                onSources(event.content);
+            }
+            else if (event.type === 'stats' && onStats) {
+                onStats(event.content);
+            }
+            else if (event.type === 'answer_chunk' && onAnswerChunk) {
+                onAnswerChunk(event.content);
+            }
+            else if (event.type === 'answer' && onAnswer) {
+                onAnswer(event.content, event.session_id);
+            }
+            else if (event.type === 'error' && onError) {
+                onError(event.content);
+            }
+        } catch (e) {
+            console.error('Error parsing SSE event', e);
+        }
+        return false;
+    };
+
+    const processSseBlock = (block) => {
+        const dataLines = String(block || '')
+            .split(/\r?\n/)
+            .filter(line => line.startsWith('data: '))
+            .map(line => line.slice(6));
+        if (dataLines.length === 0) return false;
+        return handleSsePayload(dataLines.join('\n'));
+    };
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        let responseStarted = false;
         try {
             const response = await authFetch('/api/chat', {
                 method: 'POST',
@@ -332,10 +393,13 @@ export async function streamChat(query, callbacks) {
                     search_engine: state.settings.search_engine,
                     max_results: state.settings.max_results,
                     max_iterations: state.settings.max_iterations,
-                    interactive_search: state.settings.interactive_search
+                    interactive_search: state.settings.interactive_search,
+                    max_concurrent_pages: state.settings.max_concurrent_pages,
+                    live_artifacts_mode: Boolean(liveArtifactsMode)
                 }),
                 signal: signal
             });
+            responseStarted = true;
 
             // Handle non-200 responses (e.g. 400 missing API key)
             if (!response.ok) {
@@ -357,54 +421,31 @@ export async function streamChat(query, callbacks) {
                 if (done) break;
 
                 buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop();
+                const blocks = buffer.split(/\r?\n\r?\n/);
+                buffer = blocks.pop() || '';
 
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const dataStr = line.slice(6);
-                        if (dataStr === '[DONE]') {
-                            if (onDone) onDone();
-                            return; // 正常结束，无需重试
-                        }
-
-                        try {
-                            const event = JSON.parse(dataStr);
-
-                            if (event.type === 'meta' && onMeta) {
-                                onMeta(event);
-                            }
-                            else if (event.type === 'log' && onLog) {
-                                onLog(event.content);
-                            }
-                            else if (event.type === 'sources' && onSources) {
-                                onSources(event.content);
-                            }
-                            else if (event.type === 'stats' && onStats) {
-                                onStats(event.content);
-                            }
-                            else if (event.type === 'answer_chunk' && onAnswerChunk) {
-                                onAnswerChunk(event.content);
-                            }
-                            else if (event.type === 'answer' && onAnswer) {
-                                onAnswer(event.content, event.session_id);
-                            }
-                            else if (event.type === 'error' && onError) {
-                                onError(event.content);
-                            }
-                        } catch (e) {
-                            console.error('Error parsing SSE event', e);
-                        }
+                for (const block of blocks) {
+                    if (processSseBlock(block)) {
+                        return; // 正常结束，无需重试
                     }
                 }
             }
 
-            // 流正常结束
+            if (buffer.trim() && processSseBlock(buffer)) {
+                return;
+            }
+            emitDone();
             return;
 
         } catch (e) {
             // AbortError 是用户主动取消，不重试
             if (e.name === 'AbortError') {
+                throw e;
+            }
+
+            // 已经开始执行的聊天请求不是幂等操作，中途断流不能重发同一请求。
+            if (responseStarted) {
+                console.error('SSE 连接在响应开始后中断，不重试以避免重复生成:', e);
                 throw e;
             }
 

@@ -18,14 +18,17 @@ from ..database import (
 )
 from ..browser_manager import BrowserManager
 from ..engine_health import engine_health
+from ..llm_client import _provider_error_message
 from ..openai_client import create_openai_client
 from ..providers import (
     ensure_default_provider_id,
     get_provider_by_id,
+    is_local_provider_base_url,
     is_unsupported_model_id,
     mask_provider_secrets,
     normalize_workflow_step_models,
     normalize_providers,
+    split_model_item,
 )
 from ..search_engine import get_all_engines
 
@@ -65,7 +68,7 @@ class SettingsModel(BaseModel):
     default_provider_id: Optional[str] = None
     providers: Optional[list[ProviderModel]] = None
     workflow_step_models: Optional[dict[str, WorkflowStepModel]] = None
-    search_engine: Optional[str] = "duckduckgo"
+    search_engine: Optional[str] = "searxng"
     max_results: Optional[int] = 50
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
@@ -91,7 +94,7 @@ def get_default_settings_endpoint():
 @router.post("/api/settings")
 async def update_settings_endpoint(settings: SettingsModel):
     current = await load_settings()
-    new_settings = settings.model_dump(exclude_none=True)
+    new_settings = settings.model_dump(exclude_unset=True, exclude_none=True)
 
     update = {}
     for k, v in new_settings.items():
@@ -121,6 +124,14 @@ async def update_settings_endpoint(settings: SettingsModel):
             current.get("providers", []),
             update["default_provider_id"],
         )
+        primary_provider = get_provider_by_id(
+            {"providers": current.get("providers", [])},
+            update["default_provider_id"],
+        )
+        if primary_provider:
+            update["api_key"] = primary_provider.get("api_key", "")
+            update["base_url"] = primary_provider.get("base_url", "")
+            update["model_id"] = primary_provider.get("model_id", "")
 
     providers_for_steps = update.get("providers") or current.get("providers", [])
     if "workflow_step_models" in update:
@@ -229,13 +240,14 @@ async def validate_api_key_endpoint(body: dict = Body(...)):
 
     base_url = body.get("base_url", "").strip() or "https://api.openai.com/v1"
     model_id = body.get("model_id", "").strip()
-    if model_id and ":" in model_id:
-        model_id = model_id.split(":")[0].strip()
+    model_id, _display_name = split_model_item(model_id)
 
     if not model_id:
         return {"valid": False, "error": "Model ID is empty"}
     if is_unsupported_model_id(model_id):
         return {"valid": False, "error": "Gemini 2.5 系列模型不再支持"}
+    if not api_key and not is_local_provider_base_url(base_url):
+        return {"valid": False, "error": "请先填写 API 密钥"}
 
     try:
         client = create_openai_client(api_key=api_key, base_url=base_url)
@@ -252,6 +264,9 @@ async def validate_api_key_endpoint(body: dict = Body(...)):
     except asyncio.TimeoutError:
         return {"valid": False, "error": "请求超时 (15秒)"}
     except Exception as e:
+        provider_message = _provider_error_message(e)
+        if provider_message:
+            return {"valid": False, "error": provider_message}
         error_msg = str(e)
         if "401" in error_msg or "Unauthorized" in error_msg:
             return {"valid": False, "error": "API 密钥无效或已过期"}

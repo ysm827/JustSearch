@@ -4,11 +4,17 @@ import logging
 import httpx
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Load project .env before importing app modules that read environment variables at import time.
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 
 from .auth import (
     AccessControlMiddleware,

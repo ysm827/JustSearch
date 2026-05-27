@@ -33,7 +33,7 @@ textarea:focus-visible {
     /* Text */
     --text-primary: #111827;
     --text-secondary: #6b7280;
-    --text-muted: #9ca3af;
+    --text-muted: #6b7280;
     --text-inverse: #ffffff;
 
     /* Borders */
@@ -109,7 +109,7 @@ textarea:focus-visible {
     /* Text */
     --text-primary: #f4f4f5;
     --text-secondary: #a1a1aa;
-    --text-muted: #71717a;
+    --text-muted: #a1a1aa;
     --text-inverse: #09090b;
 
     /* Borders */
@@ -163,7 +163,7 @@ textarea:focus-visible {
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
     background-color: var(--bg);
     color: var(--text-primary);
     margin: 0;
@@ -172,8 +172,8 @@ body {
     height: 100dvh;
     overflow: hidden;
     transition: background-color var(--transition-smooth), color var(--transition-smooth);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
     touch-action: manipulation;  /* Eliminate 300ms tap delay on mobile */
 }
 

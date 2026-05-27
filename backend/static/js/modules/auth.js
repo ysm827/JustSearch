@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'justsearch_auth_token';
+const AUTH_RETRY_KEY = 'justsearch_auth_retry';
 
 let authState = {
     token: '',
@@ -39,7 +40,8 @@ export function buildAuthHeaders(token, headers = {}) {
 
 export function buildBrowserWebSocketUrl(locationLike, sessionId, token = getAuthToken()) {
     const protocol = locationLike.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = new URL(`${protocol}//${locationLike.host}/ws/browser/${sessionId}`);
+    const encodedSessionId = encodeURIComponent(String(sessionId ?? ''));
+    const url = new URL(`${protocol}//${locationLike.host}/ws/browser/${encodedSessionId}`);
     if (token) {
         url.searchParams.set('token', token);
     }
@@ -98,7 +100,56 @@ export function getAuthToken() {
     return authState.token;
 }
 
-export function authFetch(input, init = {}) {
+export function clearAuthRetryFlag(win = globalThis.window) {
+    try {
+        win?.sessionStorage?.removeItem(AUTH_RETRY_KEY);
+    } catch (e) {
+        // Ignore storage errors.
+    }
+}
+
+export function clearStoredAuthToken(win = globalThis.window) {
+    authState = { ...authState, token: '' };
+    try {
+        win?.localStorage?.removeItem(STORAGE_KEY);
+    } catch (e) {
+        // Ignore storage errors.
+    }
+}
+
+export function handleUnauthorizedResponse(response, win = globalThis.window) {
+    if (!response || response.status !== 401) {
+        return false;
+    }
+
+    clearStoredAuthToken(win);
+
+    let shouldReload = true;
+    try {
+        if (win?.sessionStorage?.getItem(AUTH_RETRY_KEY) === '1') {
+            shouldReload = false;
+        } else {
+            win?.sessionStorage?.setItem(AUTH_RETRY_KEY, '1');
+        }
+    } catch (e) {
+        // Reload without the loop guard if sessionStorage is unavailable.
+    }
+
+    if (!shouldReload || !win?.location?.reload) {
+        return false;
+    }
+
+    win.location.reload();
+    return true;
+}
+
+export async function authFetch(input, init = {}) {
     const headers = buildAuthHeaders(getAuthToken(), init.headers);
-    return fetch(input, { ...init, headers });
+    const response = await fetch(input, { ...init, headers });
+    if (response.status === 401) {
+        handleUnauthorizedResponse(response);
+    } else {
+        clearAuthRetryFlag();
+    }
+    return response;
 }
