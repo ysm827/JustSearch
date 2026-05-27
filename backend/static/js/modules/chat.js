@@ -1,11 +1,11 @@
-import { state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=1';
+import { coerceBooleanSetting, state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=2';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
-import { updateActiveHistoryItem } from './history-view.js?v=21';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=13';
+import { updateActiveHistoryItem } from './history-view.js?v=22';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=14';
 import { renderWithCitations } from './source-renderer.js?v=5';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=6';
 import { showToast } from './toast.js';
-import * as API from './api.js?v=2';
+import * as API from './api.js?v=3';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
@@ -439,7 +439,7 @@ export function setupChatHandler(elements, renderHistory) {
     if (quickInteractiveBtn) {
         quickInteractiveBtn.addEventListener('click', async () => {
             if (state.settings) {
-                const currentVal = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
+                const currentVal = coerceBooleanSetting(state.settings.interactive_search, true);
                 const newVal = !currentVal;
                 state.settings.interactive_search = newVal;
                 
@@ -447,8 +447,19 @@ export function setupChatHandler(elements, renderHistory) {
                 if (modalCheckbox) {
                     modalCheckbox.checked = newVal;
                 }
-                
-                await API.saveSettingsAPI(state.settings);
+
+                syncQuickSettingsFromState();
+
+                const saved = await API.saveSettingsAPI(state.settings);
+                if (!saved) {
+                    state.settings.interactive_search = currentVal;
+                    if (modalCheckbox) {
+                        modalCheckbox.checked = currentVal;
+                    }
+                    syncQuickSettingsFromState();
+                    showToast('深度搜索设置保存失败，已恢复原状态', 'warning');
+                    return;
+                }
                 syncQuickSettingsFromState();
                 
                 const status = newVal ? '已开启' : '已关闭';
@@ -525,7 +536,7 @@ export function syncQuickSettingsFromState() {
         }
     }
     
-    const interactive = state.settings.interactive_search !== undefined ? state.settings.interactive_search : true;
+    const interactive = coerceBooleanSetting(state.settings.interactive_search, true);
     if (quickInteractiveBtn) {
         quickInteractiveBtn.classList.toggle('active', interactive);
     }

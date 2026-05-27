@@ -9,7 +9,12 @@ export const state = {
     lastActivityTime: Date.now(),
 };
 
-function coerceBooleanSetting(value) {
+const BOOLEAN_SETTING_DEFAULTS = {
+    interactive_search: true,
+    live_artifacts_mode: false,
+};
+
+export function coerceBooleanSetting(value, fallback = false) {
     if (typeof value === 'boolean') return value;
     if (typeof value === 'number') return value !== 0;
     if (typeof value === 'string') {
@@ -17,7 +22,19 @@ function coerceBooleanSetting(value) {
         if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
         if (['false', '0', 'no', 'off', ''].includes(normalized)) return false;
     }
+    if (value === undefined || value === null) return fallback;
     return Boolean(value);
+}
+
+function normalizeBooleanSettings(settings) {
+    if (!settings || typeof settings !== 'object') return {};
+    const normalized = { ...settings };
+    Object.entries(BOOLEAN_SETTING_DEFAULTS).forEach(([key, fallback]) => {
+        if (Object.prototype.hasOwnProperty.call(normalized, key)) {
+            normalized[key] = coerceBooleanSetting(normalized[key], fallback);
+        }
+    });
+    return normalized;
 }
 
 export function setCurrentSessionId(id) {
@@ -25,12 +42,13 @@ export function setCurrentSessionId(id) {
 }
 
 export function setSettings(newSettings) {
-    state.settings = { ...state.settings, ...newSettings };
+    const normalizedSettings = normalizeBooleanSettings(newSettings);
+    state.settings = { ...state.settings, ...normalizedSettings };
     if (
-        newSettings
-        && Object.prototype.hasOwnProperty.call(newSettings, 'live_artifacts_mode')
+        normalizedSettings
+        && Object.prototype.hasOwnProperty.call(normalizedSettings, 'live_artifacts_mode')
     ) {
-        state.liveArtifactsMode = coerceBooleanSetting(newSettings.live_artifacts_mode);
+        state.liveArtifactsMode = coerceBooleanSetting(normalizedSettings.live_artifacts_mode);
     }
 }
 

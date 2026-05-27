@@ -7,7 +7,7 @@ import {
 } from './utils.js?v=3';
 import { extractSources, renderWithCitations } from './source-renderer.js?v=5';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=6';
-import { state } from './state.js?v=1';
+import { state } from './state.js?v=2';
 
 const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;
 const USER_MESSAGE_COLLAPSE_LINE_THRESHOLD = 8;
@@ -302,7 +302,7 @@ function createMessageActions({ role, content, msgDiv, messageIndex, actionCallb
     if (messageIndex !== null) {
         buttons.push(createDeleteMessageButton(async () => {
             if (!await showConfirm('确定要删除这条消息吗？', '删除消息')) return;
-            const { deleteMessageAPI } = await import('./api.js?v=2');
+            const { deleteMessageAPI } = await import('./api.js?v=3');
             const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
             if (ok) {
                 msgDiv.remove();

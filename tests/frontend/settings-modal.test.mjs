@@ -227,3 +227,27 @@ test('settings form clamps numeric fields before saving', async () => {
     assert.equal(settings.max_concurrent_pages, 20);
     assert.equal(__settingsModalTestHooks.normalizeNumberSetting('not-a-number', 5, 1, 10), 5);
 });
+
+test('settings form coerces string boolean toggles when filling form', async () => {
+    installBrowserGlobals();
+    const { __settingsModalTestHooks } = await import('../../backend/static/js/modules/settings-modal.js?test=boolean-coerce');
+    const checkbox = document.getElementById('interactive-search-input');
+
+    __settingsModalTestHooks.fillSettingsForm({
+        theme: 'light',
+        search_engine: 'searxng',
+        interactive_search: 'false',
+        providers: [],
+        workflow_step_models: {},
+    });
+    assert.equal(checkbox.checked, false);
+
+    __settingsModalTestHooks.fillSettingsForm({
+        theme: 'light',
+        search_engine: 'searxng',
+        interactive_search: 'true',
+        providers: [],
+        workflow_step_models: {},
+    });
+    assert.equal(checkbox.checked, true);
+});

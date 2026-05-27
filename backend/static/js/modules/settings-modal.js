@@ -1,9 +1,9 @@
 import { authFetch } from './auth.js?v=1';
-import { setCurrentSessionId, state } from './state.js?v=1';
+import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=2';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=13';
-import { renderHistory } from './history-view.js?v=21';
-import * as API from './api.js?v=2';
+import { elements, showConfirm } from './ui.js?v=14';
+import { renderHistory } from './history-view.js?v=22';
+import * as API from './api.js?v=3';
 
 const WORKFLOW_STEPS = [
     { id: 'analysis', label: '问题分析' },
@@ -377,7 +377,7 @@ function fillSettingsForm(settings) {
             settings.providers || [],
             settings.default_provider_id || '',
         );
-        document.getElementById('interactive-search-input').checked = settings.interactive_search !== undefined ? settings.interactive_search : true;
+        document.getElementById('interactive-search-input').checked = coerceBooleanSetting(settings.interactive_search, true);
         document.getElementById('max-concurrent-pages-input').value = normalizeNumberSetting(settings.max_concurrent_pages, 10, 1, 20);
         updateProviderValidationUI();
         updateProviderCountLabel(collectProvidersForm().length);
@@ -1350,6 +1350,7 @@ export const __settingsModalTestHooks = {
     collectSettingsForm,
     collectProvidersForm,
     collectWorkflowStepModels,
+    fillSettingsForm,
     normalizeNumberSetting,
     renderEngineCheckResults,
     renderProviderList,

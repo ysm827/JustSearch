@@ -194,8 +194,8 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
                 <section id="hero-section"></section>
             </body>
         `);
-        const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=18');
+        const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=19');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -238,7 +238,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
 
 test('string false setting does not enable Live Artifacts mode', async () => {
     installBrowserGlobals();
-    const { state, setLiveArtifactsMode, setSettings } = await import('../../backend/static/js/modules/state.js?v=1');
+    const { state, setLiveArtifactsMode, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
 
     setLiveArtifactsMode(true);
     setSettings({ live_artifacts_mode: 'false' });
@@ -249,6 +249,64 @@ test('string false setting does not enable Live Artifacts mode', async () => {
 
     setLiveArtifactsMode('false');
     assert.equal(state.liveArtifactsMode, false);
+});
+
+test('quick interactive search button coerces string false before toggling', async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalFetch = globalThis.fetch;
+    let savedBody = null;
+    globalThis.setTimeout = (callback) => {
+        if (typeof callback === 'function') callback();
+        return 0;
+    };
+
+    try {
+        installBrowserGlobals(`
+            <!doctype html>
+            <body>
+                <button id="quick-interactive-btn" class="quick-toggle-btn active"></button>
+                <input id="interactive-search-input" type="checkbox" checked>
+                <button id="send-btn"></button>
+                <textarea id="user-input"></textarea>
+                <div id="chat-container"></div>
+                <section id="hero-section"></section>
+            </body>
+        `);
+        const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=19');
+        const button = document.getElementById('quick-interactive-btn');
+        const checkbox = document.getElementById('interactive-search-input');
+
+        setSettings({ search_engine: 'searxng', interactive_search: 'false' });
+        globalThis.fetch = async (_input, init) => {
+            savedBody = JSON.parse(init.body);
+            return new Response(JSON.stringify({ settings: savedBody }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        };
+
+        setupChatHandler({
+            chatContainer: document.getElementById('chat-container'),
+            userInput: document.getElementById('user-input'),
+            sendBtn: document.getElementById('send-btn'),
+            heroSection: document.getElementById('hero-section'),
+            newChatBtn: document.createElement('button'),
+        }, () => {});
+
+        assert.equal(button.classList.contains('active'), false);
+
+        button.click();
+
+        await Promise.resolve();
+        assert.equal(state.settings.interactive_search, true);
+        assert.equal(savedBody.interactive_search, true);
+        assert.equal(button.classList.contains('active'), true);
+        assert.equal(checkbox.checked, true);
+    } finally {
+        globalThis.setTimeout = originalSetTimeout;
+        globalThis.fetch = originalFetch;
+    }
 });
 
 test('inline Live Artifacts expose cited search sources outside the iframe', () => {
@@ -352,8 +410,8 @@ test('Live Artifact citation linker normalizes bare-domain source urls', () => {
 
 test('streamChat sends live_artifacts_mode without the old Canvas request field', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js?v=1');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=2');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=3');
     let capturedBody = null;
     let doneCalled = false;
 
@@ -392,8 +450,8 @@ test('streamChat sends live_artifacts_mode without the old Canvas request field'
 
 test('streamChat processes trailing SSE event when stream closes without blank delimiter', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js?v=1');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=2');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=3');
     let answer = null;
     let doneCalled = false;
 
@@ -433,8 +491,8 @@ test('streamChat processes trailing SSE event when stream closes without blank d
 
 test('streamChat does not retry a non-idempotent chat request after response starts', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js?v=1');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=2');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=3');
     const originalSetTimeout = globalThis.setTimeout;
     const originalConsoleError = console.error;
     let fetchCalls = 0;
@@ -602,9 +660,9 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
     `);
 
     try {
-        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=13');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=18');
+        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=14');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=19');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
