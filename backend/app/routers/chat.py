@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from ..auth import authorize_websocket
 from ..database import (
     load_settings, save_chat_history, load_chat_history, get_chat_path, get_next_api_key,
-    delete_message,
+    delete_message, normalize_route_safe_id,
 )
 from ..providers import (
     WORKFLOW_MODEL_STEP_IDS,
@@ -322,8 +322,12 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     )
     if request.canvas_mode:
         live_artifacts_mode = True
-    session_id = request.session_id
-    if not session_id:
+    raw_session_id = str(request.session_id or "").strip()
+    if raw_session_id:
+        session_id = normalize_route_safe_id(raw_session_id)
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id 格式无效")
+    else:
         session_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
 
     logger.info("[Chat] New request: session=%s, provider=%s, query='%s', engine=%s, model=%s",

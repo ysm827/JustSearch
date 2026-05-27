@@ -1734,6 +1734,71 @@ def test_chat_endpoint_rejects_remote_provider_without_api_key(tmp_path, monkeyp
     asyncio.run(run())
 
 
+def test_chat_endpoint_rejects_route_unsafe_session_id(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    class UnexpectedWorkflow:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("chat endpoint should reject session_id before starting workflow")
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "deepseek-secret",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-chat",
+                    },
+                ],
+            }
+        )
+
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "bad/session",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "session_id 格式无效"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
     from backend.app import database
     from backend.app.routers.chat import router

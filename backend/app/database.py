@@ -580,7 +580,7 @@ async def export_history_package() -> Dict[str, Any]:
 
 
 def _normalize_imported_group(group: dict) -> Optional[Dict[str, Any]]:
-    group_id = _normalize_route_safe_id(group.get("id", ""))
+    group_id = normalize_route_safe_id(group.get("id", ""))
     if not group_id:
         return None
     timestamp = _parse_imported_timestamp(group.get("timestamp"))
@@ -613,15 +613,7 @@ def _normalize_imported_message(message: dict, index: int, session_time: datetim
     }
 
 
-def _normalize_optional_id(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
-        return _normalize_route_safe_id(value)
-    return None
-
-
-def _normalize_route_safe_id(value: Any) -> Optional[str]:
+def normalize_route_safe_id(value: Any) -> Optional[str]:
     if not isinstance(value, (str, int, float)) or isinstance(value, bool):
         return None
     normalized = str(value).strip()
@@ -632,8 +624,16 @@ def _normalize_route_safe_id(value: Any) -> Optional[str]:
     return normalized
 
 
+def _normalize_optional_id(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        return normalize_route_safe_id(value)
+    return None
+
+
 def _normalize_imported_chat(chat: dict) -> Optional[Dict[str, Any]]:
-    session_id = _normalize_route_safe_id(chat.get("id", ""))
+    session_id = normalize_route_safe_id(chat.get("id", ""))
     messages = chat.get("messages")
     if not session_id or not isinstance(messages, list) or not messages:
         return None
