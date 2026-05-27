@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { renderLiveArtifactsForMessage } from '../../backend/static/js/modules/live-artifacts.js';
+import {
+  renderLiveArtifactsForMessage,
+  __liveArtifactsTestHooks,
+} from '../../backend/static/js/modules/live-artifacts.js';
+
+const { handleArtifactFrameMessage } = __liveArtifactsTestHooks;
 
 const require = createRequire(import.meta.url);
 const { JSDOM } = require('jsdom');
@@ -61,7 +66,30 @@ assert.match(document.getElementById('user-input').value, /人工智能辅助学
 assert.match(document.getElementById('user-input').value, /amc-live-artifact-interaction:v1/);
 
 document.getElementById('user-input').value = '';
+renderLiveArtifactsForMessage(container, '<section><button>可信 iframe 消息源</button></section>', {
+  messageId: 'trusted-message-source',
+  isStreaming: false,
+});
+const trustedFrame = container.querySelector('.live-artifact-inline-iframe');
+assert.ok(trustedFrame);
+
 dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+  data: {
+    channel: 'justsearch-live-artifacts',
+    event: 'followup',
+    payload: {
+      instruction: '伪造消息',
+      state: {
+        selected: 'A',
+        amount: 3,
+      },
+    },
+  },
+}));
+assert.equal(document.getElementById('user-input').value, '');
+
+handleArtifactFrameMessage({
+  source: trustedFrame.contentWindow,
   data: {
     channel: 'justsearch-live-artifacts',
     event: 'followup',
@@ -73,7 +101,7 @@ dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
       },
     },
   },
-}));
+});
 assert.match(document.getElementById('user-input').value, /继续优化/);
 assert.match(document.getElementById('user-input').value, /"selected": "B"/);
 assert.match(document.getElementById('user-input').value, /"amount": 3/);

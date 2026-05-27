@@ -6,7 +6,7 @@ import {
     createRegenerateButton
 } from './utils.js?v=3';
 import { extractSources, renderWithCitations } from './source-renderer.js?v=5';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=7';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=8';
 import { state } from './state.js?v=2';
 
 const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;

@@ -1619,11 +1619,13 @@ function wirePanelEvents() {
 function handleArtifactFrameMessage(event) {
     const data = event.data || {};
     if (data.channel !== 'justsearch-live-artifacts') return;
+    const sourceFrame = findArtifactFrameByMessageSource(event.source);
+    if (!sourceFrame) return;
 
     if (data.event === 'resize' && typeof data.height === 'number') {
-        const frame = Array.from(document.querySelectorAll('.live-artifact-inline-iframe'))
-            .find(item => item.contentWindow === event.source);
-        const viewport = frame?.closest('.live-artifact-inline-viewport');
+        const viewport = sourceFrame.kind === 'inline'
+            ? sourceFrame.frame.closest('.live-artifact-inline-viewport')
+            : null;
         if (viewport) {
             viewport.style.height = `${Math.max(120, Math.ceil(data.height))}px`;
         }
@@ -1651,6 +1653,22 @@ function handleArtifactFrameMessage(event) {
     if (data.event === 'diagnostic') {
         handlePreviewDiagnostic(data.payload);
     }
+}
+
+function findArtifactFrameByMessageSource(source) {
+    if (!source) return null;
+
+    const inlineFrame = Array.from(document.querySelectorAll('.live-artifact-inline-iframe'))
+        .find(frame => frame.contentWindow === source);
+    if (inlineFrame) {
+        return { frame: inlineFrame, kind: 'inline' };
+    }
+
+    if (panelState?.frame?.contentWindow === source) {
+        return { frame: panelState.frame, kind: 'panel' };
+    }
+
+    return null;
 }
 
 function openArtifactSourceUrl(url) {
@@ -1849,6 +1867,8 @@ export const __liveArtifactsTestHooks = {
     extractInlineLiveArtifact,
     extractLiveArtifactInteraction,
     extractLiveArtifacts,
+    findArtifactFrameByMessageSource,
+    handleArtifactFrameMessage,
     injectPreviewSecurityPolicy,
     inferRenderableLanguage,
     linkArtifactCitationsInHtml,

@@ -13,6 +13,7 @@ const {
     extractInlineLiveArtifact,
     extractLiveArtifactInteraction,
     extractLiveArtifacts,
+    handleArtifactFrameMessage,
     injectPreviewSecurityPolicy,
     linkArtifactCitationsInHtml,
     normalizePreviewDiagnostic,
@@ -195,7 +196,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=20');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=21');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -273,7 +274,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=20');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=21');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -409,6 +410,72 @@ test('Live Artifact citation linker normalizes bare-domain source urls', () => {
     assert.equal(citation.getAttribute('href'), 'https://linux.do/');
     assert.equal(citation.getAttribute('data-live-artifact-source-url'), 'https://linux.do/');
     assert.equal(citation.getAttribute('target'), '_blank');
+});
+
+test('Live Artifact frame messages require a registered preview iframe source', () => {
+    installBrowserGlobals('<!doctype html><body><div id="message"></div><textarea id="user-input"></textarea></body>');
+    const container = document.getElementById('message');
+    const opened = [];
+    const originalOpen = window.open;
+    window.open = (...args) => {
+        opened.push(args);
+        return { opener: window };
+    };
+
+    try {
+        renderLiveArtifactsForMessage(
+            container,
+            '<section><p>可信预览</p></section>',
+            { messageId: 'trusted-frame-message' },
+        );
+        const frame = container.querySelector('.live-artifact-inline-iframe');
+        assert.ok(frame);
+
+        handleArtifactFrameMessage({
+            source: window,
+            data: {
+                channel: 'justsearch-live-artifacts',
+                event: 'open-source',
+                url: 'trusted.example/source',
+            },
+        });
+        assert.equal(opened.length, 0);
+
+        handleArtifactFrameMessage({
+            source: frame.contentWindow,
+            data: {
+                channel: 'justsearch-live-artifacts',
+                event: 'open-source',
+                url: 'trusted.example/source',
+            },
+        });
+        assert.equal(opened.length, 1);
+        assert.equal(opened[0][0], 'https://trusted.example/source');
+
+        const input = document.getElementById('user-input');
+        handleArtifactFrameMessage({
+            source: window,
+            data: {
+                channel: 'justsearch-live-artifacts',
+                event: 'followup',
+                payload: { instruction: '伪造请求', state: { selected: 'A' } },
+            },
+        });
+        assert.equal(input.value, '');
+
+        handleArtifactFrameMessage({
+            source: frame.contentWindow,
+            data: {
+                channel: 'justsearch-live-artifacts',
+                event: 'followup',
+                payload: { instruction: '可信请求', state: { selected: 'B' } },
+            },
+        });
+        assert.match(input.value, /可信请求/);
+        assert.match(input.value, /"selected": "B"/);
+    } finally {
+        window.open = originalOpen;
+    }
 });
 
 test('streamChat sends live_artifacts_mode without the old Canvas request field', async () => {
@@ -664,8 +731,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=15');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=20');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=16');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=21');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
