@@ -195,7 +195,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=15');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=16');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -600,8 +600,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=11');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=15');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=12');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=16');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -676,7 +676,7 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
 test('citation rendering resolves sparse source ids instead of array positions', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=4');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=5');
 
     const html = renderWithCitations('Sparse citation [4]', [
         { id: 2, title: 'Second', url: 'https://two.example' },
@@ -694,7 +694,7 @@ test('citation rendering resolves sparse source ids instead of array positions',
 
 test('citation rendering normalizes bare-domain source urls', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=4');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=5');
 
     const html = renderWithCitations('官网 [2]', [
         { id: 2, title: 'Linux Do', url: 'linux.do/' },
@@ -713,9 +713,34 @@ test('citation rendering normalizes bare-domain source urls', async () => {
     assert.equal(reference.getAttribute('target'), '_blank');
 });
 
+test('citation rendering links citations from embedded reference markdown when sources are absent', async () => {
+    installBrowserGlobals();
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=5');
+
+    const html = renderWithCitations([
+        '官网 来源给出的官网是 linux.do/。[2]',
+        '',
+        '---',
+        '### 参考资料',
+        '[2] [Linux Do](linux.do/)  ',
+    ].join('\n'), []);
+    const container = document.createElement('div');
+    container.innerHTML = html;
+
+    const citation = container.querySelector('.citation-link');
+    const reference = container.querySelector('li#ref-2 a');
+
+    assert.ok(citation);
+    assert.equal(citation.textContent.trim(), '2');
+    assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+    assert.equal(citation.getAttribute('target'), '_blank');
+    assert.equal(reference.getAttribute('href'), 'https://linux.do/');
+    assert.equal(reference.textContent, 'Linux Do');
+});
+
 test('citation rendering neutralizes non-http source urls', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=4');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=5');
 
     const html = renderWithCitations('Unsafe citation [1]', [
         { id: 1, title: 'Unsafe', url: 'javascript:alert(1)' },

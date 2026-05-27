@@ -1,7 +1,7 @@
 import { authFetch } from './auth.js?v=1';
 import { setCurrentSessionId, state } from './state.js?v=1';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=11';
+import { elements, showConfirm } from './ui.js?v=12';
 import { renderHistory } from './history-view.js?v=20';
 import * as API from './api.js?v=2';
 

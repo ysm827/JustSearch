@@ -48,7 +48,7 @@ test('history search uses backend full-text results without replacing cached his
     };
     globalThis.clearTimeout = () => {};
     try {
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=11');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=12');
         const historyView = await import('../../backend/static/js/modules/history-view.js?test=fts-search');
         elements.historyList = document.getElementById('history-list');
         elements.historySearchInput = document.getElementById('history-search-input');

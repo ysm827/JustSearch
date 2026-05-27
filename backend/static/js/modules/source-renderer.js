@@ -52,11 +52,22 @@ export function extractSources(text) {
     return sources;
 }
 
+function mergeSources(primarySources, fallbackSources) {
+    const sourceById = new Map();
+    [...(fallbackSources || []), ...(primarySources || [])].forEach((source, index) => {
+        const id = String(source?.id ?? index + 1).trim();
+        if (!id) return;
+        sourceById.set(id, { ...source, id });
+    });
+    return Array.from(sourceById.values());
+}
+
 export function renderWithCitations(text, sources) {
+    const resolvedSources = mergeSources(sources, extractSources(text));
     const html = md.render(text);
-    if (!sources || sources.length === 0) return html;
+    if (resolvedSources.length === 0) return html;
     const sourceById = new Map(
-        sources
+        resolvedSources
             .map((source, index) => [String(source.id ?? index + 1).trim(), source])
     );
 
@@ -154,12 +165,12 @@ export function renderWithCitations(text, sources) {
     });
 
     const hasCitations = html.match(/\[\d+(?:,\s*\d+)*\]/);
-    if (hasCitations && sources.length > 0) {
+    if (hasCitations && resolvedSources.length > 0) {
         const refsBlock = document.createElement('div');
         refsBlock.className = 'references-block';
 
         const ol = document.createElement('ol');
-        sources.forEach((source, idx) => {
+        resolvedSources.forEach((source, idx) => {
             const li = document.createElement('li');
             li.id = `ref-${source.id ?? idx + 1}`;
             li.value = Number(source.id) || idx + 1;
