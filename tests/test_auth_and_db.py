@@ -1784,7 +1784,7 @@ def test_chat_endpoint_rejects_route_unsafe_session_id(tmp_path, monkeypatch):
                 json={
                     "query": "hello",
                     "session_id": "bad/session",
-                    "provider_id": "deepseek",
+                    "provider_id": "missing-provider",
                 },
             )
 

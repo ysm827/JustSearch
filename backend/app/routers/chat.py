@@ -272,6 +272,14 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
             detail=f"请求过于频繁，请在 {retry_after} 秒后重试。",
         )
 
+    raw_session_id = str(request.session_id or "").strip()
+    if raw_session_id:
+        session_id = normalize_route_safe_id(raw_session_id)
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id 格式无效")
+    else:
+        session_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
+
     defaults = await load_settings()
     provider_id = request.provider_id.strip()
     provider = get_provider_by_id(defaults, provider_id)
@@ -322,13 +330,6 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     )
     if request.canvas_mode:
         live_artifacts_mode = True
-    raw_session_id = str(request.session_id or "").strip()
-    if raw_session_id:
-        session_id = normalize_route_safe_id(raw_session_id)
-        if not session_id:
-            raise HTTPException(status_code=400, detail="session_id 格式无效")
-    else:
-        session_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
 
     logger.info("[Chat] New request: session=%s, provider=%s, query='%s', engine=%s, model=%s",
                 session_id, provider_id, request.query[:80], search_engine, model)
