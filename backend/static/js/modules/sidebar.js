@@ -1,5 +1,5 @@
 import { state, setCurrentSessionId } from './state.js?v=1';
-import { elements } from './ui.js?v=12';
+import { elements } from './ui.js?v=13';
 import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=21';
 
 let popoverEl = null;

@@ -979,13 +979,13 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "function getFaviconUrl" in renderer_source
     assert "from './source-renderer.js?v=5'" in ui_source
     assert "from './source-renderer.js?v=5'" in chat_source
-    assert "from './ui.js?v=12'" in (
+    assert "from './ui.js?v=13'" in (
         PROJECT_ROOT / "backend/static/js/modules/history-view.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=12'" in (
+    assert "from './ui.js?v=13'" in (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=12'" in (
+    assert "from './ui.js?v=13'" in (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
@@ -1028,7 +1028,7 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     ).read_text(encoding="utf-8")
 
     assert 'href="/static/css/style.css?v=25"' in index_source
-    assert 'src="/static/js/main.js?v=45"' in index_source
+    assert 'src="/static/js/main.js?v=46"' in index_source
     assert "@import url('./sections/base.css?v=4');" in style_source
     assert "@import url('./sections/sidebar.css?v=11');" in style_source
     assert "@import url('./sections/chat.css?v=10');" in style_source
@@ -1039,8 +1039,8 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "@import url('./sections/polish.css?v=6');" in style_source
     assert "from './modules/auth.js?v=1'" in main_source
     assert "from './modules/state.js?v=1'" in main_source
-    assert "from './modules/ui.js?v=12'" in main_source
-    assert "from './modules/chat.js?v=17'" in main_source
+    assert "from './modules/ui.js?v=13'" in main_source
+    assert "from './modules/chat.js?v=18'" in main_source
     assert "from './modules/browser-modal.js?v=2'" in main_source
     assert "from './modules/history-view.js?v=21'" in main_source
     assert "from './modules/settings-modal.js?v=41'" in main_source
@@ -1114,6 +1114,8 @@ def test_live_artifacts_are_integrated_with_chat_rendering():
     assert "live-artifacts-frame" in live_artifacts_js
     assert "data-artifact-view=\"code\"" in live_artifacts_js
     assert "sandbox=\"allow-scripts allow-forms allow-modals allow-popups\"" in live_artifacts_js
+    assert "allow-popups-to-escape-sandbox" in live_artifacts_js
+    assert "sourceLink.tagName === 'A'" in live_artifacts_js
     assert "renderLiveArtifactsForMessage(contentWrapper" in chat_source
     assert "function renderCurrentAssistantAnswer(isStreaming)" in chat_source
     assert "renderCurrentAssistantAnswer(true)" in chat_source

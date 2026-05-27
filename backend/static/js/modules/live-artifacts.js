@@ -882,6 +882,10 @@ function injectPreviewBridge(code) {
     const sourceLink = event.target.closest?.('[data-live-artifact-source-url]');
     if (sourceLink) {
       const url = sourceLink.getAttribute('data-live-artifact-source-url') || '';
+      const href = sourceLink.getAttribute('href') || '';
+      if (sourceLink.tagName === 'A' && /^https?:\/\//i.test(href)) {
+        return;
+      }
       if (url) {
         event.preventDefault();
         parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'open-source', url }, '*');
@@ -1109,7 +1113,7 @@ function renderInlineArtifactFrame(container, artifact) {
         frame = document.createElement('iframe');
         frame.className = 'live-artifact-inline-iframe';
         frame.title = 'HTML Preview';
-        frame.sandbox = 'allow-scripts allow-forms';
+        frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox');
         frame.setAttribute('scrolling', 'no');
         frame.addEventListener('load', () => resizeInlineArtifactFrame(frame, viewport));
 

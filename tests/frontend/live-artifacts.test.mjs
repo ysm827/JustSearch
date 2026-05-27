@@ -195,7 +195,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=17');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=18');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -299,8 +299,11 @@ test('inline Live Artifact citations inside the iframe become safe clickable sou
 
     const frame = container.querySelector('.live-artifact-inline-iframe');
     assert.ok(frame);
+    assert.match(frame.getAttribute('sandbox'), /allow-popups/);
+    assert.match(frame.getAttribute('sandbox'), /allow-popups-to-escape-sandbox/);
     assert.match(frame.srcdoc, /data-live-artifact-source-url="https:\/\/two\.example\/report"/);
     assert.match(frame.srcdoc, /event: 'open-source'/);
+    assert.match(frame.srcdoc, /sourceLink\.tagName === 'A'/);
     assert.doesNotMatch(frame.srcdoc, /data-live-artifact-source-url="javascript:/);
     assert.match(frame.srcdoc, /<code>\[2\]<\/code>/);
     assert.match(frame.srcdoc, /<a href="https:\/\/already\.example">\[2\]<\/a>/);
@@ -600,8 +603,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=12');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=17');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=13');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=18');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
