@@ -385,6 +385,63 @@ def test_load_chat_history_rejects_route_unsafe_ids_without_basename_fallback(tm
     asyncio.run(run())
 
 
+def test_legacy_chat_migration_rejects_route_unsafe_ids(tmp_path):
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        legacy_dir = tmp_path / "legacy_chats"
+        legacy_dir.mkdir()
+        (legacy_dir / "fallback-session.json").write_text(
+            json.dumps(
+                {
+                    "id": "bad/session",
+                    "title": "Fallback Session",
+                    "messages": [{"role": "user", "content": "use filename id"}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (legacy_dir / "bad\\filename.json").write_text(
+            json.dumps(
+                {
+                    "id": "also\\bad",
+                    "title": "Unsafe Session",
+                    "messages": [{"role": "user", "content": "skip me"}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(legacy_dir)
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+
+        fallback = await database.load_chat_history("fallback-session")
+        assert fallback["title"] == "Fallback Session"
+        assert fallback["messages"][0]["content"] == "use filename id"
+        assert await database.load_chat_history("bad/session") is None
+        assert await database.load_chat_history("also\\bad") is None
+        assert await database.load_chat_history("bad\\filename") is None
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_chat_groups_can_manage_sessions(tmp_path):
     from backend.app import database
 

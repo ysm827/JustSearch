@@ -1,12 +1,33 @@
 import glob
 import json
 import os
+import re
 import shutil
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import delete, select
+
+_ROUTE_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
+
+def _normalize_route_safe_id(value: Any) -> str | None:
+    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    if not _ROUTE_SAFE_ID_RE.fullmatch(normalized):
+        return None
+    return normalized
+
+
+def _legacy_chat_session_id(data: dict, fpath: str) -> str | None:
+    data_id = _normalize_route_safe_id(data.get("id"))
+    if data_id:
+        return data_id
+    return _normalize_route_safe_id(os.path.splitext(os.path.basename(fpath))[0])
 
 
 async def migrate_legacy_data(
@@ -45,7 +66,10 @@ async def _migrate_chats_dir(
                 with open(fpath, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
-                session_id = data.get("id") or os.path.splitext(os.path.basename(fpath))[0]
+                session_id = _legacy_chat_session_id(data, fpath)
+                if not session_id:
+                    logger.warning("Skipping legacy chat with route-unsafe id: %s", fpath)
+                    continue
                 title = data.get("title", "新对话")
                 timestamp_str = data.get("timestamp")
                 ts = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.now()
