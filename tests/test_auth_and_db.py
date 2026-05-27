@@ -540,6 +540,103 @@ def test_delete_chat_endpoint_returns_404_for_missing_session(tmp_path):
     asyncio.run(run())
 
 
+def test_history_routes_reject_route_unsafe_ids_before_db_operations(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        await database.save_chat_history(
+            "safe-session",
+            [{"role": "user", "content": "safe"}],
+            title="Safe Session",
+        )
+        async with await database.get_session() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO chat_sessions (id, title, created_at, updated_at) "
+                    "VALUES ('bad\\session', 'Dirty Session', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO chat_groups (id, title, is_expanded, created_at, updated_at) "
+                    "VALUES ('bad\\group', 'Dirty Group', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            await session.commit()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            get_dirty = await client.get("/api/history/bad%5Csession")
+            delete_dirty = await client.delete("/api/history/bad%5Csession")
+            rename_dirty = await client.patch(
+                "/api/history/bad%5Csession",
+                json={"title": "Should Not Rename"},
+            )
+            export_dirty = await client.get("/api/history/bad%5Csession/export")
+            update_dirty_group = await client.patch(
+                "/api/history/groups/bad%5Cgroup",
+                json={"title": "Should Not Rename"},
+            )
+            move_to_dirty_group = await client.patch(
+                "/api/history/safe-session/group",
+                json={"group_id": "bad\\group"},
+            )
+
+        assert get_dirty.status_code == 400
+        assert delete_dirty.status_code == 400
+        assert rename_dirty.status_code == 400
+        assert export_dirty.status_code == 400
+        assert update_dirty_group.status_code == 400
+        assert move_to_dirty_group.status_code == 400
+        assert get_dirty.json()["detail"] == "session_id 格式无效"
+        assert update_dirty_group.json()["detail"] == "group_id 格式无效"
+        assert move_to_dirty_group.json()["detail"] == "group_id 格式无效"
+
+        async with await database.get_session() as session:
+            dirty_session_title = (
+                await session.execute(
+                    text("SELECT title FROM chat_sessions WHERE id = 'bad\\session'")
+                )
+            ).scalar_one()
+            dirty_group_title = (
+                await session.execute(
+                    text("SELECT title FROM chat_groups WHERE id = 'bad\\group'")
+                )
+            ).scalar_one()
+            safe_group_id = (
+                await session.execute(
+                    text("SELECT group_id FROM chat_sessions WHERE id = 'safe-session'")
+                )
+            ).scalar_one()
+
+        assert dirty_session_title == "Dirty Session"
+        assert dirty_group_title == "Dirty Group"
+        assert safe_group_id is None
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_import_history_package_adds_sessions_and_groups_without_overwriting(tmp_path):
     from backend.app import database
 

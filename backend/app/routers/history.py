@@ -13,7 +13,7 @@ from ..database import (
     delete_chat, get_chat_path, delete_all_chats, get_session,
     list_chat_groups, create_chat_group, update_chat_group,
     delete_chat_group, move_chat_to_group, _format_utc_timestamp,
-    export_history_package, import_history_package,
+    export_history_package, import_history_package, normalize_route_safe_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,13 @@ def _format_source_markdown_item(source: object) -> str:
     return f"- [{text}]({safe_url})"
 
 
+def _require_route_safe_id(value: object, field_name: str) -> str:
+    normalized = normalize_route_safe_id(value)
+    if not normalized:
+        raise HTTPException(status_code=400, detail=f"{field_name} 格式无效")
+    return normalized
+
+
 @router.get("/api/history")
 async def get_history_endpoint():
     return await list_chats()
@@ -122,6 +129,7 @@ async def create_chat_group_endpoint(body: dict = Body(default={})):
 
 @router.patch("/api/history/groups/{group_id}")
 async def update_chat_group_endpoint(group_id: str, body: dict = Body(...)):
+    group_id = _require_route_safe_id(group_id, "group_id")
     title = body.get("title") if isinstance(body, dict) else None
     is_expanded = body.get("is_expanded") if isinstance(body, dict) else None
     group = await update_chat_group(
@@ -136,6 +144,7 @@ async def update_chat_group_endpoint(group_id: str, body: dict = Body(...)):
 
 @router.delete("/api/history/groups/{group_id}")
 async def delete_chat_group_endpoint(group_id: str):
+    group_id = _require_route_safe_id(group_id, "group_id")
     if not await delete_chat_group(group_id):
         raise HTTPException(status_code=404, detail="Group not found")
     return {"status": "ok"}
@@ -143,9 +152,12 @@ async def delete_chat_group_endpoint(group_id: str):
 
 @router.patch("/api/history/{session_id}/group")
 async def move_chat_to_group_endpoint(session_id: str, body: dict = Body(...)):
+    session_id = _require_route_safe_id(session_id, "session_id")
     group_id = body.get("group_id") if isinstance(body, dict) else None
     if group_id == "":
         group_id = None
+    if group_id is not None:
+        group_id = _require_route_safe_id(group_id, "group_id")
     moved = await move_chat_to_group(session_id, group_id)
     if not moved:
         raise HTTPException(status_code=404, detail="Chat or group not found")
@@ -210,6 +222,7 @@ async def import_history_endpoint(body: dict = Body(...)):
 
 @router.get("/api/history/{session_id}")
 async def get_chat_endpoint(session_id: str):
+    session_id = _require_route_safe_id(session_id, "session_id")
     path = get_chat_path(session_id)
     history = await load_chat_history(path)
     if not history:
@@ -219,6 +232,7 @@ async def get_chat_endpoint(session_id: str):
 
 @router.delete("/api/history/{session_id}")
 async def delete_chat_endpoint(session_id: str):
+    session_id = _require_route_safe_id(session_id, "session_id")
     if not await delete_chat(session_id):
         raise HTTPException(status_code=404, detail="Chat not found")
     return {"status": "ok"}
@@ -226,6 +240,7 @@ async def delete_chat_endpoint(session_id: str):
 
 @router.patch("/api/history/{session_id}")
 async def rename_chat_endpoint(session_id: str, body: dict = Body(...)):
+    session_id = _require_route_safe_id(session_id, "session_id")
     new_title = body.get("title", "").strip()
     if not new_title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
@@ -243,6 +258,7 @@ async def export_chat(session_id: str, format: str = "markdown"):
     from fastapi.responses import Response
     import datetime as _dt
 
+    session_id = _require_route_safe_id(session_id, "session_id")
     path = get_chat_path(session_id)
     data = await load_chat_history(path)
     if not data:
