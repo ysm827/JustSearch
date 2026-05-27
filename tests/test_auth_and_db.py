@@ -1240,6 +1240,38 @@ def test_validate_key_rejects_empty_api_key_for_remote_provider():
     asyncio.run(run())
 
 
+def test_validate_key_tolerates_non_string_request_fields():
+    from unittest.mock import patch
+    from backend.app.routers.settings import router
+
+    async def run():
+        app = FastAPI()
+        app.include_router(router)
+
+        with patch("backend.app.routers.settings.create_openai_client") as mock_create:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/api/settings/validate-key",
+                    json={
+                        "provider_id": 123,
+                        "previous_provider_id": None,
+                        "api_key": None,
+                        "base_url": None,
+                        "model_id": 456,
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "valid": False,
+            "error": "请先填写 API 密钥",
+        }
+        mock_create.assert_not_called()
+
+    asyncio.run(run())
+
+
 def test_validate_key_rejects_gemini_25_models():
     from unittest.mock import patch
     from backend.app.routers.settings import router

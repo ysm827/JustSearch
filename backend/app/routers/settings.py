@@ -80,6 +80,13 @@ class EngineCheckRequest(BaseModel):
     query: Optional[str] = _ENGINE_CHECK_QUERY
 
 
+def _body_str(body: dict, key: str, default: str = "") -> str:
+    value = body.get(key, default)
+    if value is None:
+        value = default
+    return str(value).strip()
+
+
 @router.get("/api/settings")
 async def get_settings_endpoint():
     settings = await load_settings()
@@ -232,18 +239,18 @@ async def check_search_engines_endpoint(body: EngineCheckRequest | None = None):
 @router.post("/api/settings/validate-key")
 async def validate_api_key_endpoint(body: dict = Body(...)):
     """Validate an API key by making a test request to the model endpoint."""
-    api_key = body.get("api_key", "").strip()
+    api_key = _body_str(body, "api_key")
     if api_key and "****" in api_key:
-        provider_id = body.get("provider_id", "").strip()
-        previous_provider_id = body.get("previous_provider_id", "").strip()
+        provider_id = _body_str(body, "provider_id")
+        previous_provider_id = _body_str(body, "previous_provider_id")
         settings = await load_settings()
         provider = get_provider_by_id(settings, provider_id) if provider_id else None
         if provider is None and previous_provider_id:
             provider = get_provider_by_id(settings, previous_provider_id)
         api_key = (provider or {}).get("api_key", "").strip()
 
-    base_url = body.get("base_url", "").strip() or "https://api.openai.com/v1"
-    model_id = body.get("model_id", "").strip()
+    base_url = _body_str(body, "base_url") or "https://api.openai.com/v1"
+    model_id = _body_str(body, "model_id")
     model_id, _display_name = split_model_item(model_id)
 
     if not model_id:
