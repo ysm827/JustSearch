@@ -463,7 +463,10 @@ class DeleteMessageRequest(BaseModel):
 @router.delete("/api/chat/message")
 async def delete_message_endpoint(request: DeleteMessageRequest):
     """Delete a single message from a chat session by index."""
-    ok = await delete_message(request.session_id, request.message_index)
+    session_id = normalize_route_safe_id(request.session_id)
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id 格式无效")
+    ok = await delete_message(session_id, request.message_index)
     if not ok:
         raise HTTPException(status_code=404, detail="Message not found")
     return {"status": "ok"}

@@ -1991,6 +1991,70 @@ def test_chat_endpoint_rejects_route_unsafe_session_id(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_delete_message_endpoint_rejects_route_unsafe_session_id(tmp_path):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+
+        async with await database.get_session() as session:
+            session.add(
+                database.ChatSession(
+                    id="bad\\session",
+                    title="Dirty Session",
+                )
+            )
+            session.add(
+                database.ChatMessage(
+                    session_id="bad\\session",
+                    role="user",
+                    content="do not delete",
+                )
+            )
+            await session.commit()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.request(
+                "DELETE",
+                "/api/chat/message",
+                json={"session_id": "bad\\session", "message_index": 0},
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "session_id 格式无效"
+
+        async with await database.get_session() as session:
+            remaining = (
+                await session.execute(
+                    text("SELECT count(*) FROM chat_messages WHERE session_id = 'bad\\session'")
+                )
+            ).scalar_one()
+
+        assert remaining == 1
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
     from backend.app import database
     from backend.app.routers.chat import router
