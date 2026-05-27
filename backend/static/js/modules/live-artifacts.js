@@ -878,17 +878,33 @@ function injectPreviewBridge(code) {
         : {};
     return { ...payload, state: { ...existing, ...state } };
   };
+  const openSourceUrl = (url) => {
+    if (!/^https?:\\/\\//i.test(url)) return false;
+    try {
+      const opened = window.open(url, '_blank');
+      if (opened) {
+        try { opened.opener = null; } catch {}
+        return true;
+      }
+    } catch {}
+    try {
+      parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'open-source', url }, '*');
+    } catch {}
+    return true;
+  };
   document.addEventListener('click', (event) => {
     const sourceLink = event.target.closest?.('[data-live-artifact-source-url]');
     if (sourceLink) {
       const url = sourceLink.getAttribute('data-live-artifact-source-url') || '';
       const href = sourceLink.getAttribute('href') || '';
       if (sourceLink.tagName === 'A' && /^https?:\/\//i.test(href)) {
+        event.preventDefault();
+        openSourceUrl(href);
         return;
       }
       if (url) {
         event.preventDefault();
-        parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'open-source', url }, '*');
+        openSourceUrl(url);
       }
       return;
     }

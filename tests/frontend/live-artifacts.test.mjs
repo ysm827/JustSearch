@@ -195,7 +195,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=19');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=20');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -273,7 +273,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=19');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=20');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -360,6 +360,9 @@ test('inline Live Artifact citations inside the iframe become safe clickable sou
     assert.match(frame.getAttribute('sandbox'), /allow-popups/);
     assert.match(frame.getAttribute('sandbox'), /allow-popups-to-escape-sandbox/);
     assert.match(frame.srcdoc, /data-live-artifact-source-url="https:\/\/two\.example\/report"/);
+    assert.match(frame.srcdoc, /window\.open\(url, '_blank'\)/);
+    assert.match(frame.srcdoc, /opened\.opener = null/);
+    assert.match(frame.srcdoc, /event\.preventDefault\(\);\s*openSourceUrl\(href\);/);
     assert.match(frame.srcdoc, /event: 'open-source'/);
     assert.match(frame.srcdoc, /sourceLink\.tagName === 'A'/);
     assert.doesNotMatch(frame.srcdoc, /data-live-artifact-source-url="javascript:/);
@@ -661,8 +664,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=14');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=19');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=15');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=20');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
