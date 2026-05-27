@@ -47,6 +47,7 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
 
     const inlineArtifact = extractInlineLiveArtifact(markdownText, messageId, Boolean(options.isStreaming));
     if (inlineArtifact) {
+        hydrateArtifactCitations(inlineArtifact, artifactSources);
         syncRegistryForMessage(messageId, [inlineArtifact]);
         clearArtifactControls(container);
         renderInlineArtifactFrame(container, inlineArtifact);
@@ -55,6 +56,7 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
     }
 
     const artifacts = extractLiveArtifacts(markdownText, messageId);
+    artifacts.forEach(artifact => hydrateArtifactCitations(artifact, artifactSources));
     syncRegistryForMessage(messageId, artifacts);
     clearArtifactControls(container);
 
@@ -547,7 +549,7 @@ function shouldMergeSupportingBlocks(block, language) {
     return language === 'html' && !isFullHtmlDocument(block.code);
 }
 
-function buildSrcdoc(code, language) {
+function buildSrcdoc(code, language, sources = []) {
     let srcdoc;
     if (language === 'svg') {
         srcdoc = `<!doctype html>
@@ -566,9 +568,136 @@ ${code}
 </body>
 </html>`;
     } else {
-        srcdoc = code;
+        srcdoc = linkArtifactCitationsInHtml(code, sources);
     }
     return injectPreviewSecurityPolicy(injectPreviewBridge(srcdoc));
+}
+
+function hydrateArtifactCitations(artifact, sources) {
+    if (!artifact?.renderable || artifact.language !== 'html' || !Array.isArray(sources) || sources.length === 0) {
+        return artifact;
+    }
+    const previewCode = artifact.isStreaming ? STREAM_PREVIEW_ROOT : artifact.code;
+    artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, sources);
+    if (artifact.isStreaming && artifact.streamHtml) {
+        artifact.streamHtml = linkArtifactCitationsInHtml(artifact.streamHtml, sources);
+    }
+    return artifact;
+}
+
+function linkArtifactCitationsInHtml(html, sources = []) {
+    const raw = String(html || '');
+    if (!/\[\d+(?:\s*,\s*\d+)*\]/.test(raw)) return raw;
+    const sourceById = buildSourceMap(sources);
+    if (sourceById.size === 0 || typeof document === 'undefined') return raw;
+
+    const fullDocument = /(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)/i.test(raw);
+    const Parser = (typeof window !== 'undefined' && window.DOMParser) || globalThis.DOMParser;
+    if (fullDocument && Parser) {
+        const parsed = new Parser().parseFromString(raw, 'text/html');
+        linkCitationTextNodes(parsed.body, sourceById);
+        const doctype = /^\s*<!doctype\s+html\b/i.test(raw) ? '<!doctype html>\n' : '';
+        return `${doctype}${parsed.documentElement.outerHTML}`;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = raw;
+    linkCitationTextNodes(template.content, sourceById);
+    return template.innerHTML;
+}
+
+function buildSourceMap(sources) {
+    return new Map(
+        normalizeArtifactSources(sources)
+            .map(source => [String(source.id), source])
+    );
+}
+
+function linkCitationTextNodes(root, sourceById) {
+    const filter = (typeof NodeFilter !== 'undefined' && NodeFilter)
+        || (typeof window !== 'undefined' && window.NodeFilter);
+    if (!root || !filter) return;
+
+    const walker = document.createTreeWalker(root, filter.SHOW_TEXT, {
+        acceptNode(node) {
+            if (!/\[\d+(?:\s*,\s*\d+)*\]/.test(node.textContent || '')) {
+                return filter.FILTER_REJECT;
+            }
+            let parent = node.parentElement;
+            while (parent) {
+                if (['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA', 'TITLE', 'NOSCRIPT'].includes(parent.tagName)) {
+                    return filter.FILTER_REJECT;
+                }
+                parent = parent.parentElement;
+            }
+            return filter.FILTER_ACCEPT;
+        }
+    });
+
+    const nodes = [];
+    while (walker.nextNode()) {
+        nodes.push(walker.currentNode);
+    }
+    nodes.forEach(node => replaceCitationTextNode(node, sourceById));
+}
+
+function replaceCitationTextNode(node, sourceById) {
+    const text = node.textContent || '';
+    const regex = /\[(\d+(?:\s*,\s*\d+)*)\]/g;
+    const fragment = document.createDocumentFragment();
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        }
+
+        const group = document.createElement('span');
+        group.className = 'citation-group live-artifact-citation-group';
+        const ids = match[1].split(',').map(id => id.trim()).filter(Boolean);
+        let linkedCount = 0;
+
+        ids.forEach((id, index) => {
+            const source = sourceById.get(id);
+            const safeUrl = source ? getSafeSourceUrl(source.url) : '';
+            if (source && safeUrl) {
+                group.appendChild(createArtifactCitationLink(id, source, safeUrl));
+                linkedCount += 1;
+            } else {
+                group.appendChild(document.createTextNode(`[${id}]`));
+            }
+            if (index < ids.length - 1) {
+                const comma = document.createElement('span');
+                comma.textContent = ',';
+                comma.setAttribute('aria-hidden', 'true');
+                group.appendChild(comma);
+            }
+        });
+
+        fragment.appendChild(linkedCount > 0 ? group : document.createTextNode(match[0]));
+        lastIndex = regex.lastIndex;
+    }
+
+    if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+    node.parentNode?.replaceChild(fragment, node);
+}
+
+function createArtifactCitationLink(id, source, safeUrl) {
+    const anchor = document.createElement('a');
+    anchor.href = safeUrl;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.className = 'citation-link live-artifact-citation-link';
+    anchor.dataset.liveArtifactSourceUrl = safeUrl;
+    anchor.dataset.liveArtifactSourceId = id;
+    anchor.title = source.title || source.url || `Source ${id}`;
+    anchor.setAttribute('aria-label', `打开来源 ${id}`);
+    anchor.setAttribute('style', 'color:#2563eb;text-decoration:none;cursor:pointer;margin:0 1px;font-weight:700;font-size:11px;padding:0 4px;border-radius:6px;background:rgba(37,99,235,.12);display:inline-flex;align-items:center;justify-content:center;vertical-align:super;line-height:16px;min-height:16px;white-space:nowrap;');
+    anchor.textContent = id;
+    return anchor;
 }
 
 function injectPreviewBridge(code) {
@@ -750,6 +879,15 @@ function injectPreviewBridge(code) {
     return { ...payload, state: { ...existing, ...state } };
   };
   document.addEventListener('click', (event) => {
+    const sourceLink = event.target.closest?.('[data-live-artifact-source-url]');
+    if (sourceLink) {
+      const url = sourceLink.getAttribute('data-live-artifact-source-url') || '';
+      if (url) {
+        event.preventDefault();
+        parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'open-source', url }, '*');
+      }
+      return;
+    }
     const trigger = event.target.closest?.('[data-amc-followup]');
     if (!trigger) return;
     const payload = parsePayload(trigger.getAttribute('data-amc-followup') || '');
@@ -1473,11 +1611,26 @@ function handleArtifactFrameMessage(event) {
                 input.focus();
             }
         }
+        return;
+    }
+
+    if (data.event === 'open-source') {
+        openArtifactSourceUrl(data.url);
+        return;
     }
 
     if (data.event === 'diagnostic') {
         handlePreviewDiagnostic(data.payload);
     }
+}
+
+function openArtifactSourceUrl(url) {
+    const safeUrl = getSafeSourceUrl(url);
+    if (!safeUrl) {
+        showToast('来源链接无效，已阻止打开', 'warning', 4000);
+        return;
+    }
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
 }
 
 function handlePreviewDiagnostic(payload) {
@@ -1669,6 +1822,7 @@ export const __liveArtifactsTestHooks = {
     extractLiveArtifacts,
     injectPreviewSecurityPolicy,
     inferRenderableLanguage,
+    linkArtifactCitationsInHtml,
     normalizePreviewDiagnostic,
     parseLiveArtifactInteractionSpec,
     parseInfoAttributes,

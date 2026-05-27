@@ -14,6 +14,7 @@ const {
     extractLiveArtifactInteraction,
     extractLiveArtifacts,
     injectPreviewSecurityPolicy,
+    linkArtifactCitationsInHtml,
     normalizePreviewDiagnostic,
     parseLiveArtifactInteractionSpec,
 } = __liveArtifactsTestHooks;
@@ -185,7 +186,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=13');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=14');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -269,6 +270,56 @@ test('inline Live Artifacts expose cited search sources outside the iframe', () 
     assert.equal(chips[1].tagName, 'SPAN');
     assert.equal(chips[1].hasAttribute('href'), false);
     assert.equal(strip.textContent.includes('Uncited'), false);
+});
+
+test('inline Live Artifact citations inside the iframe become safe clickable source links', () => {
+    installBrowserGlobals('<!doctype html><body><div id="message"></div></body>');
+    const container = document.getElementById('message');
+
+    renderLiveArtifactsForMessage(
+        container,
+        '<section><p>官网 [2]，危险来源 [4]。</p><code>[2]</code><a href="https://already.example">[2]</a></section>',
+        {
+            messageId: 'message-iframe-citations',
+            sources: [
+                { id: 2, title: 'Official report', url: 'https://two.example/report' },
+                { id: 4, title: 'Unsafe source', url: 'javascript:alert(1)' },
+            ],
+        },
+    );
+
+    const frame = container.querySelector('.live-artifact-inline-iframe');
+    assert.ok(frame);
+    assert.match(frame.srcdoc, /data-live-artifact-source-url="https:\/\/two\.example\/report"/);
+    assert.match(frame.srcdoc, /event: 'open-source'/);
+    assert.doesNotMatch(frame.srcdoc, /data-live-artifact-source-url="javascript:/);
+    assert.match(frame.srcdoc, /<code>\[2\]<\/code>/);
+    assert.match(frame.srcdoc, /<a href="https:\/\/already\.example">\[2\]<\/a>/);
+});
+
+test('Live Artifact citation linker skips unsafe urls and existing links', () => {
+    installBrowserGlobals();
+
+    const html = linkArtifactCitationsInHtml(
+        '<section>来源 [2, 4] <code>[2]</code><a href="https://existing.example">[2]</a></section>',
+        [
+            { id: 2, title: 'Safe source', url: 'https://safe.example/path' },
+            { id: 4, title: 'Unsafe source', url: 'javascript:alert(1)' },
+        ],
+    );
+    const container = document.createElement('div');
+    container.innerHTML = html;
+
+    const citation = container.querySelector('.live-artifact-citation-link');
+    assert.ok(citation);
+    assert.equal(citation.textContent, '2');
+    assert.equal(citation.getAttribute('href'), 'https://safe.example/path');
+    assert.equal(citation.getAttribute('target'), '_blank');
+    assert.equal(citation.getAttribute('data-live-artifact-source-url'), 'https://safe.example/path');
+    assert.equal(container.textContent.includes('[4]'), true);
+    assert.equal(container.querySelector('code').textContent, '[2]');
+    assert.equal(container.querySelector('a[href="https://existing.example"]').textContent, '[2]');
+    assert.equal(container.innerHTML.includes('javascript:alert'), false);
 });
 
 test('streamChat sends live_artifacts_mode without the old Canvas request field', async () => {

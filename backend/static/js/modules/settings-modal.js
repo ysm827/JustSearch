@@ -1,8 +1,8 @@
 import { authFetch } from './auth.js?v=1';
 import { setCurrentSessionId, state } from './state.js?v=1';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=9';
-import { renderHistory } from './history-view.js?v=18';
+import { elements, showConfirm } from './ui.js?v=10';
+import { renderHistory } from './history-view.js?v=19';
 import * as API from './api.js?v=2';
 
 const WORKFLOW_STEPS = [
