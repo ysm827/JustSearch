@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { renderLiveArtifactsForMessage } from '../../backend/static/js/modules/live-artifacts.js';
 
 const require = createRequire(import.meta.url);
-const { JSDOM } = require('/Users/jones/Documents/Code/AMC-WebUI/node_modules/jsdom/lib/api.js');
+const { JSDOM } = require('jsdom');
 
 const dom = new JSDOM('<!doctype html><body><div id="message"></div><textarea id="user-input"></textarea></body>', {
   url: 'http://localhost/',

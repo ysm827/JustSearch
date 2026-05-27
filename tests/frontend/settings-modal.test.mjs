@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 function installBrowserGlobals() {
-    const { JSDOM } = require('/Users/jones/Documents/Code/AMC-WebUI/node_modules/jsdom/lib/api.js');
+    const { JSDOM } = require('jsdom');
     const dom = new JSDOM(`
         <!doctype html>
         <body>

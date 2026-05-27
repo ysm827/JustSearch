@@ -34,9 +34,24 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test deps
-        run: pip install pytest
+        run: |
+          pip install --upgrade pip
+          pip install -r backend/requirements.txt pytest
       - name: Run tests
         run: python -m pytest tests/ -v
+
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12"
+          cache: "npm"
+      - name: Install frontend test deps
+        run: npm ci
+      - name: Run frontend tests
+        run: npm run test:frontend
 
   docker:
     runs-on: ubuntu-latest

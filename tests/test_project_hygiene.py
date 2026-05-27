@@ -325,6 +325,22 @@ def test_frontend_uses_generated_logo_asset():
     assert "hero-brand-logo-dark" in index_source
 
 
+def test_frontend_tests_do_not_depend_on_local_absolute_paths():
+    forbidden_fragments = [
+        "/Users/",
+        "AMC-WebUI",
+        "node_modules/jsdom/lib/api.js",
+    ]
+    offenders = []
+
+    for source_path in sorted((PROJECT_ROOT / "tests/frontend").glob("*.mjs")):
+        source = source_path.read_text(encoding="utf-8")
+        if any(fragment in source for fragment in forbidden_fragments):
+            offenders.append(str(source_path.relative_to(PROJECT_ROOT)))
+
+    assert offenders == []
+
+
 def test_favicon_has_white_rounded_square_background_for_dark_browser_tabs():
     favicon_path = PROJECT_ROOT / "backend/static/assets/justsearch-favicon.png"
     width, height, pixel = _read_rgba_png(favicon_path)

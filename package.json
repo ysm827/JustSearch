@@ -1,0 +1,16 @@
+{
+  "name": "justsearch",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-powered deep search assistant",
+  "scripts": {
+    "test:frontend": "node --test tests/frontend/*.test.mjs && node tests/frontend/live-artifacts-dom-check.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^29.0.1"
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}
