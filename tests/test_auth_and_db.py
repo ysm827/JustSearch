@@ -229,8 +229,10 @@ def test_chat_router_coerces_string_booleans_for_live_artifacts():
 
     assert _coerce_bool("false") is False
     assert _coerce_bool("0") is False
+    assert _coerce_bool("off") is False
     assert _coerce_bool("true") is True
     assert _coerce_bool("1") is True
+    assert _coerce_bool("yes") is True
     assert _coerce_bool(None, default=True) is True
 
 
@@ -2430,6 +2432,110 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
         assert captured["step_model_configs"]["analysis"]["model"] == "deepseek-chat"
         assert captured["step_model_configs"]["interaction"]["provider_id"] == "openai"
         assert captured["step_model_configs"]["interaction"]["model"] == "gpt-4.1"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_chat_endpoint_coerces_string_interactive_search_default(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    captured = {}
+
+    class FakeWorkflow:
+        def __init__(
+            self,
+            api_key,
+            base_url,
+            model,
+            search_engine,
+            max_results,
+            max_iterations,
+            interactive_search,
+            session_id=None,
+            max_concurrent_pages=3,
+            step_model_configs=None,
+            canvas_mode=False,
+            live_artifacts_mode=False,
+        ):
+            captured["interactive_search"] = interactive_search
+
+        async def run(
+            self,
+            query,
+            progress_callback,
+            stream_callback,
+            context_messages,
+            source_callback,
+            stats_callback,
+        ):
+            return f"answer for {query}"
+
+    async def fake_load_settings():
+        return {
+            "default_provider_id": "deepseek",
+            "providers": [
+                {
+                    "id": "deepseek",
+                    "name": "DeepSeek",
+                    "api_key": "deepseek-secret",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "model_id": "deepseek-chat",
+                },
+            ],
+            "workflow_step_models": {
+                "analysis": {"provider_id": "", "model_id": ""},
+                "relevance": {"provider_id": "", "model_id": ""},
+                "interaction": {"provider_id": "", "model_id": ""},
+                "answer": {"provider_id": "", "model_id": ""},
+            },
+            "search_engine": "searxng",
+            "max_results": 8,
+            "max_iterations": 4,
+            "interactive_search": "false",
+            "max_concurrent_pages": 6,
+        }
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.load_settings", fake_load_settings)
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "string-interactive-search-test",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 200
+        assert captured["interactive_search"] is False
 
         if database._engine is not None:
             await database._engine.dispose()

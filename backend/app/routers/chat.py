@@ -324,9 +324,9 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         maximum=10,
     )
     interactive_search = (
-        request.interactive_search
+        _coerce_bool(request.interactive_search)
         if request.interactive_search is not None
-        else defaults.get("interactive_search", True)
+        else _coerce_bool(defaults.get("interactive_search"), True)
     )
     max_concurrent_pages = _bounded_int(
         request.max_concurrent_pages if request.max_concurrent_pages is not None else defaults.get("max_concurrent_pages", 3),
