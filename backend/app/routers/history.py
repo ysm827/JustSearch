@@ -77,6 +77,15 @@ def _require_route_safe_id(value: object, field_name: str) -> str:
     return normalized
 
 
+def _body_text(body: object, key: str, default: str = "") -> str:
+    if not isinstance(body, dict):
+        return default
+    value = body.get(key, default)
+    if value is None:
+        value = default
+    return str(value).strip()
+
+
 @router.get("/api/history")
 async def get_history_endpoint():
     return await list_chats()
@@ -252,7 +261,7 @@ async def delete_chat_endpoint(session_id: str):
 @router.patch("/api/history/{session_id}")
 async def rename_chat_endpoint(session_id: str, body: dict = Body(...)):
     session_id = _require_route_safe_id(session_id, "session_id")
-    new_title = body.get("title", "").strip()
+    new_title = _body_text(body, "title")
     if not new_title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
     history_data = await load_chat_history(session_id)

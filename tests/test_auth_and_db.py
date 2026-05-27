@@ -540,6 +540,51 @@ def test_delete_chat_endpoint_returns_404_for_missing_session(tmp_path):
     asyncio.run(run())
 
 
+def test_rename_chat_endpoint_tolerates_non_string_title_payloads(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        await database.save_chat_history(
+            "rename-me",
+            [{"role": "user", "content": "rename this"}],
+            title="Old Title",
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            empty_title = await client.patch("/api/history/rename-me", json={"title": None})
+            numeric_title = await client.patch("/api/history/rename-me", json={"title": 12345})
+
+        assert empty_title.status_code == 400
+        assert empty_title.json()["detail"] == "Title cannot be empty"
+        assert numeric_title.status_code == 200
+        assert numeric_title.json() == {"status": "ok", "title": "12345"}
+        assert (await database.load_chat_history("rename-me"))["title"] == "12345"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_history_routes_reject_route_unsafe_ids_before_db_operations(tmp_path):
     from backend.app import database
     from backend.app.routers.history import router
