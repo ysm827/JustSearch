@@ -305,15 +305,38 @@ async def _cleanup_old_sessions(max_age_days: int = 90):
 # ---------------------------------------------------------------------------
 
 
+def _session_id_from_legacy_path(value: str) -> Optional[str]:
+    """Extract a session id only from direct legacy chat JSON paths."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        path = os.path.abspath(raw)
+        chats_dir = os.path.abspath(_CHATS_DIR)
+        if os.path.dirname(path) != chats_dir:
+            return None
+        if os.path.splitext(path)[1].lower() != ".json":
+            return None
+    except (OSError, ValueError):
+        return None
+    return normalize_route_safe_id(os.path.splitext(os.path.basename(path))[0])
+
+
+def _normalize_chat_history_lookup_id(session_id_or_path: str) -> Optional[str]:
+    legacy_id = _session_id_from_legacy_path(session_id_or_path)
+    if legacy_id:
+        return legacy_id
+    return normalize_route_safe_id(session_id_or_path)
+
+
 async def load_chat_history(session_id_or_path: str) -> Optional[Dict[str, Any]]:
     """
     Load chat history by session_id (or legacy file path for compatibility).
     Returns dict with keys: id, title, timestamp, messages  – same shape as old JSON.
     """
-    # If a path is given, extract session_id from filename
-    session_id = session_id_or_path
-    if os.sep in session_id or "/" in session_id:
-        session_id = os.path.splitext(os.path.basename(session_id))[0]
+    session_id = _normalize_chat_history_lookup_id(session_id_or_path)
+    if not session_id:
+        return None
 
     async with await get_session() as session:
         sess = (await session.execute(

@@ -347,6 +347,44 @@ def test_cleanup_old_sessions_preserves_sessions_with_messages(tmp_path):
     asyncio.run(run())
 
 
+def test_load_chat_history_rejects_route_unsafe_ids_without_basename_fallback(tmp_path):
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        await database.save_chat_history(
+            "session",
+            [{"role": "user", "content": "must not be returned for bad/session"}],
+            title="Real Session",
+        )
+
+        assert await database.load_chat_history("bad/session") is None
+        assert await database.load_chat_history("also\\bad") is None
+
+        legacy_path = database.get_chat_path("session")
+        loaded = await database.load_chat_history(legacy_path)
+        assert loaded["id"] == "session"
+        assert loaded["title"] == "Real Session"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_chat_groups_can_manage_sessions(tmp_path):
     from backend.app import database
 
