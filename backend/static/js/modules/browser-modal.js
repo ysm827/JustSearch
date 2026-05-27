@@ -1,6 +1,18 @@
 import { buildBrowserWebSocketUrl } from './auth.js?v=1';
 import { state } from './state.js?v=2';
 
+function parseBrowserSocketMessage(raw) {
+    if (typeof raw !== 'string') {
+        return null;
+    }
+    try {
+        const data = JSON.parse(raw);
+        return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 export function setupBrowserModal() {
     const modal = document.getElementById('browser-modal');
     const closeBtn = document.getElementById('browser-close-btn');
@@ -108,8 +120,12 @@ export function setupBrowserModal() {
 
         activeWs.onmessage = (event) => {
             if (ws !== activeWs) return;
-            const data = JSON.parse(event.data);
-            if (data.type === 'frame') {
+            const data = parseBrowserSocketMessage(event.data);
+            if (!data) {
+                console.warn('Ignored malformed browser socket message.');
+                return;
+            }
+            if (data.type === 'frame' && typeof data.image === 'string' && data.image) {
                 status.style.display = 'none';
                 img.style.display = 'block';
                 img.src = `data:image/jpeg;base64,${data.image}`;
@@ -141,3 +157,7 @@ export function setupBrowserModal() {
         };
     };
 }
+
+export const __browserModalTestHooks = {
+    parseBrowserSocketMessage,
+};
