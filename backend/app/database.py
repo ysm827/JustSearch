@@ -527,12 +527,13 @@ async def move_chat_to_group(session_id: str, group_id: Optional[str]) -> bool:
         return True
 
 
-async def delete_chat(session_id: str):
+async def delete_chat(session_id: str) -> bool:
     async with await get_session() as session:
-        await session.execute(
+        result = await session.execute(
             delete(ChatSession).where(ChatSession.id == session_id)
         )
         await session.commit()
+        return (result.rowcount or 0) > 0
 
 
 async def delete_message(session_id: str, message_index: int):

@@ -219,7 +219,8 @@ async def get_chat_endpoint(session_id: str):
 
 @router.delete("/api/history/{session_id}")
 async def delete_chat_endpoint(session_id: str):
-    await delete_chat(session_id)
+    if not await delete_chat(session_id):
+        raise HTTPException(status_code=404, detail="Chat not found")
     return {"status": "ok"}
 
 
