@@ -1365,6 +1365,76 @@ def test_workflow_does_not_append_markdown_references_to_live_artifacts():
     assert "\n\n---" not in result
 
 
+def test_workflow_keeps_partial_live_artifact_answers_in_artifact_format():
+    class AnalysisLLM:
+        async def analyze_task(self, _query, _history):
+            return {"type": "search", "queries": ["Live Artifacts partial"]}
+
+    class AnswerLLM:
+        total_prompt_tokens = 2
+        total_completion_tokens = 3
+
+        async def generate_answer(
+            self,
+            _query,
+            _sources,
+            _history,
+            _stream_callback,
+            canvas_mode=False,
+            live_artifacts_mode=False,
+        ):
+            assert live_artifacts_mode is True
+            return {
+                "status": "insufficient",
+                "missing_info": "缺少第二个独立来源",
+                "answer": "## 临时结论\n- 已找到一个来源 [1]",
+            }
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="fallback-model",
+        search_engine="searxng",
+        max_results=3,
+        max_iterations=1,
+        live_artifacts_mode=True,
+    )
+    workflow.step_llms["analysis"] = AnalysisLLM()
+    workflow.step_llms["answer"] = AnswerLLM()
+
+    async def fake_handle_search(*_args, **_kwargs):
+        return (
+            [
+                {
+                    "id": 1,
+                    "title": "Live Artifacts source",
+                    "url": "https://example.com/live-artifacts",
+                    "content": "Live Artifacts source content.",
+                }
+            ],
+            1,
+            1,
+        )
+
+    workflow._handle_search = fake_handle_search
+
+    result = asyncio.run(
+        workflow.run(
+            "Live Artifacts partial",
+            lambda _msg: None,
+            None,
+            [],
+            None,
+            lambda _data: None,
+        )
+    )
+
+    assert result.startswith("<section")
+    assert "临时结论" in result
+    assert "### 参考资料" not in result
+    assert "\n\n---" not in result
+
+
 def test_workflow_returns_partial_answer_when_time_limit_hits_after_insufficient_result(monkeypatch):
     class AnalysisLLM:
         async def analyze_task(self, _query, _history):

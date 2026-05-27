@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-import { getInlineLiveArtifact, __liveArtifactsTestHooks } from '../../backend/static/js/modules/live-artifacts.js';
+import {
+    getInlineLiveArtifact,
+    renderLiveArtifactsForMessage,
+    __liveArtifactsTestHooks,
+} from '../../backend/static/js/modules/live-artifacts.js';
 
 const {
     buildSrcdoc,
@@ -83,6 +87,32 @@ test('AMC-style raw inline HTML fragments render as inline Live Artifact frames'
     assert.match(artifact.srcdoc, /justsearch-live-artifacts/);
 });
 
+test('inline Live Artifact fragments can include scoped style blocks', () => {
+    const html = '<style>.metric{color:#0f766e}</style><section class="metric"><strong>Styled</strong></section>';
+    const artifact = extractInlineLiveArtifact(html, 'message-style', false);
+
+    assert.ok(artifact);
+    assert.equal(artifact.language, 'html');
+    assert.match(artifact.srcdoc, /\.metric/);
+    assert.equal(
+        extractInlineLiveArtifact('<section><script>alert(1)</script></section>', 'message-script', false),
+        null,
+    );
+});
+
+test('streaming open HTML fences keep the pending artifact preview path', () => {
+    const artifact = extractInlineLiveArtifact(
+        '```html\n<section style="display:grid"><strong>Partial',
+        'message-open-fence',
+        true,
+    );
+
+    assert.ok(artifact);
+    assert.equal(artifact.isStreaming, true);
+    assert.match(artifact.streamHtml, /Partial/);
+    assert.match(artifact.srcdoc, /data-amc-stream-preview-root/);
+});
+
 test('Live Artifact srcdoc uses AMC-style CSP and preview diagnostics', () => {
     const srcdoc = buildSrcdoc('<section><img src="https://example.invalid/missing.png"></section>', 'html');
 
@@ -135,6 +165,8 @@ test('Live Artifact preview diagnostics are normalized before display', () => {
 
 test('quick Live Artifacts button toggles AMC-style active prompt state', async () => {
     const originalSetTimeout = globalThis.setTimeout;
+    const originalFetch = globalThis.fetch;
+    let savedBody = null;
     globalThis.setTimeout = (callback) => {
         if (typeof callback === 'function') callback();
         return 0;
@@ -152,12 +184,19 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
                 <section id="hero-section"></section>
             </body>
         `);
-        const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=12');
+        const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=13');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
         setLiveArtifactsMode(false);
+        globalThis.fetch = async (_input, init) => {
+            savedBody = JSON.parse(init.body);
+            return new Response(JSON.stringify({ settings: savedBody }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        };
         setupChatHandler({
             chatContainer: document.getElementById('chat-container'),
             userInput: document.getElementById('user-input'),
@@ -178,15 +217,64 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
         assert.equal(button.getAttribute('aria-label'), 'Live Artifacts 提示已激活。点击移除。');
         assert.equal(button.title, 'Live Artifacts 提示已激活。点击移除。');
         assert.equal(dom.window.document.body.textContent.includes('Canvas'), false);
+        await Promise.resolve();
+        await Promise.resolve();
+        assert.equal(savedBody.live_artifacts_mode, true);
     } finally {
         globalThis.setTimeout = originalSetTimeout;
+        globalThis.fetch = originalFetch;
     }
+});
+
+test('string false setting does not enable Live Artifacts mode', async () => {
+    installBrowserGlobals();
+    const { state, setLiveArtifactsMode, setSettings } = await import('../../backend/static/js/modules/state.js?v=1');
+
+    setLiveArtifactsMode(true);
+    setSettings({ live_artifacts_mode: 'false' });
+    assert.equal(state.liveArtifactsMode, false);
+
+    setSettings({ live_artifacts_mode: 'true' });
+    assert.equal(state.liveArtifactsMode, true);
+
+    setLiveArtifactsMode('false');
+    assert.equal(state.liveArtifactsMode, false);
+});
+
+test('inline Live Artifacts expose cited search sources outside the iframe', () => {
+    installBrowserGlobals('<!doctype html><body><div id="message"></div></body>');
+    const container = document.getElementById('message');
+
+    const artifacts = renderLiveArtifactsForMessage(
+        container,
+        '<section style="display:block;width:100%"><p>结论来自 [2] 和 [4]。</p></section>',
+        {
+            messageId: 'message-sources',
+            sources: [
+                { id: 1, title: 'Uncited', url: 'https://one.example' },
+                { id: 2, title: 'Official report', url: 'https://two.example/report' },
+                { id: 4, title: 'Unsafe source', url: 'javascript:alert(1)' },
+            ],
+        },
+    );
+
+    assert.equal(artifacts.length, 1);
+    const strip = container.querySelector('.live-artifact-source-strip');
+    const chips = Array.from(container.querySelectorAll('.live-artifact-source-chip'));
+
+    assert.ok(strip);
+    assert.equal(chips.length, 2);
+    assert.equal(chips[0].getAttribute('href'), 'https://two.example/report');
+    assert.equal(chips[0].getAttribute('target'), '_blank');
+    assert.equal(chips[1].tagName, 'SPAN');
+    assert.equal(chips[1].hasAttribute('href'), false);
+    assert.equal(strip.textContent.includes('Uncited'), false);
 });
 
 test('streamChat sends live_artifacts_mode without the old Canvas request field', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=1');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=1');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=2');
     let capturedBody = null;
     let doneCalled = false;
 
@@ -225,8 +313,8 @@ test('streamChat sends live_artifacts_mode without the old Canvas request field'
 
 test('streamChat processes trailing SSE event when stream closes without blank delimiter', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=1');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=1');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=2');
     let answer = null;
     let doneCalled = false;
 
@@ -266,8 +354,8 @@ test('streamChat processes trailing SSE event when stream closes without blank d
 
 test('streamChat does not retry a non-idempotent chat request after response starts', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=1');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=1');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=2');
     const originalSetTimeout = globalThis.setTimeout;
     const originalConsoleError = console.error;
     let fetchCalls = 0;

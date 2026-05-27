@@ -72,6 +72,7 @@ class SettingsModel(BaseModel):
     max_results: Optional[int] = 50
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
+    live_artifacts_mode: Optional[bool] = False
     max_concurrent_pages: Optional[int] = 10
 
 

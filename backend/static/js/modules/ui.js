@@ -6,8 +6,8 @@ import {
     createRegenerateButton
 } from './utils.js?v=3';
 import { extractSources, renderWithCitations } from './source-renderer.js?v=3';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=2';
-import { state } from './state.js';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=3';
+import { state } from './state.js?v=1';
 
 const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;
 const USER_MESSAGE_COLLAPSE_LINE_THRESHOLD = 8;
@@ -302,7 +302,7 @@ function createMessageActions({ role, content, msgDiv, messageIndex, actionCallb
     if (messageIndex !== null) {
         buttons.push(createDeleteMessageButton(async () => {
             if (!await showConfirm('确定要删除这条消息吗？', '删除消息')) return;
-            const { deleteMessageAPI } = await import('./api.js?v=1');
+            const { deleteMessageAPI } = await import('./api.js?v=2');
             const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
             if (ok) {
                 msgDiv.remove();
@@ -343,6 +343,7 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
         renderLiveArtifactsForMessage(answerBody, content, {
             messageId: answerBody.dataset.liveArtifactsMessageId,
             isStreaming: false,
+            sources: resolvedSources,
         });
         contentDiv.appendChild(answerBody);
     } else {

@@ -209,6 +209,7 @@ def test_default_model_settings_use_deepseek_defaults():
         "answer",
     }
     assert DEFAULT_SETTINGS["search_engine"] == "searxng"
+    assert DEFAULT_SETTINGS["live_artifacts_mode"] is False
     assert example_settings["default_provider_id"] == "deepseek"
     assert example_settings["providers"][0]["id"] == "deepseek"
     assert example_settings["providers"][0]["base_url"] == "https://api.deepseek.com/v1"
@@ -220,6 +221,17 @@ def test_default_model_settings_use_deepseek_defaults():
         "answer",
     }
     assert example_settings["search_engine"] == "searxng"
+    assert example_settings["live_artifacts_mode"] is False
+
+
+def test_chat_router_coerces_string_booleans_for_live_artifacts():
+    from backend.app.routers.chat import _coerce_bool
+
+    assert _coerce_bool("false") is False
+    assert _coerce_bool("0") is False
+    assert _coerce_bool("true") is True
+    assert _coerce_bool("1") is True
+    assert _coerce_bool(None, default=True) is True
 
 
 def test_markdown_source_formatter_rejects_unsafe_urls():

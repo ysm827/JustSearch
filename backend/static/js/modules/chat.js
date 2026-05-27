@@ -1,11 +1,11 @@
-import { state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js';
+import { state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=1';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
-import { updateActiveHistoryItem } from './history-view.js?v=17';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=8';
+import { updateActiveHistoryItem } from './history-view.js?v=18';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=9';
 import { renderWithCitations } from './source-renderer.js?v=3';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=2';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=3';
 import { showToast } from './toast.js';
-import * as API from './api.js?v=1';
+import * as API from './api.js?v=2';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
@@ -210,6 +210,13 @@ export function setupChatHandler(elements, renderHistory) {
                 },
                 onSources: (sources) => {
                     currentSources = sources;
+                    if (currentAnswerBuffer && getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, true)) {
+                        renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
+                            messageId: liveArtifactMessageId,
+                            isStreaming: true,
+                            sources: currentSources,
+                        });
+                    }
                 },
                 onStats: (stats) => {
                     searchStats = stats;
@@ -226,6 +233,7 @@ export function setupChatHandler(elements, renderHistory) {
                     renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
                         messageId: liveArtifactMessageId,
                         isStreaming: true,
+                        sources: currentSources,
                     });
                     if (!userScrolled) scrollToBottom();
                 },
@@ -237,6 +245,7 @@ export function setupChatHandler(elements, renderHistory) {
                     renderLiveArtifactsForMessage(contentWrapper, finalAnswer, {
                         messageId: liveArtifactMessageId,
                         isStreaming: false,
+                        sources: currentSources,
                     });
                     setCurrentSessionId(sessionId);
                     refreshHistory();
@@ -456,11 +465,24 @@ export function setupChatHandler(elements, renderHistory) {
 
     const quickLiveArtifactsBtn = document.getElementById('quick-live-artifacts-btn');
     if (quickLiveArtifactsBtn) {
-        quickLiveArtifactsBtn.addEventListener('click', () => {
+        quickLiveArtifactsBtn.addEventListener('click', async () => {
             const nextValue = !state.liveArtifactsMode;
             setLiveArtifactsMode(nextValue);
+            if (state.settings) {
+                state.settings.live_artifacts_mode = nextValue;
+            }
             syncQuickSettingsFromState();
             showToast(`Live Artifacts ${nextValue ? '已开启' : '已关闭'}`, 'info');
+
+            if (state.settings) {
+                const saved = await API.saveSettingsAPI(state.settings);
+                if (!saved) {
+                    setLiveArtifactsMode(!nextValue);
+                    state.settings.live_artifacts_mode = !nextValue;
+                    syncQuickSettingsFromState();
+                    showToast('Live Artifacts 设置保存失败，已恢复原状态', 'warning');
+                }
+            }
         });
     }
 

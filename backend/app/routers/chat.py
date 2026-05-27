@@ -116,6 +116,20 @@ def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, parsed))
 
 
+def _coerce_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
 def _resolve_search_engine(requested: str | None, saved: str | None) -> str:
     valid_engines = set(get_all_engines())
     engine = (requested or saved or "searxng").strip()
@@ -289,6 +303,14 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         minimum=1,
         maximum=20,
     )
+    saved_live_artifacts_mode = _coerce_bool(defaults.get("live_artifacts_mode"), False)
+    live_artifacts_mode = (
+        _coerce_bool(request.live_artifacts_mode)
+        if request.live_artifacts_mode is not None
+        else saved_live_artifacts_mode
+    )
+    if request.canvas_mode:
+        live_artifacts_mode = True
     session_id = request.session_id
     if not session_id:
         session_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:4]
@@ -303,7 +325,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
             session_id=session_id,
             max_concurrent_pages=max_concurrent_pages,
             step_model_configs=workflow_step_models,
-            live_artifacts_mode=bool(request.live_artifacts_mode or request.canvas_mode),
+            live_artifacts_mode=live_artifacts_mode,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

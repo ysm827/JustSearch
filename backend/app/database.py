@@ -767,6 +767,7 @@ DEFAULT_SETTINGS = {
     "max_results": "50",
     "max_iterations": "5",
     "interactive_search": "true",
+    "live_artifacts_mode": False,
     "max_concurrent_pages": "10",
 }
 

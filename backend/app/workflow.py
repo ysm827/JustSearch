@@ -5,7 +5,7 @@ import logging
 import time
 import uuid
 from typing import List, Dict, Callable, Any, Optional
-from .llm_client import LLMClient
+from .llm_client import LLMClient, ensure_live_artifact_answer
 from .browser_manager import BrowserManager
 from .engine_health import engine_health
 
@@ -186,6 +186,16 @@ class SearchWorkflow:
             f"⚠️ {reason}，以下是基于已收集资料整理的临时答案，可能仍不完整。\n\n"
         )
         return self._format_references(prefix + answer, sources)
+
+    def _format_live_artifact_partial_answer(self, answer: str, reason: str) -> str:
+        answer = (answer or "").strip()
+        if not answer:
+            return ""
+
+        prefix = (
+            f"⚠️ {reason}，以下是基于已收集资料整理的临时答案，可能仍不完整。\n\n"
+        )
+        return ensure_live_artifact_answer(prefix + answer)
 
     def _remaining_seconds(self, start_time: float) -> float:
         return max(0.0, _MAX_TOTAL_SEARCH_SECONDS - (time.monotonic() - start_time))
@@ -573,7 +583,7 @@ class SearchWorkflow:
                             "total_seconds": round(total_elapsed, 1),
                         })
                     if self.live_artifacts_mode:
-                        return final_answer
+                        return ensure_live_artifact_answer(final_answer)
                     return self._format_references(final_answer, accumulated_sources)
                 else:
                     last_partial_answer = result.get("answer", "")
@@ -588,21 +598,29 @@ class SearchWorkflow:
                         progress_callback(f"已达到最大迭代次数 ({self.max_iterations})，正在整理现有结果...")
                     
                     if iteration >= self.max_iterations:
-                         final_answer = self._format_partial_answer(
-                             last_partial_answer,
-                             accumulated_sources,
-                             f"经过 {iteration} 次尝试后，仍无法确认资料足够完整"
-                         )
-                         if stats_callback:
-                             prompt_tokens, completion_tokens = self._usage_totals()
-                             stats_callback({
-                                 "sites_searched": total_search_results,
-                                 "iterations": iteration,
-                                 "total_seconds": round(time.monotonic() - start_time, 1),
-                                 "prompt_tokens": prompt_tokens,
-                                 "completion_tokens": completion_tokens,
-                             })
-                         return final_answer
+                        reason = f"经过 {iteration} 次尝试后，仍无法确认资料足够完整"
+                        final_answer = (
+                            self._format_live_artifact_partial_answer(
+                                last_partial_answer,
+                                reason,
+                            )
+                            if self.live_artifacts_mode
+                            else self._format_partial_answer(
+                                last_partial_answer,
+                                accumulated_sources,
+                                reason,
+                            )
+                        )
+                        if stats_callback:
+                            prompt_tokens, completion_tokens = self._usage_totals()
+                            stats_callback({
+                                "sites_searched": total_search_results,
+                                "iterations": iteration,
+                                "total_seconds": round(time.monotonic() - start_time, 1),
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                            })
+                        return final_answer
             
             if last_partial_answer and accumulated_sources:
                 if stats_callback:
@@ -615,6 +633,11 @@ class SearchWorkflow:
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
                     })
+                if self.live_artifacts_mode:
+                    return self._format_live_artifact_partial_answer(
+                        last_partial_answer,
+                        "已达到本次搜索的时间限制",
+                    )
                 return self._format_partial_answer(
                     last_partial_answer,
                     accumulated_sources,

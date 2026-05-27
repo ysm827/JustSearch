@@ -958,13 +958,13 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "function getFaviconUrl" in renderer_source
     assert "from './source-renderer.js?v=3'" in ui_source
     assert "from './source-renderer.js?v=3'" in chat_source
-    assert "from './ui.js?v=8'" in (
+    assert "from './ui.js?v=9'" in (
         PROJECT_ROOT / "backend/static/js/modules/history-view.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=8'" in (
+    assert "from './ui.js?v=9'" in (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=8'" in (
+    assert "from './ui.js?v=9'" in (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
@@ -1006,25 +1006,26 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
         PROJECT_ROOT / "backend/static/js/main.js"
     ).read_text(encoding="utf-8")
 
-    assert 'href="/static/css/style.css?v=24"' in index_source
-    assert 'src="/static/js/main.js?v=36"' in index_source
+    assert 'href="/static/css/style.css?v=25"' in index_source
+    assert 'src="/static/js/main.js?v=37"' in index_source
     assert "@import url('./sections/base.css?v=4');" in style_source
     assert "@import url('./sections/sidebar.css?v=11');" in style_source
     assert "@import url('./sections/chat.css?v=10');" in style_source
     assert "@import url('./sections/input-modal.css?v=17');" in style_source
     assert "@import url('./sections/markdown.css?v=3');" in style_source
-    assert "@import url('./sections/live-artifacts.css?v=2');" in style_source
+    assert "@import url('./sections/live-artifacts.css?v=3');" in style_source
     assert "@import url('./sections/responsive.css?v=5');" in style_source
     assert "@import url('./sections/polish.css?v=6');" in style_source
     assert "from './modules/auth.js?v=1'" in main_source
-    assert "from './modules/ui.js?v=8'" in main_source
-    assert "from './modules/chat.js?v=12'" in main_source
-    assert "from './modules/browser-modal.js?v=1'" in main_source
-    assert "from './modules/history-view.js?v=17'" in main_source
-    assert "from './modules/settings-modal.js?v=33'" in main_source
-    assert "from './modules/sidebar.js?v=10'" in main_source
+    assert "from './modules/state.js?v=1'" in main_source
+    assert "from './modules/ui.js?v=9'" in main_source
+    assert "from './modules/chat.js?v=13'" in main_source
+    assert "from './modules/browser-modal.js?v=2'" in main_source
+    assert "from './modules/history-view.js?v=18'" in main_source
+    assert "from './modules/settings-modal.js?v=34'" in main_source
+    assert "from './modules/sidebar.js?v=11'" in main_source
     assert "from './modules/model-selector.js?v=14'" in main_source
-    assert "from './modules/api.js?v=1'" in main_source
+    assert "from './modules/api.js?v=2'" in main_source
     assert "import('./modules/utils.js?v=3')" in main_source
 
 
@@ -1058,7 +1059,7 @@ def test_live_artifacts_are_integrated_with_chat_rendering():
         PROJECT_ROOT / "backend/static/js/modules/ui.js"
     ).read_text(encoding="utf-8")
 
-    assert "live-artifacts.css?v=2" in style_source
+    assert "live-artifacts.css?v=3" in style_source
     assert "export function renderLiveArtifactsForMessage" in live_artifacts_js
     assert "function extractLiveArtifacts" in live_artifacts_js
     assert "function extractRawHtmlArtifacts" in live_artifacts_js
@@ -1619,10 +1620,15 @@ def test_live_artifacts_toggle_wires_amc_live_artifacts_mode():
     assert "auto_awesome" in index_source
     assert "liveArtifactsMode: state.liveArtifactsMode" in chat_source
     assert "setLiveArtifactsMode(nextValue)" in chat_source
+    assert "state.settings.live_artifacts_mode = nextValue" in chat_source
     assert "live_artifacts_mode: Boolean(liveArtifactsMode)" in api_source
     assert "liveArtifactsMode: false" in state_source
+    assert "'live_artifacts_mode'" in state_source
     assert "live_artifacts_mode: Optional[bool]" in router_source
-    assert "live_artifacts_mode=bool(request.live_artifacts_mode or request.canvas_mode)" in router_source
+    assert "def _coerce_bool(value, default: bool = False) -> bool:" in router_source
+    assert 'saved_live_artifacts_mode = _coerce_bool(defaults.get("live_artifacts_mode"), False)' in router_source
+    assert "if request.canvas_mode:" in router_source
+    assert "live_artifacts_mode=live_artifacts_mode" in router_source
     assert "live_artifacts_mode: bool = False" in workflow_source
     assert "live_artifacts_mode=self.live_artifacts_mode" in workflow_source
     assert "LIVE_ARTIFACTS_PROMPT" in prompts_source

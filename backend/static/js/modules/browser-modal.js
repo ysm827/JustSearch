@@ -1,5 +1,5 @@
 import { buildBrowserWebSocketUrl } from './auth.js?v=1';
-import { state } from './state.js';
+import { state } from './state.js?v=1';
 
 export function setupBrowserModal() {
     const modal = document.getElementById('browser-modal');

@@ -36,7 +36,19 @@ _INLINE_HTML_ROOT_RE = re.compile(
     re.IGNORECASE,
 )
 _HTML_FENCE_RE = re.compile(
-    r"^```(?:amc-live-artifact-html|html)?\s*\n([\s\S]*?)\n?```\s*$",
+    r"^```(?:amc-live-artifact-html|html|svg)?\s*\n([\s\S]*?)\n?```\s*$",
+    re.IGNORECASE,
+)
+_STREAMABLE_LIVE_ARTIFACT_FENCE_RE = re.compile(
+    r"^```(?:amc-live-artifact-html|html|svg)(?:\s|$)",
+    re.IGNORECASE,
+)
+_FULL_HTML_DOCUMENT_RE = re.compile(
+    r"^(?:<!doctype\s+html\b[^>]*>\s*)?<html\b[\s\S]*</html>$",
+    re.IGNORECASE,
+)
+_SVG_DOCUMENT_RE = re.compile(
+    r"^<svg\b[\s\S]*</svg>$",
     re.IGNORECASE,
 )
 
@@ -74,9 +86,19 @@ def _strip_live_artifact_fence(answer: str) -> str:
 
 def _looks_like_inline_live_artifact(answer: str) -> bool:
     text = _strip_live_artifact_fence(answer)
-    if not text or re.search(r"<!doctype|<html\b|<head\b|<body\b", text, re.IGNORECASE):
+    if not text:
+        return False
+    if _FULL_HTML_DOCUMENT_RE.match(text) or _SVG_DOCUMENT_RE.match(text):
+        return True
+    if re.search(r"<!doctype|<html\b|<head\b|<body\b", text, re.IGNORECASE):
         return False
     return bool(_INLINE_HTML_ROOT_RE.match(text))
+
+
+def _is_streamable_live_artifact_answer(answer: str) -> bool:
+    """Return True once a live-artifact answer is clearly raw HTML/SVG."""
+    text = (answer or "").lstrip()
+    return text.startswith("<") or bool(_STREAMABLE_LIVE_ARTIFACT_FENCE_RE.match(text))
 
 
 def _escape_html(text: str) -> str:
@@ -655,6 +677,25 @@ class LLMClient:
             parsing_header = True
             header_buffer = ""
             answer_started = False
+            live_stream_buffer = ""
+            live_streaming_enabled = False
+
+            def maybe_stream_answer(content: str):
+                nonlocal live_stream_buffer, live_streaming_enabled
+                if status != "sufficient" or not stream_callback or not content:
+                    return
+                if not live_artifacts_requested:
+                    stream_callback(content)
+                    return
+                if live_streaming_enabled:
+                    stream_callback(content)
+                    return
+
+                live_stream_buffer += content
+                if _is_streamable_live_artifact_answer(live_stream_buffer):
+                    live_streaming_enabled = True
+                    stream_callback(live_stream_buffer)
+                    live_stream_buffer = ""
 
             async for chunk in response:
                 if chunk.choices and chunk.choices[0].delta.content:
@@ -678,20 +719,17 @@ class LLMClient:
                                 answer_chunk = parts[1]
                                 parsing_header = False
                                 answer_started = True
-                                if status == "sufficient" and stream_callback and answer_chunk:
-                                    stream_callback(answer_chunk)
+                                maybe_stream_answer(answer_chunk)
 
                         # Safety valve: if buffer gets too long without Answer:, maybe model didn't follow format
                         if len(header_buffer) > 500 and not answer_started:
                             parsing_header = False
                             # Assume whole thing is answer if status check passed or failed
-                            if stream_callback:
-                                stream_callback(header_buffer)
+                            maybe_stream_answer(header_buffer)
 
                     else:
                         # Streaming answer
-                        if status == "sufficient" and stream_callback:
-                            stream_callback(content)
+                        maybe_stream_answer(content)
                 
                 # Also handle empty delta (role/tool_calls) to avoid blocking
                 elif chunk.choices and chunk.choices[0].finish_reason:

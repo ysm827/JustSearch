@@ -36,6 +36,7 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
     ensurePanel();
 
     const messageId = resolveMessageId(container, options.messageId);
+    const artifactSources = normalizeArtifactSources(options.sources);
     const interactionSpec = extractLiveArtifactInteraction(markdownText, Boolean(options.isStreaming));
     if (interactionSpec) {
         syncRegistryForMessage(messageId, []);
@@ -49,6 +50,7 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
         syncRegistryForMessage(messageId, [inlineArtifact]);
         clearArtifactControls(container);
         renderInlineArtifactFrame(container, inlineArtifact);
+        renderLiveArtifactSources(container, inlineArtifact, artifactSources);
         return [inlineArtifact];
     }
 
@@ -136,6 +138,14 @@ function extractInlineLiveArtifact(markdownText, messageId, isStreaming) {
         });
     }
 
+    const streamingFence = isStreaming ? extractStreamingLiveArtifactFence(text) : null;
+    if (streamingFence) {
+        return createInlineArtifact(streamingFence.code, messageId, {
+            isStreaming,
+            language: streamingFence.language === 'svg' ? 'svg' : 'html',
+        });
+    }
+
     const unfenced = stripFencedCodeBlocks(text).trim();
     if (!unfenced || unfenced !== text) return null;
 
@@ -159,6 +169,19 @@ function extractSingleLiveArtifactFence(text) {
     return {
         language,
         code: String(match[2] || '').trim(),
+    };
+}
+
+function extractStreamingLiveArtifactFence(text) {
+    const match = text.match(/^```([^\n`]*)\n([\s\S]*)$/);
+    if (!match) return null;
+    const language = normalizeLanguage(match[1] || '');
+    if (language !== LIVE_ARTIFACT_HTML_LANGUAGE && language !== 'html' && language !== 'svg') {
+        return null;
+    }
+    return {
+        language,
+        code: String(match[2] || '').trimStart(),
     };
 }
 
@@ -490,19 +513,34 @@ function isStandaloneHtmlArtifact(code) {
 
 function isStandaloneHtmlFragment(code) {
     const normalized = String(code || '').trim();
-    if (!normalized || /<(?:script|style|iframe|object|embed)\b/i.test(normalized)) return false;
+    if (!normalized || /<(?:script|iframe|object|embed)\b/i.test(normalized)) return false;
     const withoutComments = normalized.replace(/<!--[\s\S]*?-->/g, '').trim();
+    const withoutTopLevelStyles = stripTopLevelStyleBlocks(withoutComments);
     const fragmentTags = '(?:article|aside|blockquote|button|caption|details|div|figure|figcaption|footer|form|h[1-6]|header|label|li|main|meter|nav|ol|p|progress|section|select|span|summary|table|tbody|td|tfoot|th|thead|tr|ul)';
     const sameRoot = new RegExp(`^<(${fragmentTags})(?:\\s[^>]*)?>[\\s\\S]*<\\/\\1>$`, 'i');
     const container = new RegExp(`^<${fragmentTags}(?:\\s[^>]*)?>[\\s\\S]*<\\/${fragmentTags}>$`, 'i');
-    return sameRoot.test(withoutComments) || container.test(withoutComments);
+    return sameRoot.test(withoutTopLevelStyles) || container.test(withoutTopLevelStyles);
 }
 
 function isLikelyStreamingHtmlArtifact(code) {
     const normalized = String(code || '').trim();
-    if (!normalized || /<(?:script|style|iframe|object|embed)\b/i.test(normalized)) return false;
+    if (!normalized || /<(?:script|iframe|object|embed)\b/i.test(normalized)) return false;
     if (/^(?:<!doctype\s+html\b[^>]*>\s*)?(?:<html\b|<head\b|<body\b)/i.test(normalized)) return true;
-    return /^(?:<!--[\s\S]*?-->\s*)?<(?:article|aside|blockquote|button|caption|details|div|figure|figcaption|footer|form|h[1-6]|header|label|li|main|meter|nav|ol|p|progress|section|select|span|summary|table|tbody|td|tfoot|th|thead|tr|ul)(?:\s[^>]*)?>/i.test(normalized);
+    return /^(?:<!--[\s\S]*?-->\s*)?<(?:style|article|aside|blockquote|button|caption|details|div|figure|figcaption|footer|form|h[1-6]|header|label|li|main|meter|nav|ol|p|progress|section|select|span|summary|table|tbody|td|tfoot|th|thead|tr|ul)(?:\s[^>]*)?>/i.test(normalized);
+}
+
+function stripTopLevelStyleBlocks(code) {
+    let text = String(code || '').trim();
+    const styleBlock = /<style\b[^>]*>[\s\S]*?<\/style>/i;
+    while (styleBlock.test(text)) {
+        const next = text
+            .replace(/^\s*<style\b[^>]*>[\s\S]*?<\/style>\s*/i, '')
+            .replace(/\s*<style\b[^>]*>[\s\S]*?<\/style>\s*$/i, '')
+            .trim();
+        if (next === text) break;
+        text = next;
+    }
+    return text;
 }
 
 function shouldMergeSupportingBlocks(block, language) {
@@ -858,6 +896,7 @@ function syncRegistryForMessage(messageId, artifacts) {
 
 function clearArtifactControls(container) {
     container.querySelectorAll('.live-artifacts-strip').forEach(el => el.remove());
+    container.querySelectorAll('.live-artifact-source-strip').forEach(el => el.remove());
     container.querySelectorAll('.live-artifact-open-btn').forEach(el => el.remove());
     container.querySelectorAll('.live-artifact-support-block').forEach((el) => {
         el.classList.remove('live-artifact-support-block');
@@ -963,6 +1002,113 @@ function postInlineArtifactStream(frame, html) {
     };
     send();
     setTimeout(send, 0);
+}
+
+function normalizeArtifactSources(sources) {
+    if (!Array.isArray(sources)) return [];
+    return sources
+        .map((source, index) => ({
+            id: String(source?.id ?? index + 1).trim() || String(index + 1),
+            title: String(source?.title || source?.url || `Source ${index + 1}`).replace(/\s+/g, ' ').trim(),
+            url: String(source?.url || '').trim(),
+        }))
+        .filter(source => source.title || source.url);
+}
+
+function getSafeSourceUrl(url) {
+    try {
+        const raw = String(url || '').trim();
+        const parsed = new URL(raw);
+        return ['http:', 'https:'].includes(parsed.protocol) ? raw : '';
+    } catch {
+        return '';
+    }
+}
+
+function getSourceHost(url) {
+    try {
+        return new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+        return '';
+    }
+}
+
+function getCitedSourceIds(code) {
+    const ids = new Set();
+    const regex = /\[(\d+(?:\s*,\s*\d+)*)\]/g;
+    let match;
+    while ((match = regex.exec(String(code || ''))) !== null) {
+        match[1].split(',').forEach(id => {
+            const trimmed = id.trim();
+            if (trimmed) ids.add(trimmed);
+        });
+    }
+    return ids;
+}
+
+function selectArtifactSources(artifact, sources) {
+    if (!artifact || sources.length === 0) return [];
+    const citedIds = getCitedSourceIds(artifact.code);
+    const selected = citedIds.size > 0
+        ? sources.filter(source => citedIds.has(String(source.id)))
+        : sources;
+    return selected.slice(0, 8);
+}
+
+function renderLiveArtifactSources(container, artifact, sources) {
+    container.querySelectorAll('.live-artifact-source-strip').forEach(el => el.remove());
+    const selected = selectArtifactSources(artifact, sources);
+    if (selected.length === 0) return;
+
+    const strip = document.createElement('div');
+    strip.className = 'live-artifact-source-strip';
+    strip.setAttribute('aria-label', '搜索来源');
+
+    const header = document.createElement('div');
+    header.className = 'live-artifact-source-header';
+    const icon = document.createElement('span');
+    icon.className = 'material-symbols-rounded';
+    icon.textContent = 'travel_explore';
+    const label = document.createElement('span');
+    label.textContent = '搜索来源';
+    const count = document.createElement('span');
+    count.className = 'live-artifact-source-count';
+    count.textContent = `${selected.length} 个`;
+    header.append(icon, label, count);
+    strip.appendChild(header);
+
+    const list = document.createElement('div');
+    list.className = 'live-artifact-source-list';
+    selected.forEach((source) => {
+        const safeUrl = getSafeSourceUrl(source.url);
+        const item = safeUrl ? document.createElement('a') : document.createElement('span');
+        item.className = safeUrl ? 'live-artifact-source-chip' : 'live-artifact-source-chip is-disabled';
+        if (safeUrl) {
+            item.href = safeUrl;
+            item.target = '_blank';
+            item.rel = 'noopener noreferrer';
+        }
+
+        const id = document.createElement('span');
+        id.className = 'live-artifact-source-id';
+        id.textContent = `[${source.id}]`;
+        const title = document.createElement('span');
+        title.className = 'live-artifact-source-title';
+        title.textContent = source.title || source.url || `Source ${source.id}`;
+        item.title = title.textContent;
+
+        item.append(id, title);
+        const host = safeUrl ? getSourceHost(safeUrl) : '';
+        if (host) {
+            const hostEl = document.createElement('span');
+            hostEl.className = 'live-artifact-source-host';
+            hostEl.textContent = host;
+            item.appendChild(hostEl);
+        }
+        list.appendChild(item);
+    });
+    strip.appendChild(list);
+    container.appendChild(strip);
 }
 
 function renderLiveArtifactInteraction(container, spec) {

@@ -1,4 +1,4 @@
-import { state, setSettings } from './state.js';
+import { state, setSettings } from './state.js?v=1';
 import { authFetch } from './auth.js?v=1';
 import { applyTheme } from './utils.js';
 

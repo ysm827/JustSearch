@@ -349,6 +349,15 @@ class TestLiveArtifactsAnswerFormatting:
         assert artifact.startswith("<section")
         assert "```" not in artifact
 
+    def test_fenced_full_html_document_is_preserved(self):
+        artifact = ensure_live_artifact_answer(
+            "```html\n<!doctype html><html><head><title>Demo</title></head><body><main>Ready</main></body></html>\n```"
+        )
+
+        assert artifact.startswith("<!doctype html>")
+        assert "<main>Ready</main>" in artifact
+        assert "&lt;html" not in artifact
+
     def test_generate_answer_uses_live_artifacts_prompt_and_fallback(self):
         import asyncio
 
@@ -402,3 +411,106 @@ class TestLiveArtifactsAnswerFormatting:
         assert "The actual answer content in Markdown" not in system_prompt
         assert result["answer"].startswith('<section style="display:block;width:100%;')
         assert "<h2>结论</h2>" in result["answer"]
+
+    def test_live_artifacts_markdown_fallback_is_not_streamed_as_markdown(self):
+        import asyncio
+
+        class FakeStream:
+            def __init__(self, chunks):
+                self._chunks = chunks
+
+            def __aiter__(self):
+                self._iter = iter(self._chunks)
+                return self
+
+            async def __anext__(self):
+                try:
+                    content = next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content=content),
+                            finish_reason=None,
+                        )
+                    ]
+                )
+
+        class FakeCompletions:
+            async def create(self, model, messages, stream):
+                return FakeStream(
+                    [
+                        "Status: sufficient\nMissing_Info: \nAnswer:\n",
+                        "## 结论\n- Markdown 兜底最终会转为 artifact [1]",
+                    ]
+                )
+
+        chunks = []
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        client.client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+
+        result = asyncio.run(
+            client.generate_answer(
+                "测试 Live Artifacts",
+                [{"id": 1, "title": "fixture", "content": "source", "url": "https://example.test"}],
+                stream_callback=chunks.append,
+                live_artifacts_mode=True,
+            )
+        )
+
+        assert chunks == []
+        assert result["answer"].startswith('<section style="display:block;width:100%;')
+
+    def test_live_artifacts_fenced_html_streams_for_preview(self):
+        import asyncio
+
+        class FakeStream:
+            def __init__(self, chunks):
+                self._chunks = chunks
+
+            def __aiter__(self):
+                self._iter = iter(self._chunks)
+                return self
+
+            async def __anext__(self):
+                try:
+                    content = next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content=content),
+                            finish_reason=None,
+                        )
+                    ]
+                )
+
+        class FakeCompletions:
+            async def create(self, model, messages, stream):
+                return FakeStream(
+                    [
+                        "Status: sufficient\nMissing_Info: \nAnswer:\n",
+                        "```html\n",
+                        "<section style=\"display:block;width:100%\"><h2>Live</h2></section>\n```",
+                    ]
+                )
+
+        chunks = []
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        client.client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+
+        result = asyncio.run(
+            client.generate_answer(
+                "测试 Live Artifacts",
+                [{"id": 1, "title": "fixture", "content": "source", "url": "https://example.test"}],
+                stream_callback=chunks.append,
+                live_artifacts_mode=True,
+            )
+        )
+
+        streamed = "".join(chunks)
+        assert "```html" in streamed
+        assert "<section" in streamed
+        assert result["answer"].startswith("<section")
