@@ -142,9 +142,9 @@ async def get_chat_groups_endpoint():
 
 
 @router.post("/api/history/groups")
-async def create_chat_group_endpoint(body: dict = Body(default={})):
-    title = body.get("title", "新分组") if isinstance(body, dict) else "新分组"
-    return await create_chat_group(str(title))
+async def create_chat_group_endpoint(body: object = Body(default=None)):
+    title = _body_text(body, "title", "新分组") or "新分组"
+    return await create_chat_group(title)
 
 
 @router.patch("/api/history/groups/{group_id}")

@@ -497,6 +497,51 @@ def test_chat_groups_can_manage_sessions(tmp_path):
     asyncio.run(run())
 
 
+def test_create_chat_group_endpoint_normalizes_title_payloads(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            missing_body = await client.post("/api/history/groups")
+            null_title = await client.post("/api/history/groups", json={"title": None})
+            blank_title = await client.post("/api/history/groups", json={"title": "   "})
+            numeric_title = await client.post("/api/history/groups", json={"title": 12345})
+
+        assert missing_body.status_code == 200
+        assert null_title.status_code == 200
+        assert blank_title.status_code == 200
+        assert numeric_title.status_code == 200
+        assert missing_body.json()["title"] == "新分组"
+        assert null_title.json()["title"] == "新分组"
+        assert blank_title.json()["title"] == "新分组"
+        assert numeric_title.json()["title"] == "12345"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_delete_chat_endpoint_returns_404_for_missing_session(tmp_path):
     from backend.app import database
     from backend.app.routers.history import router
