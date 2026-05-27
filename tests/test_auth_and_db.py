@@ -1369,6 +1369,54 @@ def test_workflow_step_model_resolution_reuses_fallback_api_key(monkeypatch):
     assert resolved["relevance"]["api_key"] == "deepseek-key-1"
 
 
+def test_workflow_step_model_resolution_uses_selected_provider_default_model(monkeypatch):
+    from backend.app.routers.chat import _resolve_workflow_step_models
+
+    async def fake_next_api_key(api_keys):
+        return api_keys.split(",", 1)[0]
+
+    monkeypatch.setattr("backend.app.routers.chat.get_next_api_key", fake_next_api_key)
+
+    settings = {
+        "providers": [
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "api_key": "openai-key",
+                "base_url": "https://api.openai.com/v1",
+                "model_id": "gpt-4.1",
+            },
+            {
+                "id": "deepseek",
+                "name": "DeepSeek",
+                "api_key": "deepseek-key",
+                "base_url": "https://api.deepseek.com/v1",
+                "model_id": "deepseek-chat, deepseek-reasoner",
+            },
+        ],
+        "workflow_step_models": {
+            "analysis": {"provider_id": "deepseek", "model_id": ""},
+            "relevance": {"provider_id": "", "model_id": ""},
+            "interaction": {"provider_id": "", "model_id": ""},
+            "answer": {"provider_id": "", "model_id": ""},
+        },
+    }
+
+    resolved = asyncio.run(
+        _resolve_workflow_step_models(
+            settings,
+            "openai",
+            "openai-key",
+            "gpt-4.1",
+        )
+    )
+
+    assert resolved["analysis"]["provider_id"] == "deepseek"
+    assert resolved["analysis"]["model"] == "deepseek-chat"
+    assert resolved["relevance"]["provider_id"] == "openai"
+    assert resolved["relevance"]["model"] == "gpt-4.1"
+
+
 def test_workflow_step_model_resolution_allows_empty_local_api_key():
     from backend.app.routers.chat import _resolve_workflow_step_models
 
@@ -1438,6 +1486,41 @@ def test_workflow_step_model_resolution_rejects_remote_provider_without_api_key(
         assert exc.detail == "请先在设置中配置 API 密钥（DeepSeek）。"
     else:
         raise AssertionError("expected missing remote provider key to be rejected")
+
+
+def test_workflow_step_model_resolution_rejects_unsupported_step_model():
+    from fastapi import HTTPException
+    from backend.app.routers.chat import _resolve_workflow_step_models
+
+    settings = {
+        "providers": [
+            {
+                "id": "google",
+                "name": "Google",
+                "api_key": "google-key",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                "model_id": "gemini-2.5-pro",
+            },
+        ],
+        "workflow_step_models": {
+            "analysis": {"provider_id": "google", "model_id": "gemini-2.5-pro"},
+        },
+    }
+
+    try:
+        asyncio.run(
+            _resolve_workflow_step_models(
+                settings,
+                "google",
+                "google-key",
+                "gemini-2.5-pro",
+            )
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert exc.detail == "Gemini 2.5 系列模型不再支持"
+    else:
+        raise AssertionError("expected unsupported workflow step model to be rejected")
 
 
 def test_chat_endpoint_rejects_remote_provider_without_api_key(tmp_path, monkeypatch):

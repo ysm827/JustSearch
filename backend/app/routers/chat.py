@@ -70,15 +70,26 @@ async def _resolve_workflow_step_models(
         if not isinstance(raw_step, dict):
             raw_step = {}
 
-        provider_id = str(raw_step.get("provider_id") or fallback_provider_id).strip()
+        configured_provider_id = str(raw_step.get("provider_id") or "").strip()
+        provider_id = configured_provider_id or fallback_provider_id
         provider = get_provider_by_id(settings, provider_id)
         if not provider:
             raise HTTPException(status_code=400, detail=f"步骤 {step_id} 的 provider 不存在: {provider_id}")
         require_provider_api_key(provider, f"步骤 {step_id} 的 provider")
 
-        model = first_model_id(raw_step.get("model_id") or fallback_model or provider.get("model_id", ""))
+        configured_model = raw_step.get("model_id") or raw_step.get("model") or ""
+        model_source = configured_model
+        if not model_source:
+            model_source = (
+                fallback_model
+                if not configured_provider_id or configured_provider_id == fallback_provider_id
+                else provider.get("model_id", "")
+            )
+        model = first_model_id(model_source)
         if not model:
             raise HTTPException(status_code=400, detail=f"步骤 {step_id} 缺少模型配置")
+        if is_unsupported_model_id(model):
+            raise HTTPException(status_code=400, detail="Gemini 2.5 系列模型不再支持")
 
         if provider_id not in provider_key_cache:
             raw_api_key = str(provider.get("api_key", "")).strip()
