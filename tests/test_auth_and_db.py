@@ -2131,6 +2131,40 @@ def test_chat_endpoint_rejects_remote_provider_without_api_key(tmp_path, monkeyp
     asyncio.run(run())
 
 
+def test_chat_endpoint_rejects_blank_query_before_settings_lookup(monkeypatch):
+    from backend.app.routers.chat import router
+
+    async def unexpected_load_settings():
+        raise AssertionError("blank query should fail before settings are loaded")
+
+    class UnexpectedWorkflow:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("blank query should fail before workflow starts")
+
+    async def run():
+        monkeypatch.setattr("backend.app.routers.chat.load_settings", unexpected_load_settings)
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "   \n\t  ",
+                    "session_id": "blank-query-test",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "query 不能为空"
+
+    asyncio.run(run())
+
+
 def test_chat_endpoint_rejects_route_unsafe_session_id(tmp_path, monkeypatch):
     from backend.app import database
     from backend.app.routers.chat import router

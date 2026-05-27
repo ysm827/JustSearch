@@ -263,6 +263,10 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     import uuid
     set_request_id(uuid.uuid4().hex[:8])
 
+    query_text = request.query.strip()
+    if not query_text:
+        raise HTTPException(status_code=400, detail="query 不能为空")
+
     # Rate limiting
     client_host = http_request.client.host if http_request.client else "global"
     allowed, retry_after = chat_limiter.check(client_host)
@@ -332,7 +336,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         live_artifacts_mode = True
 
     logger.info("[Chat] New request: session=%s, provider=%s, query='%s', engine=%s, model=%s",
-                session_id, provider_id, request.query[:80], search_engine, model)
+                session_id, provider_id, query_text[:80], search_engine, model)
 
     try:
         workflow = SearchWorkflow(
@@ -375,7 +379,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
             queue.put_nowait({"type": "stats", "content": stats})
 
         task = asyncio.create_task(
-            workflow.run(request.query, progress_callback, stream_callback,
+            workflow.run(query_text, progress_callback, stream_callback,
                          context_messages, source_callback, stats_callback)
         )
 
@@ -414,7 +418,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
                 existing_messages = existing_data.get("messages", []) if existing_data else []
 
                 new_messages = [
-                    {"role": "user", "content": request.query},
+                    {"role": "user", "content": query_text},
                     {"role": "assistant", "content": result, "logs": logs, "sources": accumulated_sources, "stats": final_stats},
                 ]
 
@@ -423,8 +427,8 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
                 
                 # Auto-generate title from first user message if not set
                 if not title and not existing_messages:
-                    title = request.query[:50]
-                    if len(request.query) > 50:
+                    title = query_text[:50]
+                    if len(query_text) > 50:
                         # Try to break at a sentence boundary
                         last_punct = max(title.rfind('。'), title.rfind('.'), title.rfind('？'), title.rfind('?'), title.rfind('！'), title.rfind('!'))
                         if last_punct > 10:
