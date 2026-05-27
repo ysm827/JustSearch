@@ -34,6 +34,15 @@ function installBrowserGlobals(html = '<!doctype html><body></body>') {
     globalThis.HTMLSelectElement = dom.window.HTMLSelectElement;
     globalThis.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
     globalThis.NodeFilter = dom.window.NodeFilter;
+    globalThis.history = dom.window.history;
+    globalThis.location = dom.window.location;
+    if (!dom.window.HTMLElement.prototype.scrollTo) {
+        dom.window.HTMLElement.prototype.scrollTo = function scrollTo(options = {}) {
+            if (typeof options === 'object' && options !== null && Number.isFinite(options.top)) {
+                this.scrollTop = options.top;
+            }
+        };
+    }
     Object.defineProperty(globalThis, 'navigator', {
         value: dom.window.navigator,
         configurable: true,
@@ -186,7 +195,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=14');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=15');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -320,6 +329,22 @@ test('Live Artifact citation linker skips unsafe urls and existing links', () =>
     assert.equal(container.querySelector('code').textContent, '[2]');
     assert.equal(container.querySelector('a[href="https://existing.example"]').textContent, '[2]');
     assert.equal(container.innerHTML.includes('javascript:alert'), false);
+});
+
+test('Live Artifact citation linker normalizes bare-domain source urls', () => {
+    installBrowserGlobals();
+
+    const html = linkArtifactCitationsInHtml('<section>官网 [2]</section>', [
+        { id: 2, title: 'Linux Do', url: 'linux.do/' },
+    ]);
+    const container = document.createElement('div');
+    container.innerHTML = html;
+
+    const citation = container.querySelector('.live-artifact-citation-link');
+    assert.ok(citation);
+    assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+    assert.equal(citation.getAttribute('data-live-artifact-source-url'), 'https://linux.do/');
+    assert.equal(citation.getAttribute('target'), '_blank');
 });
 
 test('streamChat sends live_artifacts_mode without the old Canvas request field', async () => {
@@ -557,9 +582,101 @@ test('explicit artifact metadata can declare HTML renderability', () => {
     assert.match(artifacts[0].srcdoc, /<section><h1>Metric<\/h1><\/section>/);
 });
 
+test('streaming chat re-renders citations when sources arrive after answer chunks', async () => {
+    const originalFetch = globalThis.fetch;
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <select id="model-select">
+                <option value="model-a" data-provider-id="provider-a">Model A</option>
+            </select>
+            <button id="send-btn"><span class="material-symbols-rounded">send</span></button>
+            <textarea id="user-input"></textarea>
+            <div id="chat-container"></div>
+            <section id="hero-section"></section>
+            <button id="new-chat-btn"></button>
+        </body>
+    `);
+
+    try {
+        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=1');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=11');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=15');
+        const encoder = new TextEncoder();
+        const events = [
+            { type: 'meta', session_id: 'late-sources-session' },
+            { type: 'answer_chunk', content: '官网 [2]' },
+            { type: 'sources', content: [{ id: 2, title: 'Linux Do', url: 'linux.do/' }] },
+            { type: 'answer', content: '官网 [2]', session_id: 'late-sources-session' },
+        ]
+            .map(event => `data: ${JSON.stringify(event)}\n\n`)
+            .join('') + 'data: [DONE]\n\n';
+
+        setCurrentSessionId(null);
+        setLiveArtifactsMode(false);
+        state.settings = {
+            default_provider_id: 'provider-a',
+            search_engine: 'searxng',
+            max_results: 10,
+            max_iterations: 3,
+            interactive_search: true,
+            max_concurrent_pages: 4,
+        };
+
+        globalThis.fetch = async (input) => {
+            const url = String(input);
+            if (url === '/api/chat') {
+                return new Response(new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(encoder.encode(events));
+                        controller.close();
+                    },
+                }), { status: 200 });
+            }
+            if (url === '/api/history' || url === '/api/history/groups') {
+                return new Response(JSON.stringify([]), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        };
+
+        const testElements = {
+            chatContainer: document.getElementById('chat-container'),
+            userInput: document.getElementById('user-input'),
+            sendBtn: document.getElementById('send-btn'),
+            heroSection: document.getElementById('hero-section'),
+            newChatBtn: document.getElementById('new-chat-btn'),
+        };
+        Object.assign(elements, testElements);
+        setupChatHandler(testElements, () => {});
+
+        const input = document.getElementById('user-input');
+        input.value = 'linuxdo是什么';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('send-btn').click();
+
+        for (let i = 0; i < 20; i += 1) {
+            const citation = document.querySelector('.message-answer-body .citation-link');
+            if (citation) break;
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        const citation = document.querySelector('.message-answer-body .citation-link');
+        const reference = document.querySelector('.message-answer-body li#ref-2 a');
+        assert.ok(citation);
+        assert.equal(citation.textContent.trim(), '2');
+        assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+        assert.equal(reference.getAttribute('href'), 'https://linux.do/');
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
 test('citation rendering resolves sparse source ids instead of array positions', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=3');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=4');
 
     const html = renderWithCitations('Sparse citation [4]', [
         { id: 2, title: 'Second', url: 'https://two.example' },
@@ -575,9 +692,30 @@ test('citation rendering resolves sparse source ids instead of array positions',
     assert.equal(container.querySelector('li#ref-4 a').textContent, 'Fourth');
 });
 
+test('citation rendering normalizes bare-domain source urls', async () => {
+    installBrowserGlobals();
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=4');
+
+    const html = renderWithCitations('官网 [2]', [
+        { id: 2, title: 'Linux Do', url: 'linux.do/' },
+    ]);
+    const container = document.createElement('div');
+    container.innerHTML = html;
+
+    const citation = container.querySelector('.citation-link');
+    const reference = container.querySelector('li#ref-2 a');
+
+    assert.ok(citation);
+    assert.equal(citation.textContent.trim(), '2');
+    assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+    assert.equal(citation.getAttribute('target'), '_blank');
+    assert.equal(reference.getAttribute('href'), 'https://linux.do/');
+    assert.equal(reference.getAttribute('target'), '_blank');
+});
+
 test('citation rendering neutralizes non-http source urls', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=3');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=4');
 
     const html = renderWithCitations('Unsafe citation [1]', [
         { id: 1, title: 'Unsafe', url: 'javascript:alert(1)' },

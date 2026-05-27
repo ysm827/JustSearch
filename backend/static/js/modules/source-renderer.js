@@ -5,11 +5,20 @@ const _faviconCache = new Map();
 function getSafeExternalUrl(url) {
     try {
         const rawUrl = String(url || '').trim();
-        const parsedUrl = new URL(rawUrl);
+        if (!rawUrl) return '';
+
+        let candidate = rawUrl;
+        if (rawUrl.startsWith('//')) {
+            candidate = `https:${rawUrl}`;
+        } else if (!/^[a-z][a-z0-9+.-]*:/i.test(rawUrl) && /^[^\s/?#]+\.[^\s]+/.test(rawUrl)) {
+            candidate = `https://${rawUrl}`;
+        }
+
+        const parsedUrl = new URL(candidate);
         if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
             return '';
         }
-        return rawUrl;
+        return candidate;
     } catch {
         return '';
     }
@@ -48,7 +57,7 @@ export function renderWithCitations(text, sources) {
     if (!sources || sources.length === 0) return html;
     const sourceById = new Map(
         sources
-            .map((source, index) => [String(source.id ?? index + 1), source])
+            .map((source, index) => [String(source.id ?? index + 1).trim(), source])
     );
 
     const div = document.createElement('div');
@@ -155,7 +164,8 @@ export function renderWithCitations(text, sources) {
             li.id = `ref-${source.id ?? idx + 1}`;
             li.value = Number(source.id) || idx + 1;
 
-            const faviconUrl = getFaviconUrl(source.url);
+            const safeUrl = getSafeExternalUrl(source.url);
+            const faviconUrl = getFaviconUrl(safeUrl);
             if (faviconUrl) {
                 const img = document.createElement('img');
                 img.src = faviconUrl;
@@ -167,7 +177,6 @@ export function renderWithCitations(text, sources) {
             }
 
             const anchor = document.createElement('a');
-            const safeUrl = getSafeExternalUrl(source.url);
             anchor.href = safeUrl || '#';
             anchor.textContent = source.title || source.url;
             if (safeUrl) {

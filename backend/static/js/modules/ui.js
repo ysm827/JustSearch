@@ -5,8 +5,8 @@ import {
     createMessageActionRail,
     createRegenerateButton
 } from './utils.js?v=3';
-import { extractSources, renderWithCitations } from './source-renderer.js?v=3';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=4';
+import { extractSources, renderWithCitations } from './source-renderer.js?v=4';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=5';
 import { state } from './state.js?v=1';
 
 const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;

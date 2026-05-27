@@ -1156,8 +1156,17 @@ function normalizeArtifactSources(sources) {
 function getSafeSourceUrl(url) {
     try {
         const raw = String(url || '').trim();
-        const parsed = new URL(raw);
-        return ['http:', 'https:'].includes(parsed.protocol) ? raw : '';
+        if (!raw) return '';
+
+        let candidate = raw;
+        if (raw.startsWith('//')) {
+            candidate = `https:${raw}`;
+        } else if (!/^[a-z][a-z0-9+.-]*:/i.test(raw) && /^[^\s/?#]+\.[^\s]+/.test(raw)) {
+            candidate = `https://${raw}`;
+        }
+
+        const parsed = new URL(candidate);
+        return ['http:', 'https:'].includes(parsed.protocol) ? candidate : '';
     } catch {
         return '';
     }

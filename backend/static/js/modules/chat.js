@@ -1,9 +1,9 @@
 import { state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=1';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
-import { updateActiveHistoryItem } from './history-view.js?v=19';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=10';
-import { renderWithCitations } from './source-renderer.js?v=3';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=4';
+import { updateActiveHistoryItem } from './history-view.js?v=20';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=11';
+import { renderWithCitations } from './source-renderer.js?v=4';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=5';
 import { showToast } from './toast.js';
 import * as API from './api.js?v=2';
 
@@ -157,6 +157,17 @@ export function setupChatHandler(elements, renderHistory) {
         let searchStats = null;
         let searchStartTime = Date.now();
 
+        function renderCurrentAssistantAnswer(isStreaming) {
+            if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, isStreaming)) {
+                contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
+            }
+            renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
+                messageId: liveArtifactMessageId,
+                isStreaming,
+                sources: currentSources,
+            });
+        }
+
         // 重置滚动跟踪（新一轮对话）
         userScrolled = false;
 
@@ -210,12 +221,9 @@ export function setupChatHandler(elements, renderHistory) {
                 },
                 onSources: (sources) => {
                     currentSources = sources;
-                    if (currentAnswerBuffer && getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, true)) {
-                        renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
-                            messageId: liveArtifactMessageId,
-                            isStreaming: true,
-                            sources: currentSources,
-                        });
+                    if (currentAnswerBuffer) {
+                        renderCurrentAssistantAnswer(true);
+                        if (!userScrolled) scrollToBottom();
                     }
                 },
                 onStats: (stats) => {
@@ -227,26 +235,12 @@ export function setupChatHandler(elements, renderHistory) {
                         contentWrapper.innerHTML = '';
                     }
                     currentAnswerBuffer += chunk;
-                    if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, true)) {
-                        contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
-                    }
-                    renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
-                        messageId: liveArtifactMessageId,
-                        isStreaming: true,
-                        sources: currentSources,
-                    });
+                    renderCurrentAssistantAnswer(true);
                     if (!userScrolled) scrollToBottom();
                 },
                 onAnswer: (finalAnswer, sessionId) => {
                     currentAnswerBuffer = finalAnswer;
-                    if (!getInlineLiveArtifact(finalAnswer, liveArtifactMessageId, false)) {
-                        contentWrapper.innerHTML = renderWithCitations(finalAnswer, currentSources);
-                    }
-                    renderLiveArtifactsForMessage(contentWrapper, finalAnswer, {
-                        messageId: liveArtifactMessageId,
-                        isStreaming: false,
-                        sources: currentSources,
-                    });
+                    renderCurrentAssistantAnswer(false);
                     setCurrentSessionId(sessionId);
                     refreshHistory();
                 },
