@@ -582,6 +582,74 @@ def test_import_history_package_ignores_non_scalar_group_id(tmp_path):
     asyncio.run(run())
 
 
+def test_import_history_package_ignores_route_unsafe_ids(tmp_path):
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+
+        summary = await database.import_history_package(
+            {
+                "type": "JustSearch-History",
+                "version": 1,
+                "groups": [
+                    {"id": "bad/group", "title": "Bad Group"},
+                    {"id": "good-group", "title": "Good Group"},
+                ],
+                "history": [
+                    {
+                        "id": "bad/session",
+                        "title": "Bad Session",
+                        "messages": [{"role": "user", "content": "bad"}],
+                    },
+                    {
+                        "id": "also\\bad",
+                        "title": "Bad Backslash",
+                        "messages": [{"role": "user", "content": "bad"}],
+                    },
+                    {
+                        "id": "good-session",
+                        "title": "Good Session",
+                        "group_id": "bad/group",
+                        "messages": [{"role": "user", "content": "good"}],
+                    },
+                ],
+            }
+        )
+
+        imported = await database.load_chat_history("good-session")
+        groups = await database.list_chat_groups()
+
+        assert summary == {
+            "imported_sessions": 1,
+            "skipped_sessions": 0,
+            "imported_groups": 1,
+            "skipped_groups": 0,
+        }
+        assert await database.load_chat_history("bad/session") is None
+        assert await database.load_chat_history("also\\bad") is None
+        assert imported["title"] == "Good Session"
+        assert imported["group_id"] is None
+        assert [group["id"] for group in groups] == ["good-group"]
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_history_import_endpoint_accepts_json_package(tmp_path):
     from backend.app import database
     from backend.app.routers.history import router

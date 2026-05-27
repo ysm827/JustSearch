@@ -22,6 +22,8 @@ from .legacy_migration import migrate_legacy_data
 
 logger = logging.getLogger(__name__)
 
+_ROUTE_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
 
 def _utc_now() -> datetime:
     """Return a naive UTC datetime for SQLite storage."""
@@ -578,7 +580,7 @@ async def export_history_package() -> Dict[str, Any]:
 
 
 def _normalize_imported_group(group: dict) -> Optional[Dict[str, Any]]:
-    group_id = str(group.get("id", "")).strip()
+    group_id = _normalize_route_safe_id(group.get("id", ""))
     if not group_id:
         return None
     timestamp = _parse_imported_timestamp(group.get("timestamp"))
@@ -615,13 +617,23 @@ def _normalize_optional_id(value: Any) -> Optional[str]:
     if value is None:
         return None
     if isinstance(value, (str, int, float)) and not isinstance(value, bool):
-        normalized = str(value).strip()
-        return normalized or None
+        return _normalize_route_safe_id(value)
     return None
 
 
+def _normalize_route_safe_id(value: Any) -> Optional[str]:
+    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    if not _ROUTE_SAFE_ID_RE.fullmatch(normalized):
+        return None
+    return normalized
+
+
 def _normalize_imported_chat(chat: dict) -> Optional[Dict[str, Any]]:
-    session_id = str(chat.get("id", "")).strip()
+    session_id = _normalize_route_safe_id(chat.get("id", ""))
     messages = chat.get("messages")
     if not session_id or not isinstance(messages, list) or not messages:
         return None
