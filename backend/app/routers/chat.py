@@ -141,10 +141,18 @@ def _coerce_bool(value, default: bool = False) -> bool:
     return bool(value)
 
 
+def _text_setting(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def _resolve_search_engine(requested: str | None, saved: str | None) -> str:
     valid_engines = set(get_all_engines())
-    engine = (requested or saved or "searxng").strip()
-    if requested and engine not in valid_engines:
+    requested_engine = _text_setting(requested)
+    saved_engine = _text_setting(saved)
+    engine = requested_engine or saved_engine or "searxng"
+    if requested_engine and engine not in valid_engines:
         raise HTTPException(
             status_code=400,
             detail=f"不支持的搜索引擎。可选: {', '.join(sorted(valid_engines))}",
