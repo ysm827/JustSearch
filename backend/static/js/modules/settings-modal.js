@@ -538,12 +538,7 @@ async function checkSearchEngines(e) {
     }
     if (resultsEl) {
         resultsEl.classList.add('active');
-        resultsEl.innerHTML = `
-            <div class="engine-check-pending">
-                <span class="material-symbols-rounded">progress_activity</span>
-                <span>正在检测搜索引擎...</span>
-            </div>
-        `;
+        renderEngineCheckStatus(resultsEl, 'engine-check-pending', 'progress_activity', '正在检测搜索引擎...');
     }
 
     try {
@@ -577,39 +572,74 @@ function renderEngineCheckResults(data) {
 
     const results = Array.isArray(data.results) ? data.results : [];
     resultsEl.classList.add('active');
+    resultsEl.replaceChildren();
 
     if (results.length === 0) {
-        resultsEl.innerHTML = `
-            <div class="engine-check-empty">
-                <span class="material-symbols-rounded">error</span>
-                <span>暂无检测结果</span>
-            </div>
-        `;
+        renderEngineCheckStatus(resultsEl, 'engine-check-empty', 'error', '暂无检测结果');
         return;
     }
 
-    const query = data.query ? `<div class="engine-check-query">测试词：${escapeHtml(data.query)}</div>` : '';
-    const items = results.map(result => {
+    if (data.query) {
+        const queryEl = document.createElement('div');
+        queryEl.className = 'engine-check-query';
+        queryEl.textContent = `测试词：${data.query}`;
+        resultsEl.appendChild(queryEl);
+    }
+
+    const list = document.createElement('div');
+    list.className = 'engine-check-list';
+
+    results.forEach(result => {
         const available = Boolean(result.available);
         const statusClass = available ? 'available' : 'unavailable';
         const icon = available ? 'check_circle' : 'error';
         const label = getEngineDisplayName(result.engine);
+        const resultCount = Number(result.result_count || 0);
         const detail = available
-            ? `可用 · ${Number(result.result_count || 0)} 个结果`
-            : `不可用 · ${escapeHtml(result.error || '未解析到搜索结果')}`;
+            ? `可用 · ${Number.isFinite(resultCount) ? resultCount : 0} 个结果`
+            : `不可用 · ${result.error || '未解析到搜索结果'}`;
 
-        return `
-            <div class="engine-check-result ${statusClass}">
-                <span class="material-symbols-rounded">${icon}</span>
-                <div class="engine-check-copy">
-                    <div class="engine-check-name">${escapeHtml(label)}</div>
-                    <div class="engine-check-detail">${detail}</div>
-                </div>
-            </div>
-        `;
-    }).join('');
+        const item = document.createElement('div');
+        item.className = `engine-check-result ${statusClass}`;
 
-    resultsEl.innerHTML = `${query}<div class="engine-check-list">${items}</div>`;
+        const iconEl = document.createElement('span');
+        iconEl.className = 'material-symbols-rounded';
+        iconEl.textContent = icon;
+
+        const copy = document.createElement('div');
+        copy.className = 'engine-check-copy';
+
+        const name = document.createElement('div');
+        name.className = 'engine-check-name';
+        name.textContent = label;
+
+        const detailEl = document.createElement('div');
+        detailEl.className = 'engine-check-detail';
+        detailEl.textContent = detail;
+
+        copy.append(name, detailEl);
+        item.append(iconEl, copy);
+        list.appendChild(item);
+    });
+
+    resultsEl.appendChild(list);
+}
+
+function renderEngineCheckStatus(resultsEl, className, icon, message) {
+    resultsEl.replaceChildren();
+
+    const wrapper = document.createElement('div');
+    wrapper.className = className;
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'material-symbols-rounded';
+    iconEl.textContent = icon;
+
+    const copy = document.createElement('span');
+    copy.textContent = message;
+
+    wrapper.append(iconEl, copy);
+    resultsEl.appendChild(wrapper);
 }
 
 function getEngineDisplayName(engine) {
@@ -1313,6 +1343,7 @@ function escapeHtml(str) {
 export const __settingsModalTestHooks = {
     collectProvidersForm,
     collectWorkflowStepModels,
+    renderEngineCheckResults,
     renderProviderList,
     renderWorkflowStepModels,
 };

@@ -11,6 +11,7 @@ function installBrowserGlobals() {
         <body>
             <div id="provider-list-container"></div>
             <div id="workflow-step-models-container"></div>
+            <div id="engine-check-results"></div>
             <span id="provider-count-label"></span>
         </body>
     `, { url: 'http://localhost/' });
@@ -161,4 +162,36 @@ test('provider rendering tolerates non-string settings values and escapes markup
     assert.equal(card.querySelector('img'), null);
     assert.equal(card.querySelector('script'), null);
     assert.equal(card.querySelector('b'), null);
+});
+
+test('engine check results render untrusted response fields as text', async () => {
+    installBrowserGlobals();
+    const { __settingsModalTestHooks } = await import('../../backend/static/js/modules/settings-modal.js?test=engine-results');
+
+    __settingsModalTestHooks.renderEngineCheckResults({
+        query: '<img src=x onerror=alert(1)>',
+        results: [
+            {
+                engine: '<svg onload=alert(1)>',
+                available: false,
+                error: '<script>alert(1)</script>',
+            },
+            {
+                engine: 'searxng',
+                available: true,
+                result_count: 'not-a-number',
+            },
+        ],
+    });
+
+    const resultsEl = document.getElementById('engine-check-results');
+
+    assert.equal(resultsEl.querySelector('.engine-check-query').textContent, '测试词：<img src=x onerror=alert(1)>');
+    assert.equal(resultsEl.querySelector('.engine-check-name').textContent, '<svg onload=alert(1)>');
+    assert.equal(resultsEl.querySelector('.engine-check-detail').textContent, '不可用 · <script>alert(1)</script>');
+    assert.equal(resultsEl.querySelectorAll('script, img, svg').length, 0);
+    assert.equal(
+        Array.from(resultsEl.querySelectorAll('.engine-check-detail'))[1].textContent,
+        '可用 · 0 个结果',
+    );
 });
