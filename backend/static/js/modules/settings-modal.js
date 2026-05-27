@@ -713,7 +713,8 @@ function renderProviderList(providers, defaultProviderId, options = {}) {
     const items = Array.isArray(providers) && providers.length > 0
         ? providers
         : [createEmptyProvider(1)];
-    const fallbackDefault = defaultProviderId || items[0]?.id || '';
+    const normalizedDefaultProviderId = String(defaultProviderId || '').trim();
+    const fallbackDefault = normalizedDefaultProviderId || String(items[0]?.id || '').trim() || '';
 
     container.innerHTML = '';
     items.forEach((provider, index) => {
@@ -888,8 +889,8 @@ function decodeStepModelValue(value) {
 function createProviderCard(provider, defaultProviderId, index, options = {}) {
     const card = document.createElement('div');
     card.className = 'provider-card collapsed';
-    const providerId = provider.id || `provider-${index + 1}`;
-    const isDefaultProvider = providerId === defaultProviderId;
+    const providerId = String(provider.id || `provider-${index + 1}`).trim();
+    const isDefaultProvider = providerId === String(defaultProviderId || '').trim();
     card.dataset.savedProviderId = provider.previous_id || providerId;
     card.dataset.liveProviderId = providerId;
     const radioId = `default-provider-${index}`;
@@ -1299,8 +1300,9 @@ function createEmptyProvider(index) {
 }
 
 function escapeHtml(str) {
-    if (!str) return '';
-    return str
+    const value = String(str ?? '');
+    if (!value) return '';
+    return value
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")

@@ -131,3 +131,34 @@ test('compact model display names do not become API model ids', async () => {
     assert.equal(fallbackRows[1].querySelector('.model-id-input').value, 'org/foo::');
     assert.equal(fallbackRows[1].querySelector('.model-name-input').value, '');
 });
+
+test('provider rendering tolerates non-string settings values and escapes markup', async () => {
+    installBrowserGlobals();
+    const { __settingsModalTestHooks } = await import('../../backend/static/js/modules/settings-modal.js?test=provider-normalize');
+
+    assert.doesNotThrow(() => {
+        __settingsModalTestHooks.renderProviderList(
+            [
+                {
+                    id: 7,
+                    name: '<img src=x onerror=alert(1)>Gateway',
+                    api_key: 12345,
+                    base_url: '<script>alert(1)</script>',
+                    model_id: 'gpt-5.5::<b>Alias</b>',
+                },
+            ],
+            7,
+        );
+    });
+
+    const card = document.querySelector('.provider-card');
+    assert.ok(card);
+    assert.equal(card.querySelector('.provider-id-input').value, '7');
+    assert.equal(card.querySelector('.provider-card-name').textContent, '<img src=x onerror=alert(1)>Gateway');
+    assert.equal(card.querySelector('.provider-base-url-input').value, '<script>alert(1)</script>');
+    assert.equal(card.querySelector('.model-id-input').value, 'gpt-5.5');
+    assert.equal(card.querySelector('.model-name-input').value, '<b>Alias</b>');
+    assert.equal(card.querySelector('img'), null);
+    assert.equal(card.querySelector('script'), null);
+    assert.equal(card.querySelector('b'), null);
+});
