@@ -86,14 +86,32 @@ def get_browser_config(user_data_dir: str) -> dict:
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-        except OSError as e:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                config = loaded
+            else:
+                logger.warning("Ignoring invalid browser config payload: %s", config_path)
+        except (OSError, json.JSONDecodeError) as e:
             logger.error("Error loading browser config: %s", e)
 
-    if "user_agent" not in config:
+    user_agent = config.get("user_agent")
+    if not isinstance(user_agent, str) or not user_agent.strip():
         config["user_agent"] = random.choice(CHROME_USER_AGENTS)
 
-    if "viewport" not in config:
+    viewport = config.get("viewport")
+    if isinstance(viewport, dict):
+        try:
+            width = int(viewport.get("width"))
+            height = int(viewport.get("height"))
+        except (TypeError, ValueError):
+            config.pop("viewport", None)
+        else:
+            config["viewport"] = {
+                "width": max(320, min(3840, width)),
+                "height": max(240, min(2160, height)),
+            }
+
+    if not isinstance(config.get("viewport"), dict):
         config["viewport"] = {
             "width": 1280 + random.randint(0, 100),
             "height": 720 + random.randint(0, 100),

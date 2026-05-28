@@ -1172,6 +1172,63 @@ def test_context_user_data_dir_is_stable_for_slot(tmp_path):
     assert get_context_user_data_dir(project_root, 3) == expected
 
 
+def test_browser_config_recovers_from_malformed_json(tmp_path, monkeypatch):
+    from backend.app import browser_context
+
+    user_data_dir = tmp_path / "ctx_0"
+    user_data_dir.mkdir()
+    (user_data_dir / "browser_config.json").write_text("{bad json", encoding="utf-8")
+
+    monkeypatch.setattr(browser_context.random, "choice", lambda values: values[0])
+    monkeypatch.setattr(browser_context.random, "randint", lambda _start, _end: 0)
+
+    config = browser_context.get_browser_config(str(user_data_dir))
+
+    assert config == {
+        "user_agent": browser_context.CHROME_USER_AGENTS[0],
+        "viewport": {"width": 1280, "height": 720},
+    }
+
+
+def test_browser_config_sanitizes_invalid_payload(tmp_path, monkeypatch):
+    from backend.app import browser_context
+
+    user_data_dir = tmp_path / "ctx_0"
+    user_data_dir.mkdir()
+    (user_data_dir / "browser_config.json").write_text(
+        json.dumps({"user_agent": "", "viewport": {"width": "wide", "height": None}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(browser_context.random, "choice", lambda values: values[1])
+    monkeypatch.setattr(browser_context.random, "randint", lambda _start, _end: 3)
+
+    config = browser_context.get_browser_config(str(user_data_dir))
+
+    assert config == {
+        "user_agent": browser_context.CHROME_USER_AGENTS[1],
+        "viewport": {"width": 1283, "height": 723},
+    }
+
+
+def test_browser_config_clamps_existing_viewport(tmp_path):
+    from backend.app import browser_context
+
+    user_data_dir = tmp_path / "ctx_0"
+    user_data_dir.mkdir()
+    (user_data_dir / "browser_config.json").write_text(
+        json.dumps({"user_agent": "custom-agent", "viewport": {"width": 99, "height": 9999}}),
+        encoding="utf-8",
+    )
+
+    config = browser_context.get_browser_config(str(user_data_dir))
+
+    assert config == {
+        "user_agent": "custom-agent",
+        "viewport": {"width": 320, "height": 2160},
+    }
+
+
 def test_preferred_browser_channel_uses_bundled_chromium_without_system_chrome(monkeypatch):
     from backend.app import browser_context
 
