@@ -36,6 +36,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _cancel_and_drain_tasks(tasks: list[asyncio.Task]) -> list[Any]:
+    if not tasks:
+        return []
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    return await asyncio.gather(*tasks, return_exceptions=True)
+
+
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
@@ -254,6 +263,8 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
                     await websocket.send_json({"type": "status", "msg": "Completed"})
                     break
 
+        except WebSocketDisconnect:
+            logger.info("Browser control websocket disconnected: %s", session_id)
         except Exception as e:
             logger.error("Input error: %s", e)
 
@@ -263,12 +274,11 @@ async def browser_control_endpoint(websocket: WebSocket, session_id: str):
     ]
 
     try:
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     except Exception:
         pass
     finally:
+        await _cancel_and_drain_tasks(tasks)
         try:
             await websocket.close()
         except Exception:
@@ -477,7 +487,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         finally:
             if not task.done():
                 logger.info("Cleaning up running task: %s", session_id)
-                task.cancel()
+            await _cancel_and_drain_tasks([task])
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
