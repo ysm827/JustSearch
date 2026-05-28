@@ -1604,11 +1604,19 @@ def test_gemini_25_models_are_filtered_from_frontend_options():
     settings_source = (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
+    provider_models_source = (
+        PROJECT_ROOT / "backend/static/js/modules/provider-models.js"
+    ).read_text(encoding="utf-8")
 
     assert "getSupportedModelItems(provider.model_id)" in main_source
-    assert "isUnsupportedGemini25Model" in main_source
+    assert "from './modules/provider-models.js?v=1'" in main_source
+    assert "from './provider-models.js?v=1'" in settings_source
+    assert "export function splitModelItem" in provider_models_source
+    assert "export function getSupportedModelItems" in provider_models_source
     assert "isUnsupportedGemini25Model" in settings_source
-    assert ".filter(model => model && !isUnsupportedGemini25Model(model))" in settings_source
+    assert ".filter(model => model && !isUnsupportedGemini25Model(model))" in provider_models_source
+    assert "function splitModelItem" not in main_source
+    assert "function splitModelItem" not in settings_source
 
 
 def test_deep_search_toggle_uses_material_symbol_icon():

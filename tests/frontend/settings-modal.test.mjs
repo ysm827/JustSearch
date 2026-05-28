@@ -139,6 +139,34 @@ test('compact model display names do not become API model ids', async () => {
     assert.equal(fallbackRows[1].querySelector('.model-name-input').value, '');
 });
 
+test('shared provider model parser preserves compact ids and display aliases', async () => {
+    const {
+        getModelDisplayName,
+        getSupportedModelItems,
+        isUnsupportedGemini25Model,
+        splitModelItem,
+    } = await import('../../backend/static/js/modules/provider-models.js?test=shared-parser');
+
+    assert.deepEqual(splitModelItem('gpt-5.5::5.5'), {
+        modelId: 'gpt-5.5',
+        displayName: '5.5',
+    });
+    assert.deepEqual(splitModelItem('qwen2.5:7b::Qwen 7B'), {
+        modelId: 'qwen2.5:7b',
+        displayName: 'Qwen 7B',
+    });
+    assert.deepEqual(splitModelItem('qwen2.5:7b'), {
+        modelId: 'qwen2.5:7b',
+        displayName: 'qwen2.5:7b',
+    });
+    assert.equal(getModelDisplayName('org/model::Friendly'), 'Friendly');
+    assert.equal(isUnsupportedGemini25Model('Gemini 2.5 Flash Lite'), true);
+    assert.deepEqual(
+        getSupportedModelItems('gemini-2.5-pro, gpt-4.1::GPT 4.1, qwen2.5:7b'),
+        ['gpt-4.1::GPT 4.1', 'qwen2.5:7b'],
+    );
+});
+
 test('provider rendering tolerates non-string settings values and escapes markup', async () => {
     installBrowserGlobals();
     const { __settingsModalTestHooks } = await import('../../backend/static/js/modules/settings-modal.js?test=provider-normalize');

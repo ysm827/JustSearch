@@ -7,6 +7,7 @@ import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearc
 import { setupSettingsModal } from './modules/settings-modal.js?v=43';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=16';
 import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js?v=14';
+import { getSupportedModelItems, splitModelItem } from './modules/provider-models.js?v=1';
 import * as API from './modules/api.js?v=4';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -107,62 +108,6 @@ function updateModelSelector(settings) {
     syncCustomModelSelect();
 }
 
-function getSupportedModelItems(modelIds) {
-    return String(modelIds || '')
-        .split(',')
-        .map(s => s.trim())
-        .filter(model => model && !isUnsupportedGemini25Model(model));
-}
-
-function splitModelItem(model) {
-    const raw = String(model || '').trim();
-    if (!raw) {
-        return { modelId: '', displayName: '' };
-    }
-    const aliasIdx = raw.indexOf('::');
-    if (aliasIdx !== -1) {
-        const modelId = raw.substring(0, aliasIdx).trim();
-        const displayName = raw.substring(aliasIdx + 2).trim();
-        if (modelId && displayName) {
-            return { modelId, displayName };
-        }
-        return {
-            modelId: raw,
-            displayName: raw.includes('/') ? raw.split('/').pop() : raw,
-        };
-    }
-    const colonIdx = raw.indexOf(':');
-    if (colonIdx !== -1) {
-        const modelId = raw.substring(0, colonIdx).trim();
-        const displayName = raw.substring(colonIdx + 1).trim();
-        const compactTag = /^[A-Za-z0-9._-]+$/.test(displayName);
-        const repeatedCompactName = compactTag
-            && modelId
-            && displayName
-            && modelId.toLowerCase() === displayName.toLowerCase();
-        const suffixCompactName = compactTag
-            && modelId
-            && displayName
-            && modelId.toLowerCase().endsWith(displayName.toLowerCase())
-            && /[-_.]/.test(modelId);
-        if (modelId && displayName && (
-            /\s/.test(displayName)
-            || !compactTag
-            || repeatedCompactName
-            || suffixCompactName
-        )) {
-            return { modelId, displayName };
-        }
-    }
-    return {
-        modelId: raw,
-        displayName: raw.includes('/') ? raw.split('/').pop() : raw,
-    };
-}
-
-function isUnsupportedGemini25Model(model) {
-    return /(^|[^a-z0-9])gemini[\s._-]*2[\s._-]*5($|[^a-z0-9])/i.test(String(model || ''));
-}
 
 function restoreSessionFromUrl(chatHistory, loadChat) {
     const pathMatch = window.location.pathname.match(/^\/c\/([^/?#]+)\/?$/);

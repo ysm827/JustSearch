@@ -3,6 +3,12 @@ import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=2
 import { showToast } from './toast.js';
 import { elements, showConfirm } from './ui.js?v=20';
 import { renderHistory } from './history-view.js?v=22';
+import {
+    getModelDisplayName,
+    getSupportedModelItems,
+    isUnsupportedGemini25Model,
+    splitModelItem,
+} from './provider-models.js?v=1';
 import * as API from './api.js?v=4';
 
 const WORKFLOW_STEPS = [
@@ -881,7 +887,7 @@ function getConfiguredModelOptions(providers) {
         const providerId = String(provider.id || '').trim();
         if (!providerId) return;
 
-        getModelItems(provider.model_id).forEach((modelValue) => {
+        getSupportedModelItems(provider.model_id).forEach((modelValue) => {
             const { modelId, displayName } = splitModelItem(modelValue);
             if (!modelId) return;
             const providerName = String(provider.name || providerId).trim() || providerId;
@@ -1131,7 +1137,7 @@ function setupProviderModelList(providerCard) {
 
     function render() {
         container.innerHTML = '';
-        const items = getModelItems(hiddenInput.value);
+        const items = getSupportedModelItems(hiddenInput.value);
         hiddenInput.value = items.join(', ');
         if (items.length === 0) {
             addModelRow('', '');
@@ -1213,7 +1219,7 @@ function setupProviderModelList(providerCard) {
 }
 
 function formatProviderSummary(provider) {
-    const modelCount = getModelItems(provider.model_id).length;
+    const modelCount = getSupportedModelItems(provider.model_id).length;
     const baseUrl = String(provider.base_url || '').trim() || '未设置 API 地址';
     const apiKey = String(provider.api_key || '').trim();
     return {
@@ -1244,74 +1250,13 @@ function updateModelPanelSummary(providerCard) {
     const summaryEl = providerCard.querySelector('.model-panel-summary');
     if (!summaryEl) return;
     const hiddenInput = providerCard.querySelector('.provider-model-input');
-    const items = getModelItems(hiddenInput?.value || '');
+    const items = getSupportedModelItems(hiddenInput?.value || '');
     if (items.length === 0) {
         summaryEl.textContent = '0 个模型';
         return;
     }
     const first = getModelDisplayName(items[0]);
     summaryEl.textContent = `${first} · ${items.length} 个模型`;
-}
-
-function getModelItems(modelId) {
-    return String(modelId || '')
-        .split(',')
-        .map(s => s.trim())
-        .filter(model => model && !isUnsupportedGemini25Model(model));
-}
-
-function isUnsupportedGemini25Model(model) {
-    return /(^|[^a-z0-9])gemini[\s._-]*2[\s._-]*5($|[^a-z0-9])/i.test(String(model || ''));
-}
-
-function getModelDisplayName(modelValue) {
-    return splitModelItem(modelValue).displayName;
-}
-
-function splitModelItem(modelValue) {
-    const raw = String(modelValue || '').trim();
-    if (!raw) {
-        return { modelId: '', displayName: '' };
-    }
-    const aliasIdx = raw.indexOf('::');
-    if (aliasIdx !== -1) {
-        const modelId = raw.substring(0, aliasIdx).trim();
-        const displayName = raw.substring(aliasIdx + 2).trim();
-        if (modelId && displayName) {
-            return { modelId, displayName };
-        }
-        return {
-            modelId: raw,
-            displayName: raw.includes('/') ? raw.split('/').pop() : raw,
-        };
-    }
-    const colonIdx = raw.indexOf(':');
-    if (colonIdx !== -1) {
-        const modelId = raw.substring(0, colonIdx).trim();
-        const displayName = raw.substring(colonIdx + 1).trim();
-        const compactTag = /^[A-Za-z0-9._-]+$/.test(displayName);
-        const repeatedCompactName = compactTag
-            && modelId
-            && displayName
-            && modelId.toLowerCase() === displayName.toLowerCase();
-        const suffixCompactName = compactTag
-            && modelId
-            && displayName
-            && modelId.toLowerCase().endsWith(displayName.toLowerCase())
-            && /[-_.]/.test(modelId);
-        if (modelId && displayName && (
-            /\s/.test(displayName)
-            || !compactTag
-            || repeatedCompactName
-            || suffixCompactName
-        )) {
-            return { modelId, displayName };
-        }
-    }
-    return {
-        modelId: raw,
-        displayName: raw.includes('/') ? raw.split('/').pop() : raw,
-    };
 }
 
 function collectProvidersForm() {
