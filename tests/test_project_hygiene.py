@@ -252,6 +252,8 @@ def test_crawler_content_helpers_are_split_out():
     assert "async def extract_page_content" in content_source
     assert "async def extract_og_metadata" in content_source
     assert "async def install_resource_blocker" in content_source
+    assert "const rawHref = a.getAttribute('href')" in content_source
+    assert "const href = a.href || rawHref" in content_source
     assert "from .crawler.content import" in page_crawler_source
     assert "_JS_EXTRACT_CONTENT" not in page_crawler_source
     assert "def _extract_og_metadata" not in page_crawler_source

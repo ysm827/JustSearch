@@ -223,6 +223,56 @@ def test_crawl_page_prefers_page_url_when_response_url_is_original(monkeypatch):
     assert result == "错误: 不允许访问内网地址"
 
 
+def test_crawl_page_skips_pdf_after_browser_redirect(monkeypatch):
+    class FakeResponse:
+        url = "https://cdn.example/report.pdf?download=1"
+
+    class FakePage:
+        url = "https://public.example/report"
+
+        async def route(self, *_args):
+            return None
+
+        async def goto(self, *_args, **_kwargs):
+            self.url = "https://cdn.example/report.pdf?download=1"
+            return FakeResponse()
+
+    class FakeStealth:
+        async def apply_stealth_async(self, _page):
+            return None
+
+    fake_page = FakePage()
+    released = []
+
+    async def fake_get_new_page():
+        return fake_page
+
+    async def fake_release_page(page):
+        released.append(page)
+
+    async def fake_resolve(url, log_func=None):
+        return url
+
+    async def fake_extract(_page, _url):
+        raise AssertionError("redirected PDFs should not enter generic extraction")
+
+    monkeypatch.setattr(page_crawler, "get_context_pool_status", lambda: {"active_contexts": 1})
+    monkeypatch.setattr(page_crawler, "get_new_page", fake_get_new_page)
+    monkeypatch.setattr(page_crawler, "release_page", fake_release_page)
+    monkeypatch.setattr(page_crawler, "resolve_redirect_url", fake_resolve)
+    monkeypatch.setattr(page_crawler, "extract_page_content", fake_extract)
+
+    result = asyncio.run(
+        page_crawler.crawl_page("https://public.example/report", FakeStealth())
+    )
+
+    assert result == (
+        "[PDF 文档] https://cdn.example/report.pdf?download=1\n"
+        "注意: PDF 文件无法直接提取内容，请访问链接查看原文。"
+    )
+    assert released == [fake_page]
+
+
 def test_private_url_blocks_direct_198_18_address_but_allows_proxy_resolved_domain(monkeypatch):
     def fake_getaddrinfo(hostname, *_args, **_kwargs):
         assert hostname == "example.test"

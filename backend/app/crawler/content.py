@@ -56,11 +56,12 @@ _JS_EXTRACT_CONTENT = """() => {
     const seenUrls = new Set();
 
     best.querySelectorAll('a[href]').forEach(a => {
-        const href = a.getAttribute('href');
-        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+        const rawHref = a.getAttribute('href');
+        if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:')) return;
+        const href = a.href || rawHref;
         const linkText = (a.innerText || '').trim();
 
-        const isDownloadUrl = downloadExts.some(ext => href.toLowerCase().includes(ext));
+        const isDownloadUrl = downloadExts.some(ext => (rawHref + ' ' + href).toLowerCase().includes(ext));
         const isDownloadText = downloadKeywords.test(linkText);
 
         if (isDownloadUrl || isDownloadText) {

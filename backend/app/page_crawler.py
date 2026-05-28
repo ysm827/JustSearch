@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 _PDF_PATTERN = re.compile(r'\.pdf(\?.*)?$', re.IGNORECASE)
 
 
+def _format_pdf_metadata(url: str) -> str:
+    return f"[PDF 文档] {url}\n注意: PDF 文件无法直接提取内容，请访问链接查看原文。"
+
+
 async def crawl_github_api(page: Page, url: str, log_func=None) -> str | None:
     """Handle GitHub API URLs - parse JSON and return a summary."""
     if log_func:
@@ -233,7 +237,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
     if _PDF_PATTERN.search(final_url):
         if log_func:
             log_func(f"浏览器: 检测到 PDF 文件，跳过深度爬取")
-        return f"[PDF 文档] {final_url}\n注意: PDF 文件无法直接提取内容，请访问链接查看原文。"
+        return _format_pdf_metadata(final_url)
 
     page = await get_new_page()
     await stealth.apply_stealth_async(page)
@@ -265,6 +269,10 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                         log_func(f"浏览器: 拒绝访问跳转后的内网地址 {navigated_url}")
                     return "错误: 不允许访问内网地址"
                 final_url = navigated_url
+                if _PDF_PATTERN.search(final_url):
+                    if log_func:
+                        log_func(f"浏览器: 跳转到 PDF 文件，跳过深度爬取")
+                    return _format_pdf_metadata(final_url)
         except Exception as e:
             err_msg = str(e)
             is_timeout = "Timeout" in err_msg or "timeout" in err_msg
