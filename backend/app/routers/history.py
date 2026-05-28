@@ -131,9 +131,12 @@ async def search_history_endpoint(q: str = Query(..., min_length=1, max_length=2
         except Exception as e:
             logger.warning("FTS search failed, falling back to title search: %s", e)
             # Fallback: search by title only
-            all_chats = await list_chats()
+            all_chats = await list_chats(limit=100000)
             q_lower = q.lower()
-            return [c for c in all_chats if q_lower in (c.get("title", "").lower())]
+            return [
+                c for c in all_chats
+                if q_lower in (c.get("title", "").lower())
+            ][:20]
 
 
 @router.get("/api/history/groups")

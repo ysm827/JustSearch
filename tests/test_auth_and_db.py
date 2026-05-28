@@ -1223,6 +1223,61 @@ def test_history_search_handles_fts_special_characters(tmp_path):
     asyncio.run(run())
 
 
+def test_history_search_title_fallback_scans_beyond_default_page(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        await database.save_chat_history(
+            "fallback-title-oldest",
+            [{"role": "user", "content": "body does not matter"}],
+            title="Fallback Needle Oldest",
+        )
+        for idx in range(100):
+            await database.save_chat_history(
+                f"newer-fallback-{idx:03d}",
+                [{"role": "user", "content": f"newer body {idx}"}],
+                title=f"Newer Chat {idx:03d}",
+            )
+
+        async with await database.get_session() as session:
+            await session.execute(text("DROP TABLE chat_messages_fts"))
+            await session.commit()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/history/search", params={"q": "Needle"})
+
+        assert response.status_code == 200
+        results = response.json()
+        assert len(results) == 1
+        assert results[0]["id"] == "fallback-title-oldest"
+        assert results[0]["title"] == "Fallback Needle Oldest"
+        assert results[0]["group_id"] is None
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_history_lists_and_search_hide_route_unsafe_legacy_ids(tmp_path):
     from backend.app import database
     from backend.app.routers.history import router
