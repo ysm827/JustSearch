@@ -1,3 +1,4 @@
+import copy
 import json
 import hashlib
 import logging
@@ -169,7 +170,12 @@ def ensure_live_artifact_answer(answer: str) -> str:
     return _markdown_to_live_artifact_html(stripped)
 
 
-def _cache_analysis_result(key: str, result: dict):
+def _clone_cached_analysis_result(result: Any) -> Any:
+    """Return an isolated copy so callers cannot mutate cached LLM analysis."""
+    return copy.deepcopy(result)
+
+
+def _cache_analysis_result(key: str, result: Any):
     """Store analysis result in cache, evicting old entries if needed."""
     import time
     if len(_ANALYSIS_CACHE) >= _ANALYSIS_CACHE_MAX:
@@ -177,7 +183,7 @@ def _cache_analysis_result(key: str, result: dict):
         sorted_keys = sorted(_ANALYSIS_CACHE.keys(), key=lambda k: _ANALYSIS_CACHE[k][1])
         for k in sorted_keys[:_ANALYSIS_CACHE_MAX // 2]:
             del _ANALYSIS_CACHE[k]
-    _ANALYSIS_CACHE[key] = (result, time.time())
+    _ANALYSIS_CACHE[key] = (_clone_cached_analysis_result(result), time.time())
 
 
 def _cache_digest(value: Any) -> str:
@@ -444,7 +450,7 @@ class LLMClient:
             cached_result, cached_time = _ANALYSIS_CACHE[cache_key]
             if now - cached_time < _ANALYSIS_CACHE_TTL:
                 logger.info("[Task Analysis] 缓存命中: %s", user_input[:50])
-                return cached_result
+                return _clone_cached_analysis_result(cached_result)
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = TASK_ANALYSIS_PROMPT.format(current_time=current_time)
@@ -521,7 +527,7 @@ class LLMClient:
             cached_result, cached_time = _ANALYSIS_CACHE[cache_key]
             if now - cached_time < _ANALYSIS_CACHE_TTL:
                 logger.info("[Relevance] 缓存命中: %s", query[:50])
-                return cached_result
+                return _clone_cached_analysis_result(cached_result)
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = RELEVANCE_ASSESSMENT_PROMPT.format(current_time=current_time)

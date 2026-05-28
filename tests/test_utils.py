@@ -374,6 +374,29 @@ class TestLLMResponseParsing:
         assert calls == 2
         llm_module._ANALYSIS_CACHE.clear()
 
+    def test_analyze_task_cache_is_isolated_from_returned_result(self):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        llm_module._ANALYSIS_CACHE.clear()
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        calls = 0
+
+        async def fake_call(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return '{"type": "search", "queries": ["original cached query"]}'
+
+        client._call_with_retry = fake_call
+
+        first = asyncio.run(client.analyze_task("cache isolation"))
+        first["queries"][0] = "mutated by caller"
+        second = asyncio.run(client.analyze_task("cache isolation"))
+
+        assert second == {"type": "search", "queries": ["original cached query"]}
+        assert calls == 1
+        llm_module._ANALYSIS_CACHE.clear()
+
     def test_relevance_cache_is_scoped_by_snippet_content(self):
         import asyncio
         from backend.app import llm_client as llm_module
@@ -410,6 +433,33 @@ class TestLLMResponseParsing:
         assert first == [2]
         assert second == [4]
         assert len(calls) == 2
+        llm_module._ANALYSIS_CACHE.clear()
+
+    def test_relevance_cache_is_isolated_from_returned_result(self):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        llm_module._ANALYSIS_CACHE.clear()
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        calls = 0
+
+        async def fake_call(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return '{"relevant_ids": [2, 4]}'
+
+        client._call_with_retry = fake_call
+        snippets = [
+            {"id": 2, "title": "A", "url": "https://a.example", "snippet": "alpha"},
+            {"id": 4, "title": "B", "url": "https://b.example", "snippet": "beta"},
+        ]
+
+        first = asyncio.run(client.assess_relevance("cache isolation", snippets))
+        first.append(99)
+        second = asyncio.run(client.assess_relevance("cache isolation", snippets))
+
+        assert second == [2, 4]
+        assert calls == 1
         llm_module._ANALYSIS_CACHE.clear()
 
 
