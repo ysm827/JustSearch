@@ -80,6 +80,26 @@ class EngineCheckRequest(BaseModel):
     query: Optional[str] = _ENGINE_CHECK_QUERY
 
 
+def _reset_runtime_caches():
+    from .. import browser_manager, llm_client, search_engine
+    from ..rate_limiter import chat_limiter
+    from . import stats as stats_router
+
+    browser_manager._search_cache.clear()
+    llm_client._ANALYSIS_CACHE.clear()
+    engine_health._results.clear()
+    chat_limiter._requests.clear()
+    chat_limiter._last_cleanup = time.time()
+    stats_router.github_stats_cache.update({
+        "stars": 0,
+        "last_updated": None,
+        "last_error_at": None,
+        "error": "",
+    })
+    search_engine._config_cache = {}
+    search_engine._config_mtime = 0.0
+
+
 def _body_str(body: dict, key: str, default: str = "") -> str:
     value = body.get(key, default)
     if value is None:
@@ -310,5 +330,8 @@ async def clear_cache_endpoint():
     async with await get_session() as session:
         await session.execute(delete(Settings))
         await session.commit()
+
+    # 4. 清除进程内短期缓存和健康状态，避免旧状态继续影响新请求
+    _reset_runtime_caches()
 
     return {"status": "ok"}

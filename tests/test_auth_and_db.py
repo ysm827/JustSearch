@@ -3398,6 +3398,97 @@ def test_check_search_engines_reports_availability(monkeypatch):
     asyncio.run(run())
 
 
+def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
+    from backend.app import browser_manager, database, llm_client, search_engine
+    from backend.app.engine_health import engine_health
+    from backend.app.rate_limiter import chat_limiter
+    from backend.app.routers import settings as settings_router
+    from backend.app.routers import stats as stats_router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings({"theme": "dark", "providers": []})
+
+        project_root = tmp_path / "project"
+        user_data_dir = project_root / "user_data"
+        user_data_dir.mkdir(parents=True)
+        (user_data_dir / "stale-cookie").write_text("old", encoding="utf-8")
+        monkeypatch.setattr(
+            settings_router,
+            "__file__",
+            str(project_root / "backend/app/routers/settings.py"),
+        )
+
+        browser_manager._search_cache["searxng:cached"] = ([{"title": "old"}], 1.0)
+        llm_client._ANALYSIS_CACHE["task:old"] = ({"type": "search"}, 1.0)
+        engine_health.record("brave", success=False, reason="blocked")
+        chat_limiter._requests["127.0.0.1"] = [1.0]
+        stats_router.github_stats_cache.update({
+            "stars": 99,
+            "last_updated": datetime.now(),
+            "last_error_at": datetime.now(),
+            "error": "old error",
+        })
+        search_engine._config_cache = {"custom": {"base_url": "https://old.example"}}
+        search_engine._config_mtime = 123.0
+
+        app = FastAPI()
+        app.include_router(settings_router.router)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post("/api/clear-cache")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+        assert user_data_dir.is_dir()
+        assert not (user_data_dir / "stale-cookie").exists()
+        assert browser_manager._search_cache == {}
+        assert llm_client._ANALYSIS_CACHE == {}
+        assert engine_health.get_stats() == {}
+        assert dict(chat_limiter._requests) == {}
+        assert stats_router.github_stats_cache == {
+            "stars": 0,
+            "last_updated": None,
+            "last_error_at": None,
+            "error": "",
+        }
+        assert search_engine._config_cache == {}
+        assert search_engine._config_mtime == 0.0
+        assert (await database.load_settings())["theme"] == database.DEFAULT_SETTINGS["theme"]
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    try:
+        asyncio.run(run())
+    finally:
+        browser_manager._search_cache.clear()
+        llm_client._ANALYSIS_CACHE.clear()
+        engine_health._results.clear()
+        chat_limiter._requests.clear()
+        stats_router.github_stats_cache.update({
+            "stars": 0,
+            "last_updated": None,
+            "last_error_at": None,
+            "error": "",
+        })
+        search_engine._config_cache = {}
+        search_engine._config_mtime = 0.0
+
+
 def test_check_search_engines_reports_recent_failure_reason(monkeypatch):
     from backend.app.routers.settings import router
     from backend.app.engine_health import engine_health
