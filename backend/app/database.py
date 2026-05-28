@@ -595,6 +595,12 @@ async def delete_chat(session_id: str) -> bool:
 async def delete_message(session_id: str, message_index: int):
     """Delete a single message by its index (0-based) within a session."""
     async with await get_session() as session:
+        sess = (await session.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
+        )).scalar_one_or_none()
+        if sess is None:
+            return False
+
         msgs = (await session.execute(
             select(ChatMessage).where(ChatMessage.session_id == session_id)
             .order_by(ChatMessage.created_at, ChatMessage.id)
@@ -604,6 +610,7 @@ async def delete_message(session_id: str, message_index: int):
             return False
 
         await session.delete(msgs[message_index])
+        sess.updated_at = _utc_now()
         await session.commit()
         return True
 

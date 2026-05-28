@@ -2342,6 +2342,58 @@ def test_delete_message_endpoint_rejects_route_unsafe_session_id(tmp_path):
     asyncio.run(run())
 
 
+def test_delete_message_refreshes_chat_timestamp(tmp_path):
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_chat_history(
+            "delete-message-refresh",
+            [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "second"},
+            ],
+            title="Delete Message Refresh",
+        )
+
+        async with await database.get_session() as session:
+            await session.execute(
+                text(
+                    "UPDATE chat_sessions "
+                    "SET updated_at = :updated_at "
+                    "WHERE id = 'delete-message-refresh'"
+                ),
+                {"updated_at": "2020-01-01T00:00:00"},
+            )
+            await session.commit()
+
+        before = await database.load_chat_history("delete-message-refresh")
+        assert before["timestamp"] == "2020-01-01T00:00:00Z"
+
+        assert await database.delete_message("delete-message-refresh", 0) is True
+
+        after = await database.load_chat_history("delete-message-refresh")
+        assert [message["content"] for message in after["messages"]] == ["second"]
+        assert after["timestamp"] != "2020-01-01T00:00:00Z"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
     from backend.app import database
     from backend.app.routers.chat import router
