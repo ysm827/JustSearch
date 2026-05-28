@@ -191,13 +191,10 @@ async def export_all_chats(format: str = "markdown"):
     import json
     import datetime as _dt
 
-    all_chats = await list_chats()
-    if not all_chats:
-        raise HTTPException(status_code=404, detail="没有可导出的对话")
-
     date_str = _dt.datetime.now().strftime("%Y%m%d")
+    requested_format = format.lower()
 
-    if format.lower() == "json":
+    if requested_format == "json":
         export_data = await export_history_package()
         content = json.dumps(export_data, ensure_ascii=False, indent=2)
         return Response(
@@ -207,6 +204,10 @@ async def export_all_chats(format: str = "markdown"):
         )
 
     # Markdown export
+    all_chats = await list_chats(limit=100000)
+    if not all_chats:
+        raise HTTPException(status_code=404, detail="没有可导出的对话")
+
     md_lines = [f"# JustSearch 对话导出\n", f"导出时间: {_dt.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"]
     for chat_summary in all_chats:
         chat_data = await load_chat_history(chat_summary["id"])

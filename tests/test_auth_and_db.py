@@ -300,6 +300,88 @@ def test_export_all_markdown_keeps_full_answers_and_sources(tmp_path):
     asyncio.run(run())
 
 
+def test_export_all_markdown_includes_more_than_default_history_page(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        for idx in range(101):
+            await database.save_chat_history(
+                f"bulk-export-{idx:03d}",
+                [{"role": "user", "content": f"message-{idx:03d}"}],
+                title=f"Chat {idx:03d}",
+            )
+
+        app = FastAPI()
+        app.include_router(router)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/history/export/all")
+
+        assert response.status_code == 200
+        assert "## Chat 000" in response.text
+        assert "message-000" in response.text
+        assert "## Chat 100" in response.text
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_export_all_json_allows_empty_history_package_with_groups(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        group = await database.create_chat_group("空分组也应导出")
+
+        app = FastAPI()
+        app.include_router(router)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/history/export/all?format=json")
+
+        assert response.status_code == 200
+        exported = response.json()
+        assert exported["history"] == []
+        assert exported["groups"][0]["id"] == group["id"]
+        assert exported["groups"][0]["title"] == "空分组也应导出"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_save_chat_history_populates_fts_table(tmp_path):
     from backend.app import database
 
