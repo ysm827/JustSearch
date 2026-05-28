@@ -641,9 +641,13 @@ class LLMClient:
             
             # Use retry wrapper for API call — handle 429 rate limits
             max_retries = 3
+            response = None
+            stream_slot_acquired = False
             for retry in range(max_retries):
                 try:
-                    async with _LLM_CONCURRENCY:
+                    await _LLM_CONCURRENCY.acquire()
+                    stream_slot_acquired = True
+                    try:
                         response = await asyncio.wait_for(
                             self.client.chat.completions.create(
                                 model=self.model,
@@ -652,6 +656,11 @@ class LLMClient:
                             ),
                             timeout=_LLM_TIMEOUT,
                         )
+                    except BaseException:
+                        if stream_slot_acquired:
+                            _LLM_CONCURRENCY.release()
+                            stream_slot_acquired = False
+                        raise
                     break
                 except asyncio.TimeoutError:
                     logger.warning("[Generate Answer] 请求超时, 重试 %d/%d", retry + 1, max_retries)
@@ -668,6 +677,12 @@ class LLMClient:
                         await asyncio.sleep(wait_time)
                     else:
                         raise
+
+            if response is None:
+                if stream_slot_acquired:
+                    _LLM_CONCURRENCY.release()
+                    stream_slot_acquired = False
+                return {"status": "sufficient", "answer": "生成答案时出错: 未收到模型响应。"}
 
             full_content = ""
             status = "sufficient"
@@ -694,43 +709,47 @@ class LLMClient:
                     stream_callback(live_stream_buffer)
                     live_stream_buffer = ""
 
-            async for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    full_content += content
+            try:
+                async for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        full_content += content
 
-                    if parsing_header:
-                        header_buffer += content
-                        # Check for Status
-                        if "Status:" in header_buffer and "\n" in header_buffer.split("Status:")[1]:
-                             status_line = [line for line in header_buffer.split("\n") if "Status:" in line][0]
-                             if "insufficient" in status_line.lower():
-                                 status = "insufficient"
+                        if parsing_header:
+                            header_buffer += content
+                            # Check for Status
+                            if "Status:" in header_buffer and "\n" in header_buffer.split("Status:")[1]:
+                                status_line = [line for line in header_buffer.split("\n") if "Status:" in line][0]
+                                if "insufficient" in status_line.lower():
+                                    status = "insufficient"
 
-                        # Check for Answer start
-                        if "Answer:" in header_buffer:
-                            parts = header_buffer.split("Answer:", 1)
-                            pre_answer = parts[0]
-                            # If we have content after Answer:, that's the start of the answer
-                            if len(parts) > 1:
-                                answer_chunk = parts[1]
+                            # Check for Answer start
+                            if "Answer:" in header_buffer:
+                                parts = header_buffer.split("Answer:", 1)
+                                # If we have content after Answer:, that's the start of the answer
+                                if len(parts) > 1:
+                                    answer_chunk = parts[1]
+                                    parsing_header = False
+                                    answer_started = True
+                                    maybe_stream_answer(answer_chunk)
+
+                            # Safety valve: if buffer gets too long without Answer:, maybe model didn't follow format
+                            if len(header_buffer) > 500 and not answer_started:
                                 parsing_header = False
-                                answer_started = True
-                                maybe_stream_answer(answer_chunk)
+                                # Assume whole thing is answer if status check passed or failed
+                                maybe_stream_answer(header_buffer)
 
-                        # Safety valve: if buffer gets too long without Answer:, maybe model didn't follow format
-                        if len(header_buffer) > 500 and not answer_started:
-                            parsing_header = False
-                            # Assume whole thing is answer if status check passed or failed
-                            maybe_stream_answer(header_buffer)
+                        else:
+                            # Streaming answer
+                            maybe_stream_answer(content)
 
-                    else:
-                        # Streaming answer
-                        maybe_stream_answer(content)
-                
-                # Also handle empty delta (role/tool_calls) to avoid blocking
-                elif chunk.choices and chunk.choices[0].finish_reason:
-                    break
+                    # Also handle empty delta (role/tool_calls) to avoid blocking
+                    elif chunk.choices and chunk.choices[0].finish_reason:
+                        break
+            finally:
+                if stream_slot_acquired:
+                    _LLM_CONCURRENCY.release()
+                    stream_slot_acquired = False
 
             final_answer = full_content
             missing_info = ""

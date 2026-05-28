@@ -597,3 +597,80 @@ class TestLiveArtifactsAnswerFormatting:
         assert "```html" in streamed
         assert "<section" in streamed
         assert result["answer"].startswith("<section")
+
+    def test_generate_answer_stream_consumption_holds_concurrency_slot(self, monkeypatch):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        original_sleep = asyncio.sleep
+        events = []
+
+        def make_chunk(content):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=content),
+                        finish_reason=None,
+                    )
+                ]
+            )
+
+        async def run_check():
+            stream_started = asyncio.Event()
+            release_first_stream = asyncio.Event()
+
+            class BlockingStream:
+                def __init__(self, model):
+                    self.model = model
+                    self.index = 0
+
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    if self.index == 0:
+                        self.index += 1
+                        events.append(f"stream:{self.model}:start")
+                        if self.model == "first":
+                            stream_started.set()
+                            await release_first_stream.wait()
+                        return make_chunk("Status: sufficient\nMissing_Info: \nAnswer:\n")
+                    if self.index == 1:
+                        self.index += 1
+                        return make_chunk(f"{self.model} answer")
+                    raise StopAsyncIteration
+
+            class FakeCompletions:
+                async def create(self, model, messages, stream):
+                    events.append(f"create:{model}")
+                    return BlockingStream(model)
+
+            monkeypatch.setattr(llm_module, "_LLM_CONCURRENCY", asyncio.Semaphore(1))
+            completions = FakeCompletions()
+            first = LLMClient(api_key="test-key", base_url="https://example.test/v1", model="first")
+            second = LLMClient(api_key="test-key", base_url="https://example.test/v1", model="second")
+            first.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+            second.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+            sources = [{"id": 1, "title": "fixture", "content": "source", "url": "https://example.test"}]
+
+            first_task = asyncio.create_task(first.generate_answer("q1", sources))
+            await stream_started.wait()
+
+            second_task = asyncio.create_task(second.generate_answer("q2", sources))
+            for _ in range(5):
+                await original_sleep(0)
+            assert "create:second" not in events
+
+            release_first_stream.set()
+            first_result = await first_task
+            assert first_result["answer"] == "first answer"
+
+            for _ in range(5):
+                await original_sleep(0)
+                if "create:second" in events:
+                    break
+            assert "create:second" in events
+            second_result = await second_task
+            assert second_result["answer"] == "second answer"
+
+        asyncio.run(run_check())
