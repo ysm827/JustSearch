@@ -2207,6 +2207,40 @@ def test_loaded_settings_backfill_missing_workflow_step_models():
     }
 
 
+def test_loaded_settings_filters_invalid_provider_entries():
+    from backend.app.database import _normalize_loaded_settings
+
+    settings = _normalize_loaded_settings(
+        {
+            "default_provider_id": "missing-provider",
+            "providers": [
+                42,
+                {},
+                {"id": "  "},
+                {
+                    "id": "openai",
+                    "name": "OpenAI",
+                    "api_key": "secret",
+                    "base_url": "https://api.openai.com/v1",
+                    "model_id": "gpt-4.1",
+                },
+            ],
+        },
+        has_stored_providers=True,
+    )
+
+    assert settings["default_provider_id"] == "openai"
+    assert settings["providers"] == [
+        {
+            "id": "openai",
+            "name": "OpenAI",
+            "api_key": "secret",
+            "base_url": "https://api.openai.com/v1",
+            "model_id": "gpt-4.1",
+        }
+    ]
+
+
 def test_workflow_step_model_resolution_reuses_fallback_api_key(monkeypatch):
     from backend.app.routers.chat import _resolve_workflow_step_models
 

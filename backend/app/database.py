@@ -988,9 +988,17 @@ def _normalize_loaded_settings(
 
     if isinstance(result.get("providers"), list) and result["providers"]:
         providers = [
-            provider.copy() if isinstance(provider, dict) else provider
-            for provider in result["providers"]
+            provider
+            for provider in (
+                _normalize_loaded_provider(provider)
+                for provider in result["providers"]
+            )
+            if provider is not None
         ]
+        if not providers:
+            result.pop("providers", None)
+            return _normalize_loaded_settings(result, has_stored_providers=False)
+
         first_provider = providers[0] if isinstance(providers[0], dict) else None
         if first_provider and _should_backfill_legacy_provider(first_provider, has_legacy_model_config):
             if legacy_api_key and not str(first_provider.get("api_key", "") or "").strip():
@@ -1000,10 +1008,9 @@ def _normalize_loaded_settings(
             if legacy_model_id:
                 first_provider["model_id"] = legacy_model_id
         result["providers"] = providers
-        if not result.get("default_provider_id"):
-            first = providers[0]
-            if isinstance(first, dict):
-                result["default_provider_id"] = first.get("id", "")
+        provider_ids = {provider["id"] for provider in providers}
+        if str(result.get("default_provider_id", "") or "").strip() not in provider_ids:
+            result["default_provider_id"] = providers[0]["id"]
         result["workflow_step_models"] = _normalize_loaded_workflow_step_models(
             result.get("workflow_step_models")
         )
@@ -1022,6 +1029,17 @@ def _normalize_loaded_settings(
         result.get("workflow_step_models")
     )
     return result
+
+
+def _normalize_loaded_provider(provider: Any) -> Optional[dict]:
+    if not isinstance(provider, dict):
+        return None
+    provider_id = str(provider.get("id", "") or "").strip()
+    if not provider_id:
+        return None
+    item = provider.copy()
+    item["id"] = provider_id
+    return item
 
 
 def _should_backfill_legacy_provider(provider: dict, has_legacy_model_config: bool) -> bool:
