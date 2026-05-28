@@ -1,7 +1,7 @@
 import { authFetch } from './auth.js?v=1';
 import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=2';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=17';
+import { elements, showConfirm } from './ui.js?v=18';
 import { renderHistory } from './history-view.js?v=22';
 import * as API from './api.js?v=3';
 
@@ -20,10 +20,27 @@ const SETTINGS_SAVE_STATES = {
     invalid: { icon: 'error', text: '需要补全' },
     error: { icon: 'warning', text: '保存失败' },
 };
+const SETTINGS_LAST_TAB_STORAGE_KEY = 'justsearch_settings_last_tab';
 
 let isApplyingSettingsForm = false;
 let requestSettingsAutoSave = () => {};
 let flushSettingsAutoSave = () => Promise.resolve(false);
+
+function safeGetLocalStorageItem(key, fallback = '') {
+    try {
+        return localStorage.getItem(key) ?? fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function safeSetLocalStorageItem(key, value) {
+    try {
+        localStorage.setItem(key, String(value));
+    } catch {
+        // Storage can be unavailable in private browsing or embedded contexts.
+    }
+}
 
 export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSettingsSaved }) {
     const settingsBtn = document.getElementById('settings-btn');
@@ -52,7 +69,7 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         panels.forEach(panel => {
             panel.classList.toggle('active', panel.id === `tab-${activeTabId}`);
         });
-        localStorage.setItem('justsearch_settings_last_tab', activeTabId);
+        safeSetLocalStorageItem(SETTINGS_LAST_TAB_STORAGE_KEY, activeTabId);
     }
 
     tabs.forEach(tab => {
@@ -71,7 +88,7 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         if (mobileOverlay) {
             mobileOverlay.classList.remove('active');
         }
-        const lastTab = localStorage.getItem('justsearch_settings_last_tab') || 'general';
+        const lastTab = safeGetLocalStorageItem(SETTINGS_LAST_TAB_STORAGE_KEY, 'general');
         switchTab(lastTab);
         elements.settingsModal.classList.add('active');
         await updateVersionDisplay();
@@ -1355,4 +1372,6 @@ export const __settingsModalTestHooks = {
     renderEngineCheckResults,
     renderProviderList,
     renderWorkflowStepModels,
+    safeGetLocalStorageItem,
+    safeSetLocalStorageItem,
 };

@@ -45,7 +45,9 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
         return [];
     }
 
-    const inlineArtifact = extractInlineLiveArtifact(markdownText, messageId, Boolean(options.isStreaming));
+    const inlineArtifact = extractInlineLiveArtifact(markdownText, messageId, Boolean(options.isStreaming), {
+        suppressUnfencedInlineArtifact: Boolean(options.suppressUnfencedInlineArtifact),
+    });
     if (inlineArtifact) {
         hydrateArtifactCitations(inlineArtifact, artifactSources);
         syncRegistryForMessage(messageId, [inlineArtifact]);
@@ -84,8 +86,8 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
     return artifacts;
 }
 
-export function getInlineLiveArtifact(markdownText, messageId = 'message', isStreaming = false) {
-    return extractInlineLiveArtifact(markdownText, messageId, isStreaming);
+export function getInlineLiveArtifact(markdownText, messageId = 'message', isStreaming = false, options = {}) {
+    return extractInlineLiveArtifact(markdownText, messageId, isStreaming, options);
 }
 
 export function getLiveArtifactInteraction(markdownText, isStreaming = false) {
@@ -128,7 +130,7 @@ function extractLiveArtifacts(markdownText, messageId) {
     return [...artifacts, ...rawHtmlArtifacts];
 }
 
-function extractInlineLiveArtifact(markdownText, messageId, isStreaming) {
+function extractInlineLiveArtifact(markdownText, messageId, isStreaming, options = {}) {
     const text = String(markdownText || '').trim();
     if (!text) return null;
 
@@ -151,7 +153,10 @@ function extractInlineLiveArtifact(markdownText, messageId, isStreaming) {
     const unfenced = stripFencedCodeBlocks(text).trim();
     if (!unfenced || unfenced !== text) return null;
 
-    if (isStandaloneHtmlArtifact(unfenced) || (isStreaming && isLikelyStreamingHtmlArtifact(unfenced))) {
+    if (
+        !options.suppressUnfencedInlineArtifact
+        && (isStandaloneHtmlArtifact(unfenced) || (isStreaming && isLikelyStreamingHtmlArtifact(unfenced)))
+    ) {
         return createInlineArtifact(unfenced, messageId, {
             isStreaming,
             language: /^<svg[\s>]/i.test(unfenced) ? 'svg' : 'html',

@@ -1,12 +1,29 @@
 import { state, setCurrentSessionId } from './state.js?v=2';
-import { elements } from './ui.js?v=17';
+import { elements } from './ui.js?v=18';
 import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=22';
 
 let popoverEl = null;
 let popoverTimeout = null;
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sidebarCollapsed';
 
 function encodeRouteSegment(value) {
     return encodeURIComponent(String(value ?? ''));
+}
+
+function safeGetLocalStorageItem(key, fallback = '') {
+    try {
+        return localStorage.getItem(key) ?? fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function safeSetLocalStorageItem(key, value) {
+    try {
+        localStorage.setItem(key, String(value));
+    } catch {
+        // Storage can be unavailable in private browsing or embedded contexts.
+    }
 }
 
 function removeRecentChatsPopover() {
@@ -115,7 +132,7 @@ function setupHistoryPopover(miniHistoryBtn, loadChat) {
 
 export function setupSidebar(loadChat) {
     if (window.innerWidth > 768) {
-        const sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        const sidebarCollapsed = safeGetLocalStorageItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
         if (sidebarCollapsed) {
             elements.sidebar.classList.add('collapsed');
         }
@@ -128,7 +145,7 @@ export function setupSidebar(loadChat) {
             elements.mobileOverlay.classList.add('active');
         } else {
             elements.sidebar.classList.toggle('collapsed');
-            localStorage.setItem('sidebarCollapsed', elements.sidebar.classList.contains('collapsed'));
+            safeSetLocalStorageItem(SIDEBAR_COLLAPSED_STORAGE_KEY, elements.sidebar.classList.contains('collapsed'));
         }
     };
 
@@ -239,7 +256,7 @@ export function setupSidebar(loadChat) {
     miniSearchBtn?.addEventListener('click', () => {
         if (elements.sidebar.classList.contains('collapsed')) {
             elements.sidebar.classList.remove('collapsed');
-            localStorage.setItem('sidebarCollapsed', 'false');
+            safeSetLocalStorageItem(SIDEBAR_COLLAPSED_STORAGE_KEY, 'false');
         }
         setTimeout(() => {
             openHistorySearch();
@@ -265,7 +282,7 @@ export function toggleSidebarFromShortcut() {
         elements.mobileOverlay.classList.toggle('active');
     } else {
         elements.sidebar.classList.toggle('collapsed');
-        localStorage.setItem('sidebarCollapsed', elements.sidebar.classList.contains('collapsed'));
+        safeSetLocalStorageItem(SIDEBAR_COLLAPSED_STORAGE_KEY, elements.sidebar.classList.contains('collapsed'));
     }
 }
 
@@ -285,3 +302,8 @@ function resetToNewChat() {
         window.history.pushState(null, '', '/');
     }
 }
+
+export const __sidebarTestHooks = {
+    safeGetLocalStorageItem,
+    safeSetLocalStorageItem,
+};

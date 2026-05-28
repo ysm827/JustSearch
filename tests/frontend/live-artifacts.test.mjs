@@ -196,7 +196,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=22');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=23');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -274,7 +274,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=22');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=23');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -369,6 +369,41 @@ test('inline Live Artifact citations inside the iframe become safe clickable sou
     assert.doesNotMatch(frame.srcdoc, /data-live-artifact-source-url="javascript:/);
     assert.match(frame.srcdoc, /<code>\[2\]<\/code>/);
     assert.match(frame.srcdoc, /<a href="https:\/\/already\.example">\[2\]<\/a>/);
+});
+
+test('saved HTML answers with sources render citation links instead of inline artifact frames', async () => {
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div id="chat-container"></div>
+            <section id="hero-section"></section>
+        </body>
+    `);
+
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=18');
+    Object.assign(elements, {
+        chatContainer: document.getElementById('chat-container'),
+        heroSection: document.getElementById('hero-section'),
+    });
+
+    appendMessage(
+        'assistant',
+        '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>',
+        null,
+        [{ id: 2, title: 'Linux Do', url: 'linux.do/' }],
+        null,
+        1,
+    );
+
+    const body = document.querySelector('.message-answer-body');
+    const citation = body.querySelector('.citation-link');
+    const reference = body.querySelector('li#ref-2 a');
+
+    assert.equal(body.querySelector('.live-artifact-inline-iframe'), null);
+    assert.ok(citation);
+    assert.equal(citation.textContent.trim(), '2');
+    assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+    assert.equal(reference.getAttribute('href'), 'https://linux.do/');
 });
 
 test('Live Artifact citation linker skips unsafe urls and existing links', () => {
@@ -731,8 +766,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=17');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=22');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=18');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=23');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -796,6 +831,101 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
         const citation = document.querySelector('.message-answer-body .citation-link');
         const reference = document.querySelector('.message-answer-body li#ref-2 a');
+        assert.ok(citation);
+        assert.equal(citation.textContent.trim(), '2');
+        assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+        assert.equal(reference.getAttribute('href'), 'https://linux.do/');
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('streaming raw HTML answer exits inline artifact mode when sources arrive', async () => {
+    const originalFetch = globalThis.fetch;
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <select id="model-select">
+                <option value="model-a" data-provider-id="provider-a">Model A</option>
+            </select>
+            <button id="send-btn"><span class="material-symbols-rounded">send</span></button>
+            <textarea id="user-input"></textarea>
+            <div id="chat-container"></div>
+            <section id="hero-section"></section>
+            <button id="new-chat-btn"></button>
+        </body>
+    `);
+
+    try {
+        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=18');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=23');
+        const encoder = new TextEncoder();
+        const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
+        const events = [
+            { type: 'meta', session_id: 'late-html-sources-session' },
+            { type: 'answer_chunk', content: htmlAnswer },
+            { type: 'sources', content: [{ id: 2, title: 'Linux Do', url: 'linux.do/' }] },
+            { type: 'answer', content: htmlAnswer, session_id: 'late-html-sources-session' },
+        ]
+            .map(event => `data: ${JSON.stringify(event)}\n\n`)
+            .join('') + 'data: [DONE]\n\n';
+
+        setCurrentSessionId(null);
+        setLiveArtifactsMode(false);
+        state.settings = {
+            default_provider_id: 'provider-a',
+            search_engine: 'searxng',
+            max_results: 10,
+            max_iterations: 3,
+            interactive_search: true,
+            max_concurrent_pages: 4,
+        };
+
+        globalThis.fetch = async (input) => {
+            const url = String(input);
+            if (url === '/api/chat') {
+                return new Response(new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(encoder.encode(events));
+                        controller.close();
+                    },
+                }), { status: 200 });
+            }
+            if (url === '/api/history' || url === '/api/history/groups') {
+                return new Response(JSON.stringify([]), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        };
+
+        const testElements = {
+            chatContainer: document.getElementById('chat-container'),
+            userInput: document.getElementById('user-input'),
+            sendBtn: document.getElementById('send-btn'),
+            heroSection: document.getElementById('hero-section'),
+            newChatBtn: document.getElementById('new-chat-btn'),
+        };
+        Object.assign(elements, testElements);
+        setupChatHandler(testElements, () => {});
+
+        const input = document.getElementById('user-input');
+        input.value = 'linuxdo是什么';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('send-btn').click();
+
+        for (let i = 0; i < 20; i += 1) {
+            const citation = document.querySelector('.message-answer-body .citation-link');
+            if (citation) break;
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        const body = document.querySelector('.message-answer-body');
+        const citation = body.querySelector('.citation-link');
+        const reference = body.querySelector('li#ref-2 a');
+        assert.equal(body.querySelector('.live-artifact-inline-iframe'), null);
         assert.ok(citation);
         assert.equal(citation.textContent.trim(), '2');
         assert.equal(citation.getAttribute('href'), 'https://linux.do/');

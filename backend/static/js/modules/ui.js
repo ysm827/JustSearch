@@ -6,7 +6,7 @@ import {
     createRegenerateButton
 } from './utils.js?v=3';
 import { extractSources, renderWithCitations } from './source-renderer.js?v=6';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=8';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=9';
 import { state } from './state.js?v=2';
 
 const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;
@@ -150,6 +150,10 @@ function shouldCollapseUserMessageContent(content) {
 
 function normalizeMessageRole(role) {
     return role === 'model' ? 'assistant' : role;
+}
+
+function hasCitationSources(sources) {
+    return Array.isArray(sources) && sources.length > 0;
 }
 
 function createMessageAvatar(role) {
@@ -337,13 +341,15 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
         const answerBody = document.createElement('div');
         answerBody.className = 'message-answer-body';
         answerBody.dataset.liveArtifactsMessageId = `history-${messageIndex ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        if (!getInlineLiveArtifact(content, answerBody.dataset.liveArtifactsMessageId, false)) {
+        const suppressUnfencedInlineArtifact = hasCitationSources(resolvedSources);
+        if (!getInlineLiveArtifact(content, answerBody.dataset.liveArtifactsMessageId, false, { suppressUnfencedInlineArtifact })) {
             answerBody.innerHTML = renderWithCitations(content, resolvedSources);
         }
         renderLiveArtifactsForMessage(answerBody, content, {
             messageId: answerBody.dataset.liveArtifactsMessageId,
             isStreaming: false,
             sources: resolvedSources,
+            suppressUnfencedInlineArtifact,
         });
         contentDiv.appendChild(answerBody);
     } else {

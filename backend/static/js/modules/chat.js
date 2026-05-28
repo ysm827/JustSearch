@@ -1,14 +1,18 @@
 import { coerceBooleanSetting, state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=2';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
 import { updateActiveHistoryItem } from './history-view.js?v=22';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=17';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=18';
 import { renderWithCitations } from './source-renderer.js?v=6';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=8';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=9';
 import { showToast } from './toast.js';
 import * as API from './api.js?v=3';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
+}
+
+function hasCitationSources(sources) {
+    return Array.isArray(sources) && sources.length > 0;
 }
 
 /**
@@ -158,13 +162,15 @@ export function setupChatHandler(elements, renderHistory) {
         let searchStartTime = Date.now();
 
         function renderCurrentAssistantAnswer(isStreaming) {
-            if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, isStreaming)) {
+            const suppressUnfencedInlineArtifact = hasCitationSources(currentSources);
+            if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, isStreaming, { suppressUnfencedInlineArtifact })) {
                 contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
             }
             renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
                 messageId: liveArtifactMessageId,
                 isStreaming,
                 sources: currentSources,
+                suppressUnfencedInlineArtifact,
             });
         }
 

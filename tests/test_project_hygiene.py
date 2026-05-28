@@ -979,13 +979,13 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "function getFaviconUrl" in renderer_source
     assert "from './source-renderer.js?v=6'" in ui_source
     assert "from './source-renderer.js?v=6'" in chat_source
-    assert "from './ui.js?v=17'" in (
+    assert "from './ui.js?v=18'" in (
         PROJECT_ROOT / "backend/static/js/modules/history-view.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=17'" in (
+    assert "from './ui.js?v=18'" in (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=17'" in (
+    assert "from './ui.js?v=18'" in (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
@@ -1028,7 +1028,7 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     ).read_text(encoding="utf-8")
 
     assert 'href="/static/css/style.css?v=25"' in index_source
-    assert 'src="/static/js/main.js?v=51"' in index_source
+    assert 'src="/static/js/main.js?v=52"' in index_source
     assert "@import url('./sections/base.css?v=4');" in style_source
     assert "@import url('./sections/sidebar.css?v=11');" in style_source
     assert "@import url('./sections/chat.css?v=10');" in style_source
@@ -1039,12 +1039,12 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "@import url('./sections/polish.css?v=6');" in style_source
     assert "from './modules/auth.js?v=1'" in main_source
     assert "from './modules/state.js?v=2'" in main_source
-    assert "from './modules/ui.js?v=17'" in main_source
-    assert "from './modules/chat.js?v=22'" in main_source
+    assert "from './modules/ui.js?v=18'" in main_source
+    assert "from './modules/chat.js?v=23'" in main_source
     assert "from './modules/browser-modal.js?v=4'" in main_source
     assert "from './modules/history-view.js?v=22'" in main_source
-    assert "from './modules/settings-modal.js?v=42'" in main_source
-    assert "from './modules/sidebar.js?v=15'" in main_source
+    assert "from './modules/settings-modal.js?v=43'" in main_source
+    assert "from './modules/sidebar.js?v=16'" in main_source
     assert "from './modules/model-selector.js?v=14'" in main_source
     assert "from './modules/api.js?v=3'" in main_source
     assert "import('./modules/utils.js?v=3')" in main_source
