@@ -812,6 +812,16 @@
     background: color-mix(in srgb, var(--success-light) 72%, transparent);
 }
 
+.log-spinner.failed {
+    color: var(--error);
+    background: color-mix(in srgb, var(--error-light) 76%, transparent);
+}
+
+.log-spinner.cancelled {
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning-light) 76%, transparent);
+}
+
 .log-status-text {
     white-space: nowrap;
     overflow: hidden;

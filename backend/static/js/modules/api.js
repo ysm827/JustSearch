@@ -397,6 +397,7 @@ export async function streamChat(query, callbacks) {
             }
             else if (event.type === 'error' && onError) {
                 onError(event.content);
+                return true;
             }
         } catch (e) {
             console.error('Error parsing SSE event', e);

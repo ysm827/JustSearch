@@ -9,7 +9,7 @@ import {
     isUnsupportedGemini25Model,
     splitModelItem,
 } from './provider-models.js?v=1';
-import * as API from './api.js?v=5';
+import * as API from './api.js?v=6';
 
 const WORKFLOW_STEPS = [
     { id: 'analysis', label: '问题分析' },

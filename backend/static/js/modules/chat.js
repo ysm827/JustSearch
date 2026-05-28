@@ -5,7 +5,7 @@ import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessag
 import { extractSources, hasCitationSources, linkCitationsInElement, renderWithCitations } from './source-renderer.js?v=8';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=11';
 import { showToast } from './toast.js';
-import * as API from './api.js?v=5';
+import * as API from './api.js?v=6';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
@@ -156,6 +156,7 @@ export function setupChatHandler(elements, renderHistory) {
         let hasReceivedChunk = false;
         let searchStats = null;
         let searchStartTime = Date.now();
+        let streamOutcome = 'completed';
 
         function renderCurrentAssistantAnswer(isStreaming) {
             const resolvedSources = hasCitationSources(currentSources)
@@ -254,6 +255,7 @@ export function setupChatHandler(elements, renderHistory) {
                     refreshHistory();
                 },
                 onError: (err) => {
+                    streamOutcome = 'failed';
                     if (!hasReceivedChunk) {
                         contentWrapper.innerHTML = '';
                     }
@@ -284,11 +286,13 @@ export function setupChatHandler(elements, renderHistory) {
                 contentWrapper.innerHTML = '';
             }
             if (e.name === 'AbortError') {
+                streamOutcome = 'cancelled';
                 const warnDiv = document.createElement('div');
                 warnDiv.className = 'warning-box';
                 warnDiv.textContent = '[已由用户停止]';
                 contentWrapper.appendChild(warnDiv);
             } else {
+                streamOutcome = 'failed';
                 console.error(e);
                 const errDiv = document.createElement('div');
                 errDiv.className = 'error-box';
@@ -306,10 +310,22 @@ export function setupChatHandler(elements, renderHistory) {
             elements.sendBtn.classList.remove('processing');
             updateSendButtonState();
             spinner.classList.remove('rotating');
-            spinner.textContent = 'check_circle';
-            spinner.classList.add('completed');
-            logContainer.classList.add('completed');
-            if (searchStats && searchStats.sites_searched > 0) {
+            spinner.classList.remove('completed', 'failed', 'cancelled');
+            logContainer.classList.remove('completed', 'failed', 'cancelled');
+            if (streamOutcome === 'failed') {
+                spinner.textContent = 'error';
+                spinner.classList.add('failed');
+                logContainer.classList.add('failed');
+                statusText.textContent = `失败 · ${totalElapsed}s`;
+            } else if (streamOutcome === 'cancelled') {
+                spinner.textContent = 'stop_circle';
+                spinner.classList.add('cancelled');
+                logContainer.classList.add('cancelled');
+                statusText.textContent = `已停止 · ${totalElapsed}s`;
+            } else if (searchStats && searchStats.sites_searched > 0) {
+                spinner.textContent = 'check_circle';
+                spinner.classList.add('completed');
+                logContainer.classList.add('completed');
                 let statsText = `已完成 · 搜索 ${searchStats.sites_searched} 个结果`;
                 if (searchStats.sites_crawled > 0) {
                     statsText += ` · 深度阅读 ${searchStats.sites_crawled} 个页面`;
@@ -317,6 +333,9 @@ export function setupChatHandler(elements, renderHistory) {
                 statsText += ` · ${totalElapsed}s`;
                 statusText.textContent = statsText;
             } else {
+                spinner.textContent = 'check_circle';
+                spinner.classList.add('completed');
+                logContainer.classList.add('completed');
                 statusText.textContent = `已完成 · ${totalElapsed}s`;
             }
             // 搜索完成，自动折叠过程日志
