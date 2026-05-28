@@ -1016,13 +1016,14 @@ def _normalize_loaded_settings(
         )
         return result
 
-    legacy_provider = {
-        "id": result.get("default_provider_id") or "default",
-        "name": "Default",
-        "api_key": result.get("api_key", ""),
-        "base_url": result.get("base_url", "https://api.openai.com/v1"),
-        "model_id": result.get("model_id", ""),
-    }
+    legacy_provider = copy.deepcopy(DEFAULT_SETTINGS["providers"][0])
+    if has_legacy_model_config:
+        legacy_provider["id"] = str(
+            result.get("default_provider_id") or legacy_provider["id"]
+        ).strip() or legacy_provider["id"]
+        legacy_provider["api_key"] = legacy_api_key
+        legacy_provider["base_url"] = legacy_base_url or legacy_provider["base_url"]
+        legacy_provider["model_id"] = legacy_model_id or legacy_provider["model_id"]
     result["default_provider_id"] = legacy_provider["id"]
     result["providers"] = [legacy_provider]
     result["workflow_step_models"] = _normalize_loaded_workflow_step_models(

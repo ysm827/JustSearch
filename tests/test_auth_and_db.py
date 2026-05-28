@@ -2208,7 +2208,7 @@ def test_loaded_settings_backfill_missing_workflow_step_models():
 
 
 def test_loaded_settings_filters_invalid_provider_entries():
-    from backend.app.database import _normalize_loaded_settings
+    from backend.app.database import DEFAULT_SETTINGS, _normalize_loaded_settings
 
     settings = _normalize_loaded_settings(
         {
@@ -2239,6 +2239,37 @@ def test_loaded_settings_filters_invalid_provider_entries():
             "model_id": "gpt-4.1",
         }
     ]
+
+    defaulted = _normalize_loaded_settings(
+        {
+            "default_provider_id": "missing-provider",
+            "providers": [42, {}, {"id": "  "}],
+        },
+        has_stored_providers=True,
+    )
+    assert defaulted["default_provider_id"] == DEFAULT_SETTINGS["default_provider_id"]
+    assert defaulted["providers"] == DEFAULT_SETTINGS["providers"]
+
+
+def test_loaded_settings_preserves_legacy_fields_when_provider_list_is_empty():
+    from backend.app.database import _normalize_loaded_settings
+
+    settings = _normalize_loaded_settings(
+        {
+            "default_provider_id": "legacy-provider",
+            "api_key": "legacy-secret",
+            "base_url": "https://legacy.example/v1",
+            "model_id": "legacy-model",
+            "providers": [],
+        },
+        has_stored_providers=True,
+    )
+
+    assert settings["default_provider_id"] == "legacy-provider"
+    assert settings["providers"][0]["id"] == "legacy-provider"
+    assert settings["providers"][0]["api_key"] == "legacy-secret"
+    assert settings["providers"][0]["base_url"] == "https://legacy.example/v1"
+    assert settings["providers"][0]["model_id"] == "legacy-model"
 
 
 def test_workflow_step_model_resolution_reuses_fallback_api_key(monkeypatch):
