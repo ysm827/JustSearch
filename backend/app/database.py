@@ -699,17 +699,21 @@ def _normalize_imported_chat(chat: dict) -> Optional[Dict[str, Any]]:
     if not session_id or not isinstance(messages, list) or not messages:
         return None
     session_time = _parse_imported_timestamp(chat.get("timestamp"))
+    normalized_messages = [
+        _normalize_imported_message(message, index, session_time)
+        for index, message in enumerate(messages)
+        if isinstance(message, dict)
+    ]
+    if not normalized_messages:
+        return None
     return {
         "id": session_id,
-        "title": str(chat.get("title", "")).strip() or _extract_title(str(messages[0].get("content", ""))),
+        "title": str(chat.get("title", "")).strip()
+        or _extract_title(normalized_messages[0]["content"]),
         "group_id": _normalize_optional_id(chat.get("group_id") or chat.get("groupId")),
         "created_at": session_time,
         "updated_at": session_time,
-        "messages": [
-            _normalize_imported_message(message, index, session_time)
-            for index, message in enumerate(messages)
-            if isinstance(message, dict)
-        ],
+        "messages": normalized_messages,
     }
 
 

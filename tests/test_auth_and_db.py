@@ -867,6 +867,59 @@ def test_import_history_package_ignores_non_scalar_group_id(tmp_path):
     asyncio.run(run())
 
 
+def test_import_history_package_skips_malformed_messages_when_generating_title(tmp_path):
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+
+        summary = await database.import_history_package(
+            {
+                "type": "JustSearch-History",
+                "version": 1,
+                "history": [
+                    {
+                        "id": "mixed-message-import",
+                        "messages": [
+                            "bad first message",
+                            None,
+                            {"role": "user", "content": "valid imported prompt"},
+                        ],
+                    },
+                    {
+                        "id": "all-bad-message-import",
+                        "messages": ["bad", None, 42],
+                    },
+                ],
+            }
+        )
+
+        imported = await database.load_chat_history("mixed-message-import")
+        skipped = await database.load_chat_history("all-bad-message-import")
+
+        assert summary["imported_sessions"] == 1
+        assert imported["title"] == "valid imported prompt"
+        assert [message["content"] for message in imported["messages"]] == ["valid imported prompt"]
+        assert skipped is None
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_import_history_package_ignores_route_unsafe_ids(tmp_path):
     from backend.app import database
 
