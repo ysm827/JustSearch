@@ -719,6 +719,82 @@ def test_search_web_uses_fallback_after_engine_is_marked_unhealthy(monkeypatch):
     assert engine_health.get_stats()["brave"]["healthy"] is False
 
 
+def test_search_web_cache_is_isolated_from_returned_results(monkeypatch):
+    class FakeMouse:
+        async def move(self, *_args):
+            return None
+
+    class FakePage:
+        mouse = FakeMouse()
+
+        def __init__(self):
+            self.loaded_urls = []
+
+        async def goto(self, url, **_kwargs):
+            self.loaded_urls.append(url)
+            return None
+
+        async def evaluate(self, script, *_args):
+            if "querySelectorAll" not in script:
+                return None
+            return [
+                {
+                    "id": 1,
+                    "title": "Original cached title",
+                    "url": "https://example.com/original",
+                    "snippet": "cache isolation",
+                }
+            ]
+
+        async def content(self):
+            return ""
+
+        async def query_selector(self, *_args):
+            return None
+
+        async def wait_for_selector(self, *_args, **_kwargs):
+            return None
+
+    @asynccontextmanager
+    async def fake_rate_limit(_log_func=None):
+        yield
+
+    async def fake_release_page(_page):
+        return None
+
+    fake_page = FakePage()
+
+    async def fake_get_new_page():
+        return fake_page
+
+    async def fake_resolve(url, log_func=None):
+        return url
+
+    browser_manager._search_cache.clear()
+    engine_health._results.clear()
+    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
+    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
+    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
+    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
+    monkeypatch.setattr(browser_manager.random, "uniform", lambda *_args: 0)
+
+    manager = BrowserManager(engine="searxng", max_results=3)
+
+    async def fake_apply_stealth(_page):
+        return None
+
+    manager.stealth.apply_stealth_async = fake_apply_stealth
+
+    first = asyncio.run(manager.search_web("cache isolation"))
+    first[0]["title"] = "Mutated by caller"
+
+    second = asyncio.run(manager.search_web("cache isolation"))
+
+    assert second[0]["title"] == "Original cached title"
+    assert fake_page.loaded_urls == ["https://searx.be/search?q=cache%20isolation&format=html"]
+
+
 def test_search_web_can_check_preferred_engine_without_fallback_or_cache(monkeypatch):
     class FakeMouse:
         async def move(self, *_args):

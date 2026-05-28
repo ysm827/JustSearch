@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import random
 import time
@@ -35,6 +36,11 @@ _MANUAL_VERIFICATION_TIMEOUT_SECONDS = 600.0
 _MAX_MANUAL_VERIFICATION_STEPS = 3
 
 logger = logging.getLogger(__name__)
+
+
+def _clone_search_results(results: List[Dict]) -> List[Dict]:
+    """Return an isolated copy so cached search results cannot be mutated by callers."""
+    return copy.deepcopy(results)
 
 
 def _search_failure_reason(error: Exception | str) -> str:
@@ -114,7 +120,7 @@ class BrowserManager:
                 success=True,
                 batch_id=health_batch_id,
             )
-            return cached[0]
+            return _clone_search_results(cached[0])
 
         pool = get_context_pool_status()
         if pool["active_contexts"] == 0:
@@ -200,7 +206,7 @@ class BrowserManager:
                         batch_id=health_batch_id,
                     )
                     if use_cache:
-                        _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
+                        _search_cache[f"{actual_engine}:{query}"] = (_clone_search_results(results), time.time())
                     return results
                 engine_health.record(
                     actual_engine,
@@ -313,7 +319,7 @@ class BrowserManager:
                 )
             # Cache results (use actual engine in key for consistency)
             if results and use_cache:
-                _search_cache[f"{actual_engine}:{query}"] = (results, time.time())
+                _search_cache[f"{actual_engine}:{query}"] = (_clone_search_results(results), time.time())
             return results
         except Exception as e:
             msg = f"搜索错误: {e}"
