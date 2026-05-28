@@ -1,9 +1,9 @@
 import { coerceBooleanSetting, state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=2';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
 import { updateActiveHistoryItem } from './history-view.js?v=22';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=19';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=20';
 import { renderWithCitations } from './source-renderer.js?v=7';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=10';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=11';
 import { showToast } from './toast.js';
 import * as API from './api.js?v=4';
 

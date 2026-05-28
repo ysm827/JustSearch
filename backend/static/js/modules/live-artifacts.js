@@ -1030,12 +1030,36 @@ function parseInfoAttributes(info) {
 }
 
 function stripTags(value) {
-    if (typeof document === 'undefined') {
-        return String(value || '').replace(/<[^>]*>/g, '').trim();
-    }
-    const div = document.createElement('div');
-    div.innerHTML = value;
-    return div.textContent.trim();
+    const text = String(value || '')
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<[^>]*>/g, '');
+    return decodeHtmlEntities(text).replace(/\s+/g, ' ').trim();
+}
+
+function decodeHtmlEntities(value) {
+    return String(value || '').replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (match, entity) => {
+        const normalized = entity.toLowerCase();
+        if (normalized.startsWith('#x')) {
+            const codePoint = Number.parseInt(normalized.slice(2), 16);
+            return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+                ? String.fromCodePoint(codePoint)
+                : match;
+        }
+        if (normalized.startsWith('#')) {
+            const codePoint = Number.parseInt(normalized.slice(1), 10);
+            return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+                ? String.fromCodePoint(codePoint)
+                : match;
+        }
+        return {
+            amp: '&',
+            lt: '<',
+            gt: '>',
+            quot: '"',
+            apos: "'",
+            nbsp: ' ',
+        }[normalized] ?? match;
+    });
 }
 
 function getArtifactFileName(title, language) {

@@ -48,7 +48,7 @@ test('history search uses backend full-text results without replacing cached his
     };
     globalThis.clearTimeout = () => {};
     try {
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=19');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=20');
         const historyView = await import('../../backend/static/js/modules/history-view.js?test=fts-search');
         elements.historyList = document.getElementById('history-list');
         elements.historySearchInput = document.getElementById('history-search-input');
@@ -99,7 +99,7 @@ test('history item export opens in an isolated new window', async () => {
         return null;
     };
 
-    const { elements } = await import('../../backend/static/js/modules/ui.js?v=19');
+    const { elements } = await import('../../backend/static/js/modules/ui.js?v=20');
     const historyView = await import('../../backend/static/js/modules/history-view.js?test=export-window');
     elements.historyList = document.getElementById('history-list');
     elements.historySearchInput = document.getElementById('history-search-input');

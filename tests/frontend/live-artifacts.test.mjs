@@ -87,6 +87,35 @@ test('complete HTML blocks are treated as self-contained Live Artifacts', () => 
     assert.doesNotMatch(artifacts[0].code, /background:\s*red/);
 });
 
+test('artifact titles strip hostile markup without DOM parsing', () => {
+    installBrowserGlobals();
+    const originalCreateElement = document.createElement.bind(document);
+    let createElementCalls = 0;
+    document.createElement = () => {
+        createElementCalls += 1;
+        throw new Error('title extraction should not parse DOM nodes');
+    };
+
+    try {
+        const markdown = [
+            '```html',
+            '<!doctype html>',
+            '<html>',
+            '<head><title><img src=x onerror=alert(1)>Safe &amp; Sound &#x1F4A1;</title></head>',
+            '<body>Ready</body>',
+            '</html>',
+            '```',
+        ].join('\n');
+        const artifacts = extractLiveArtifacts(markdown, 'message-hostile-title');
+
+        assert.equal(artifacts.length, 1);
+        assert.equal(artifacts[0].title, 'Safe & Sound 💡');
+        assert.equal(createElementCalls, 0);
+    } finally {
+        document.createElement = originalCreateElement;
+    }
+});
+
 test('AMC-style raw inline HTML fragments render as inline Live Artifact frames', () => {
     const html = '<section style="display:grid"><strong>Inline Artifact</strong></section>';
     const artifact = extractInlineLiveArtifact(html, 'message-inline', false);
@@ -196,7 +225,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=25');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -274,7 +303,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=25');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -380,7 +409,7 @@ test('saved HTML answers with sources render citation links instead of inline ar
         </body>
     `);
 
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=19');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=20');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -415,7 +444,7 @@ test('saved rich HTML table answers link citation tags in place', async () => {
         </body>
     `);
 
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=19');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=20');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -815,8 +844,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=19');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=25');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=20');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -907,8 +936,8 @@ test('streaming raw HTML answer exits inline artifact mode when sources arrive',
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=19');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=25');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=20');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1002,8 +1031,8 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=19');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=25');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=20');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
