@@ -359,7 +359,7 @@ export async function streamChat(query, callbacks) {
                 onAnswerChunk(event.content);
             }
             else if (event.type === 'answer' && onAnswer) {
-                onAnswer(event.content, event.session_id);
+                onAnswer(event.content, event.session_id, event.sources);
             }
             else if (event.type === 'error' && onError) {
                 onError(event.content);

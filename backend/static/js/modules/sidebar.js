@@ -234,7 +234,7 @@ export function setupSidebar(loadChat) {
             applyTheme(newTheme);
             updateThemeIcon();
 
-            const { saveSettingsAPI } = await import('./api.js?v=3');
+            const { saveSettingsAPI } = await import('./api.js?v=4');
             const { state } = await import('./state.js?v=2');
             if (state.settings) {
                 const newSettings = { ...state.settings, theme: newTheme };

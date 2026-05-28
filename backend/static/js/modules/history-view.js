@@ -8,7 +8,7 @@ import {
     renameChatAPI,
     searchHistory,
     updateChatGroupAPI
-} from './api.js?v=3';
+} from './api.js?v=4';
 import { state } from './state.js?v=2';
 import { showToast } from './toast.js';
 import { elements, showConfirm } from './ui.js?v=18';

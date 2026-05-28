@@ -306,7 +306,7 @@ function createMessageActions({ role, content, msgDiv, messageIndex, actionCallb
     if (messageIndex !== null) {
         buttons.push(createDeleteMessageButton(async () => {
             if (!await showConfirm('确定要删除这条消息吗？', '删除消息')) return;
-            const { deleteMessageAPI } = await import('./api.js?v=3');
+                const { deleteMessageAPI } = await import('./api.js?v=4');
             const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
             if (ok) {
                 msgDiv.remove();

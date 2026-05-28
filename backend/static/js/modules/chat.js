@@ -5,7 +5,7 @@ import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessag
 import { renderWithCitations } from './source-renderer.js?v=6';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=9';
 import { showToast } from './toast.js';
-import * as API from './api.js?v=3';
+import * as API from './api.js?v=4';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
@@ -244,7 +244,10 @@ export function setupChatHandler(elements, renderHistory) {
                     renderCurrentAssistantAnswer(true);
                     if (!userScrolled) scrollToBottom();
                 },
-                onAnswer: (finalAnswer, sessionId) => {
+                onAnswer: (finalAnswer, sessionId, finalSources) => {
+                    if (Array.isArray(finalSources) && finalSources.length > 0) {
+                        currentSources = finalSources;
+                    }
                     currentAnswerBuffer = finalAnswer;
                     renderCurrentAssistantAnswer(false);
                     setCurrentSessionId(sessionId);

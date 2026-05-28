@@ -7,7 +7,7 @@ import json
 import logging
 import base64
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
@@ -117,6 +117,21 @@ def _safe_step_model_meta(step_model_configs: dict[str, dict[str, str]]) -> dict
         }
         for step_id, config in step_model_configs.items()
     }
+
+
+def _client_source_payload(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payload = []
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        item = {
+            key: source[key]
+            for key in ("id", "title", "url", "date")
+            if key in source and source[key] not in (None, "")
+        }
+        if item:
+            payload.append(item)
+    return payload
 
 
 def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
@@ -379,7 +394,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
 
         def source_callback(sources):
             accumulated_sources[:] = list(sources or [])
-            queue.put_nowait({"type": "sources", "content": sources})
+            queue.put_nowait({"type": "sources", "content": _client_source_payload(accumulated_sources)})
 
         def stats_callback(stats):
             nonlocal final_stats
@@ -446,12 +461,12 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
                 
                 await save_chat_history(session_id, full_messages, title)
 
-                yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id})}\n\n"
+                yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id, 'sources': _client_source_payload(accumulated_sources)})}\n\n"
 
             except Exception as e:
                 logger.error("Failed to save chat history for %s: %s", session_id, e)
                 # Still yield the answer even if saving fails
-                yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id})}\n\n"
+                yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id, 'sources': _client_source_payload(accumulated_sources)})}\n\n"
 
             yield "data: [DONE]\n\n"
 

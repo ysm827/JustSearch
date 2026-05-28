@@ -1030,7 +1030,7 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     ).read_text(encoding="utf-8")
 
     assert 'href="/static/css/style.css?v=25"' in index_source
-    assert 'src="/static/js/main.js?v=52"' in index_source
+    assert 'src="/static/js/main.js?v=53"' in index_source
     assert "@import url('./sections/base.css?v=4');" in style_source
     assert "@import url('./sections/sidebar.css?v=11');" in style_source
     assert "@import url('./sections/chat.css?v=10');" in style_source
@@ -1042,13 +1042,13 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "from './modules/auth.js?v=1'" in main_source
     assert "from './modules/state.js?v=2'" in main_source
     assert "from './modules/ui.js?v=18'" in main_source
-    assert "from './modules/chat.js?v=23'" in main_source
+    assert "from './modules/chat.js?v=24'" in main_source
     assert "from './modules/browser-modal.js?v=4'" in main_source
     assert "from './modules/history-view.js?v=22'" in main_source
     assert "from './modules/settings-modal.js?v=43'" in main_source
     assert "from './modules/sidebar.js?v=16'" in main_source
     assert "from './modules/model-selector.js?v=14'" in main_source
-    assert "from './modules/api.js?v=3'" in main_source
+    assert "from './modules/api.js?v=4'" in main_source
     assert "import('./modules/utils.js?v=3')" in main_source
 
 

@@ -3,7 +3,7 @@ import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=2
 import { showToast } from './toast.js';
 import { elements, showConfirm } from './ui.js?v=18';
 import { renderHistory } from './history-view.js?v=22';
-import * as API from './api.js?v=3';
+import * as API from './api.js?v=4';
 
 const WORKFLOW_STEPS = [
     { id: 'analysis', label: '问题分析' },
