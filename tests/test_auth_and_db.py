@@ -248,6 +248,58 @@ def test_markdown_source_formatter_rejects_unsafe_urls():
     ) == "- [Safe \\] title](https://example.com/a%29b)"
 
 
+def test_export_all_markdown_keeps_full_answers_and_sources(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        long_answer = ("完整回答段落。" * 180) + "末尾不能丢"
+        await database.save_chat_history(
+            "export-full-markdown",
+            [
+                {"role": "user", "content": "导出测试"},
+                {
+                    "role": "assistant",
+                    "content": long_answer,
+                    "sources": [{"title": "来源]标题", "url": "https://example.com/a)b"}],
+                },
+            ],
+            title="导出完整性",
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/history/export/all")
+
+        assert response.status_code == 200
+        exported = response.text
+        assert "完整回答段落。" in exported
+        assert "末尾不能丢" in exported
+        assert "### 参考资料" in exported
+        assert "- [来源\\]标题](https://example.com/a%29b)" in exported
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_save_chat_history_populates_fts_table(tmp_path):
     from backend.app import database
 

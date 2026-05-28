@@ -221,7 +221,13 @@ async def export_all_chats(format: str = "markdown"):
             if role == "user":
                 md_lines.append(f"### 👤 用户\n\n{content}\n")
             elif role == "assistant":
-                md_lines.append(f"### 🤖 助手\n\n{content[:2000]}\n")
+                md_lines.append(f"### 🤖 助手\n\n{content}\n")
+                sources = msg.get("sources", [])
+                if sources:
+                    md_lines.append("### 参考资料\n")
+                    for src in sources:
+                        md_lines.append(_format_source_markdown_item(src))
+                    md_lines.append("")
 
     return Response(
         content="\n".join(md_lines),
