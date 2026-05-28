@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -3478,3 +3479,106 @@ def test_engines_endpoint_returns_full_configured_engine_list(monkeypatch):
         }
 
     asyncio.run(run())
+
+
+def test_github_stats_endpoint_caches_recent_failures(monkeypatch):
+    from backend.app.routers import stats as stats_router
+
+    class FailingClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def get(self, _url):
+            self.calls += 1
+            raise RuntimeError("network down")
+
+    client = FailingClient()
+    stats_router.github_stats_cache.update({
+        "stars": 12,
+        "last_updated": None,
+        "last_error_at": None,
+        "error": "",
+    })
+    stats_router.set_httpx_client(client)
+
+    app = FastAPI()
+    app.include_router(stats_router.router)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+            first = await http_client.get("/api/stats/github")
+            second = await http_client.get("/api/stats/github")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json() == {"stars": 12, "error": "network down"}
+        assert second.json() == {"stars": 12, "error": "network down"}
+        assert client.calls == 1
+
+    try:
+        asyncio.run(run())
+    finally:
+        stats_router.set_httpx_client(None)
+        stats_router.github_stats_cache.update({
+            "stars": 0,
+            "last_updated": None,
+            "last_error_at": None,
+            "error": "",
+        })
+
+
+def test_github_stats_endpoint_retries_after_error_cache_expires():
+    from backend.app.routers import stats as stats_router
+
+    class SuccessfulClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def get(self, _url):
+            self.calls += 1
+
+            class Response:
+                status_code = 200
+
+                @staticmethod
+                def json():
+                    return {"stargazers_count": 42}
+
+            return Response()
+
+    client = SuccessfulClient()
+    stats_router.github_stats_cache.update({
+        "stars": 12,
+        "last_updated": None,
+        "last_error_at": datetime.now() - timedelta(seconds=stats_router.GITHUB_STATS_ERROR_CACHE_TTL_SECONDS + 1),
+        "error": "network down",
+    })
+    stats_router.set_httpx_client(client)
+
+    app = FastAPI()
+    app.include_router(stats_router.router)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+            first = await http_client.get("/api/stats/github")
+            second = await http_client.get("/api/stats/github")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json() == {"stars": 42}
+        assert second.json() == {"stars": 42}
+        assert client.calls == 1
+        assert stats_router.github_stats_cache["error"] == ""
+
+    try:
+        asyncio.run(run())
+    finally:
+        stats_router.set_httpx_client(None)
+        stats_router.github_stats_cache.update({
+            "stars": 0,
+            "last_updated": None,
+            "last_error_at": None,
+            "error": "",
+        })
