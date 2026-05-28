@@ -349,6 +349,31 @@ class TestLLMResponseParsing:
         assert len(calls) == 2
         llm_module._ANALYSIS_CACHE.clear()
 
+    def test_analyze_task_transient_failure_fallback_is_not_cached(self):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        llm_module._ANALYSIS_CACHE.clear()
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        calls = 0
+
+        async def fake_call(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("temporary upstream failure")
+            return '{"type": "search", "queries": ["recovered analysis"]}'
+
+        client._call_with_retry = fake_call
+
+        first = asyncio.run(client.analyze_task("transient query"))
+        second = asyncio.run(client.analyze_task("transient query"))
+
+        assert first == {"type": "search", "queries": ["transient query"]}
+        assert second == {"type": "search", "queries": ["recovered analysis"]}
+        assert calls == 2
+        llm_module._ANALYSIS_CACHE.clear()
+
     def test_relevance_cache_is_scoped_by_snippet_content(self):
         import asyncio
         from backend.app import llm_client as llm_module

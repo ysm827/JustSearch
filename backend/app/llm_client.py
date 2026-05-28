@@ -505,7 +505,6 @@ class LLMClient:
         except Exception as e:
             logger.error("Error in analyze_task: %s", e)
             result = {"type": "search", "queries": [user_input]}
-            _cache_analysis_result(cache_key, result)
             return result
 
     async def assess_relevance(self, query: str, snippets: List[Dict]) -> List[int]:
