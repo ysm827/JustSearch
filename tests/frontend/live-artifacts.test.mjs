@@ -225,7 +225,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=27');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -303,7 +303,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=27');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -409,7 +409,7 @@ test('saved HTML answers with sources render citation links instead of inline ar
         </body>
     `);
 
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=20');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=21');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -444,7 +444,7 @@ test('saved rich HTML table answers link citation tags in place', async () => {
         </body>
     `);
 
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=20');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=21');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -492,7 +492,7 @@ test('saved HTML answers with JSON-encoded sources still render citation links',
         </body>
     `);
 
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=20');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=21');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -651,7 +651,7 @@ test('Live Artifact frame messages require a registered preview iframe source', 
 test('streamChat sends live_artifacts_mode without the old Canvas request field', async () => {
     installBrowserGlobals();
     const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=4');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=5');
     let capturedBody = null;
     let doneCalled = false;
 
@@ -691,7 +691,7 @@ test('streamChat sends live_artifacts_mode without the old Canvas request field'
 test('streamChat processes trailing SSE event when stream closes without blank delimiter', async () => {
     installBrowserGlobals();
     const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=4');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=5');
     let answer = null;
     let doneCalled = false;
 
@@ -730,10 +730,35 @@ test('streamChat processes trailing SSE event when stream closes without blank d
     assert.equal(doneCalled, true);
 });
 
+test('streamChat reports plain text error responses from gateways', async () => {
+    installBrowserGlobals();
+    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=5');
+    let errorMessage = '';
+
+    state.currentSessionId = 'session-text-error';
+    state.settings = {
+        default_provider_id: 'provider-a',
+        search_engine: 'searxng',
+        max_results: 10,
+        max_iterations: 3,
+        interactive_search: true,
+    };
+    globalThis.fetch = async () => new Response('gateway unavailable', { status: 502 });
+
+    await streamChat('hello', {
+        model: 'model-a',
+        providerId: 'provider-a',
+        onError: message => { errorMessage = message; },
+    });
+
+    assert.equal(errorMessage, 'gateway unavailable');
+});
+
 test('streamChat does not retry a non-idempotent chat request after response starts', async () => {
     installBrowserGlobals();
     const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=4');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=5');
     const originalSetTimeout = globalThis.setTimeout;
     const originalConsoleError = console.error;
     let fetchCalls = 0;
@@ -902,8 +927,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=20');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=21');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=27');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -994,8 +1019,8 @@ test('streaming raw HTML answer exits inline artifact mode when sources arrive',
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=20');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=21');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=27');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1089,8 +1114,8 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=20');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=26');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=21');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=27');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1172,7 +1197,7 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
 
 test('citation rendering resolves sparse source ids instead of array positions', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
 
     const html = renderWithCitations('Sparse citation [4]', [
         { id: 2, title: 'Second', url: 'https://two.example' },
@@ -1190,7 +1215,7 @@ test('citation rendering resolves sparse source ids instead of array positions',
 
 test('citation rendering normalizes bare-domain source urls', async () => {
     installBrowserGlobals();
-    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
+    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
 
     const html = renderWithCitations('官网 [2]', [
         { id: 2, title: 'Linux Do', url: 'linux.do/' },
@@ -1210,9 +1235,33 @@ test('citation rendering normalizes bare-domain source urls', async () => {
     assert.equal(hasCitationSources(JSON.stringify([{ id: 2, title: 'Linux Do', url: 'linux.do/' }])), true);
 });
 
+test('citation hydration links raw citation tags left in rendered HTML', async () => {
+    installBrowserGlobals();
+    const { linkCitationsInElement } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
+
+    const container = document.createElement('div');
+    container.innerHTML = [
+        '<table><tbody><tr><td>官网</td><td>来源给出的官网是 linux.do/。[2]</td></tr></tbody></table>',
+        '<a href="https://already.example">[2]</a>',
+        '<code>[2]</code>',
+    ].join('');
+
+    const linked = linkCitationsInElement(container, [
+        { id: 2, title: 'Linux Do', url: 'linux.do/' },
+    ]);
+    const citation = container.querySelector('table .citation-link');
+
+    assert.equal(linked, true);
+    assert.ok(citation);
+    assert.equal(citation.textContent.trim(), '2');
+    assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+    assert.equal(container.querySelector('a[href="https://already.example"]').textContent, '[2]');
+    assert.equal(container.querySelector('code').textContent, '[2]');
+});
+
 test('citation rendering accepts JSON-encoded source arrays', async () => {
     installBrowserGlobals();
-    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
+    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
 
     const html = renderWithCitations(
         '<div><p>官网来源 [2]</p><code>[2]</code></div>',
@@ -1234,7 +1283,7 @@ test('citation rendering accepts JSON-encoded source arrays', async () => {
 
 test('citation rendering links citations from embedded reference markdown when sources are absent', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
 
     const html = renderWithCitations([
         '官网 来源给出的官网是 linux.do/。[2]',
@@ -1259,7 +1308,7 @@ test('citation rendering links citations from embedded reference markdown when s
 
 test('citation rendering neutralizes non-http source urls', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
 
     const html = renderWithCitations('Unsafe citation [1]', [
         { id: 1, title: 'Unsafe', url: 'javascript:alert(1)' },
@@ -1279,7 +1328,7 @@ test('citation rendering neutralizes non-http source urls', async () => {
 
 test('citation rendering tolerates malformed source payloads', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
 
     assert.doesNotThrow(() => renderWithCitations('No sources [1]', { id: 1, url: 'https://bad.example' }));
     assert.doesNotThrow(() => renderWithCitations(null, [{ id: 1, url: 'https://safe.example' }]));

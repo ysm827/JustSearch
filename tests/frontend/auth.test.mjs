@@ -114,6 +114,47 @@ test('api path helper encodes ids before route interpolation', async () => {
     assert.equal(__apiTestHooks.encodePathSegment('id?x=1#frag'), 'id%3Fx%3D1%23frag');
 });
 
+test('api error helper reads JSON details and plain text bodies', async () => {
+    globalThis.document = {
+        addEventListener: () => {},
+    };
+    globalThis.window = {
+        markdownit: () => ({
+            render: value => String(value || ''),
+            utils: { escapeHtml: value => String(value || '') },
+        }),
+        DOMPurify: { sanitize: value => String(value || '') },
+        hljs: { getLanguage: () => false, highlightAuto: value => ({ value }) },
+    };
+
+    const { __apiTestHooks } = await import('../../backend/static/js/modules/api.js?test=error-helper');
+
+    assert.equal(
+        await __apiTestHooks.getResponseErrorMessage(
+            new Response(JSON.stringify({ detail: { reason: 'bad config' } }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+            }),
+            'fallback',
+        ),
+        '{"reason":"bad config"}',
+    );
+    assert.equal(
+        await __apiTestHooks.getResponseErrorMessage(
+            new Response('gateway unavailable', { status: 502 }),
+            'fallback',
+        ),
+        'gateway unavailable',
+    );
+    assert.equal(
+        await __apiTestHooks.getResponseErrorMessage(
+            new Response('', { status: 504 }),
+            'fallback',
+        ),
+        'fallback',
+    );
+});
+
 test('normalizeSettings turns nullish values into an empty object', () => {
     assert.deepEqual(normalizeSettings(null), {});
     assert.deepEqual(normalizeSettings(undefined), {});

@@ -97,42 +97,43 @@ function mergeSources(primarySources, fallbackSources) {
     return Array.from(sourceById.values());
 }
 
-export function renderWithCitations(text, sources) {
-    const safeText = String(text || '');
-    const resolvedSources = mergeSources(sources, extractSources(safeText));
-    const html = md.render(safeText);
-    if (resolvedSources.length === 0) return html;
+export function linkCitationsInElement(root, sources) {
+    const resolvedSources = normalizeCitationSources(sources);
+    if (!root || resolvedSources.length === 0 || typeof document === 'undefined') return false;
+
+    const filter = (typeof NodeFilter !== 'undefined' && NodeFilter)
+        || (typeof window !== 'undefined' && window.NodeFilter);
+    if (!filter || typeof document.createTreeWalker !== 'function') return false;
+
     const sourceById = new Map(
         resolvedSources
             .map((source, index) => [String(source.id ?? index + 1).trim(), source])
     );
 
-    const div = document.createElement('div');
-    div.innerHTML = html;
-
-    const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, {
+    const walker = document.createTreeWalker(root, filter.SHOW_TEXT, {
         acceptNode: function(node) {
-            let parent = node.parentNode;
-            while (parent && parent !== div) {
-                if (parent.tagName === 'CODE' || parent.tagName === 'PRE' || parent.tagName === 'A') {
-                    return NodeFilter.FILTER_REJECT;
-                }
-                parent = parent.parentNode;
+            if (!/\[\d+(?:,\s*\d+)*\]/.test(node.textContent || '')) {
+                return filter.FILTER_REJECT;
             }
-            return NodeFilter.FILTER_ACCEPT;
+            let parent = node.parentElement;
+            while (parent) {
+                if (['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA', 'TITLE', 'NOSCRIPT'].includes(parent.tagName)) {
+                    return filter.FILTER_REJECT;
+                }
+                if (parent === root) break;
+                parent = parent.parentElement;
+            }
+            return filter.FILTER_ACCEPT;
         }
     });
 
     const nodesToReplace = [];
     while (walker.nextNode()) {
-        const node = walker.currentNode;
-        if (/\[\d+(?:,\s*\d+)*\]/.test(node.textContent)) {
-            nodesToReplace.push(node);
-        }
+        nodesToReplace.push(walker.currentNode);
     }
 
     nodesToReplace.forEach(node => {
-        const content = node.textContent;
+        const content = node.textContent || '';
         const fragment = document.createDocumentFragment();
 
         const regex = /\[(\d+(?:,\s*\d+)*)\]/g;
@@ -199,6 +200,19 @@ export function renderWithCitations(text, sources) {
             node.parentNode.replaceChild(fragment, node);
         }
     });
+
+    return nodesToReplace.length > 0;
+}
+
+export function renderWithCitations(text, sources) {
+    const safeText = String(text || '');
+    const resolvedSources = mergeSources(sources, extractSources(safeText));
+    const html = md.render(safeText);
+    if (resolvedSources.length === 0) return html;
+
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    linkCitationsInElement(div, resolvedSources);
 
     const hasCitations = html.match(/\[\d+(?:,\s*\d+)*\]/);
     if (hasCitations && resolvedSources.length > 0) {

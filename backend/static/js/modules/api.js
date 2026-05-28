@@ -6,6 +6,45 @@ function encodePathSegment(value) {
     return encodeURIComponent(String(value ?? ''));
 }
 
+async function readResponseJson(response) {
+    try {
+        return await response.clone().json();
+    } catch {
+        return null;
+    }
+}
+
+async function readResponseText(response) {
+    try {
+        return await response.clone().text();
+    } catch {
+        return '';
+    }
+}
+
+function responseJsonDetail(data) {
+    if (!data || typeof data !== 'object') return '';
+    const detail = data.detail ?? data.error ?? data.message;
+    if (typeof detail === 'string') return detail.trim();
+    if (detail && typeof detail === 'object') {
+        try {
+            return JSON.stringify(detail);
+        } catch {
+            return '';
+        }
+    }
+    return '';
+}
+
+async function getResponseErrorMessage(response, fallback) {
+    const jsonDetail = responseJsonDetail(await readResponseJson(response));
+    if (jsonDetail) return jsonDetail;
+
+    const text = (await readResponseText(response)).trim();
+    if (text) return text.slice(0, 500);
+    return fallback;
+}
+
 export async function fetchSettings() {
     try {
         const res = await authFetch('/api/settings');
@@ -227,13 +266,7 @@ export async function importHistoryAPI(payload) {
         if (res.ok) {
             return await res.json();
         }
-        let detail = '导入失败';
-        try {
-            const data = await res.json();
-            detail = data.detail || detail;
-        } catch (e) {
-            // Keep generic error.
-        }
+        const detail = await getResponseErrorMessage(res, '导入失败');
         return { status: 'error', detail };
     } catch (e) {
         console.error("Failed to import history", e);
@@ -293,6 +326,7 @@ export async function fetchChat(sessionId) {
 
 export const __apiTestHooks = {
     encodePathSegment,
+    getResponseErrorMessage,
 };
 
 // Cache GitHub stars in memory to avoid repeated requests
@@ -403,11 +437,7 @@ export async function streamChat(query, callbacks) {
 
             // Handle non-200 responses (e.g. 400 missing API key)
             if (!response.ok) {
-                let errMsg = `请求失败 (${response.status})`;
-                try {
-                    const errData = await response.json();
-                    if (errData.detail) errMsg = errData.detail;
-                } catch (e) {}
+                const errMsg = await getResponseErrorMessage(response, `请求失败 (${response.status})`);
                 if (onError) onError(errMsg);
                 return;
             }

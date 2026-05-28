@@ -5,7 +5,7 @@ import {
     createMessageActionRail,
     createRegenerateButton
 } from './utils.js?v=3';
-import { extractSources, hasCitationSources, normalizeCitationSources, renderWithCitations } from './source-renderer.js?v=7';
+import { extractSources, hasCitationSources, linkCitationsInElement, normalizeCitationSources, renderWithCitations } from './source-renderer.js?v=8';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=11';
 import { state } from './state.js?v=2';
 
@@ -302,7 +302,7 @@ function createMessageActions({ role, content, msgDiv, messageIndex, actionCallb
     if (messageIndex !== null) {
         buttons.push(createDeleteMessageButton(async () => {
             if (!await showConfirm('确定要删除这条消息吗？', '删除消息')) return;
-                const { deleteMessageAPI } = await import('./api.js?v=4');
+                const { deleteMessageAPI } = await import('./api.js?v=5');
             const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
             if (ok) {
                 msgDiv.remove();
@@ -347,6 +347,7 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
             sources: resolvedSources,
             suppressUnfencedInlineArtifact,
         });
+        linkCitationsInElement(answerBody, resolvedSources);
         contentDiv.appendChild(answerBody);
     } else {
         renderUserMessageContent(content, contentDiv);

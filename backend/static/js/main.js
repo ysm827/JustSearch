@@ -1,14 +1,14 @@
 import { initializeAuth, normalizeSettings } from './modules/auth.js?v=1';
 import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/state.js?v=2';
-import { initUI, elements } from './modules/ui.js?v=20';
-import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=26';
+import { initUI, elements } from './modules/ui.js?v=21';
+import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=27';
 import { setupBrowserModal } from './modules/browser-modal.js?v=4';
-import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=22';
-import { setupSettingsModal } from './modules/settings-modal.js?v=43';
-import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=16';
+import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=23';
+import { setupSettingsModal } from './modules/settings-modal.js?v=44';
+import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=17';
 import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js?v=14';
 import { getSupportedModelItems, splitModelItem } from './modules/provider-models.js?v=1';
-import * as API from './modules/api.js?v=4';
+import * as API from './modules/api.js?v=5';
 
 document.addEventListener('DOMContentLoaded', async () => {
     initUI();

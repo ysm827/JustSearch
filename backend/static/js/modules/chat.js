@@ -1,11 +1,11 @@
 import { coerceBooleanSetting, state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=2';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
-import { updateActiveHistoryItem } from './history-view.js?v=22';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=20';
-import { hasCitationSources, renderWithCitations } from './source-renderer.js?v=7';
+import { updateActiveHistoryItem } from './history-view.js?v=23';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=21';
+import { extractSources, hasCitationSources, linkCitationsInElement, renderWithCitations } from './source-renderer.js?v=8';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=11';
 import { showToast } from './toast.js';
-import * as API from './api.js?v=4';
+import * as API from './api.js?v=5';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
@@ -158,16 +158,20 @@ export function setupChatHandler(elements, renderHistory) {
         let searchStartTime = Date.now();
 
         function renderCurrentAssistantAnswer(isStreaming) {
-            const suppressUnfencedInlineArtifact = hasCitationSources(currentSources);
+            const resolvedSources = hasCitationSources(currentSources)
+                ? currentSources
+                : extractSources(currentAnswerBuffer);
+            const suppressUnfencedInlineArtifact = hasCitationSources(resolvedSources);
             if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, isStreaming, { suppressUnfencedInlineArtifact })) {
-                contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, currentSources);
+                contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, resolvedSources);
             }
             renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
                 messageId: liveArtifactMessageId,
                 isStreaming,
-                sources: currentSources,
+                sources: resolvedSources,
                 suppressUnfencedInlineArtifact,
             });
+            linkCitationsInElement(contentWrapper, resolvedSources);
         }
 
         // 重置滚动跟踪（新一轮对话）
@@ -241,7 +245,7 @@ export function setupChatHandler(elements, renderHistory) {
                     if (!userScrolled) scrollToBottom();
                 },
                 onAnswer: (finalAnswer, sessionId, finalSources) => {
-                    if (Array.isArray(finalSources) && finalSources.length > 0) {
+                    if (hasCitationSources(finalSources)) {
                         currentSources = finalSources;
                     }
                     currentAnswerBuffer = finalAnswer;

@@ -1,6 +1,6 @@
 import { state, setCurrentSessionId } from './state.js?v=2';
-import { elements } from './ui.js?v=20';
-import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=22';
+import { elements } from './ui.js?v=21';
+import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=23';
 
 let popoverEl = null;
 let popoverTimeout = null;
@@ -234,7 +234,7 @@ export function setupSidebar(loadChat) {
             applyTheme(newTheme);
             updateThemeIcon();
 
-            const { saveSettingsAPI } = await import('./api.js?v=4');
+            const { saveSettingsAPI } = await import('./api.js?v=5');
             const { state } = await import('./state.js?v=2');
             if (state.settings) {
                 const newSettings = { ...state.settings, theme: newTheme };

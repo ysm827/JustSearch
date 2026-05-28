@@ -1,15 +1,15 @@
 import { authFetch } from './auth.js?v=1';
 import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=2';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=20';
-import { renderHistory } from './history-view.js?v=22';
+import { elements, showConfirm } from './ui.js?v=21';
+import { renderHistory } from './history-view.js?v=23';
 import {
     getModelDisplayName,
     getSupportedModelItems,
     isUnsupportedGemini25Model,
     splitModelItem,
 } from './provider-models.js?v=1';
-import * as API from './api.js?v=4';
+import * as API from './api.js?v=5';
 
 const WORKFLOW_STEPS = [
     { id: 'analysis', label: '问题分析' },
