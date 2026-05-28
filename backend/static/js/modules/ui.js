@@ -5,7 +5,7 @@ import {
     createMessageActionRail,
     createRegenerateButton
 } from './utils.js?v=3';
-import { extractSources, renderWithCitations } from './source-renderer.js?v=7';
+import { extractSources, hasCitationSources, normalizeCitationSources, renderWithCitations } from './source-renderer.js?v=7';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=11';
 import { state } from './state.js?v=2';
 
@@ -150,10 +150,6 @@ function shouldCollapseUserMessageContent(content) {
 
 function normalizeMessageRole(role) {
     return role === 'model' ? 'assistant' : role;
-}
-
-function hasCitationSources(sources) {
-    return Array.isArray(sources) && sources.length > 0;
 }
 
 function createMessageAvatar(role) {
@@ -331,13 +327,13 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
     });
 
     if (normalizedRole === 'assistant' && logs && logs.length > 0) {
-         const siteCount = (stats && stats.sites_searched) ? stats.sites_searched : ((sources && sources.length) ? sources.length : 0);
+         const siteCount = (stats && stats.sites_searched) ? stats.sites_searched : normalizeCitationSources(sources).length;
          contentDiv.appendChild(createLogContainer(logs, siteCount));
     }
 
     if (normalizedRole === 'assistant') {
         contentDiv.classList.add('markdown-body');
-        const resolvedSources = (sources && sources.length > 0) ? sources : extractSources(content);
+        const resolvedSources = hasCitationSources(sources) ? sources : extractSources(content);
         const answerBody = document.createElement('div');
         answerBody.className = 'message-answer-body';
         answerBody.dataset.liveArtifactsMessageId = `history-${messageIndex ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

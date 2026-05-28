@@ -483,6 +483,43 @@ test('saved rich HTML table answers link citation tags in place', async () => {
     assert.equal(adjacentCitations[1].getAttribute('href'), 'https://four.example/path');
 });
 
+test('saved HTML answers with JSON-encoded sources still render citation links', async () => {
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div id="chat-container"></div>
+            <section id="hero-section"></section>
+        </body>
+    `);
+
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=20');
+    Object.assign(elements, {
+        chatContainer: document.getElementById('chat-container'),
+        heroSection: document.getElementById('hero-section'),
+    });
+
+    appendMessage(
+        'assistant',
+        '<div style="display:block;width:100%"><p>来源给出的官网是 linux.do/。[2]</p></div>',
+        ['阶段 III: 使用累计 1 个来源生成答案...'],
+        JSON.stringify([{ id: 2, title: 'Linux Do', url: 'linux.do/' }]),
+        null,
+        1,
+    );
+
+    const body = document.querySelector('.message-answer-body');
+    const citation = body.querySelector('.citation-link');
+    const reference = body.querySelector('li#ref-2 a');
+    const status = document.querySelector('.log-status-text');
+
+    assert.equal(body.querySelector('.live-artifact-inline-iframe'), null);
+    assert.ok(citation);
+    assert.equal(citation.textContent.trim(), '2');
+    assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+    assert.equal(reference.getAttribute('href'), 'https://linux.do/');
+    assert.match(status.textContent, /1 个网页/);
+});
+
 test('Live Artifact citation linker skips unsafe urls and existing links', () => {
     installBrowserGlobals();
 
@@ -522,6 +559,27 @@ test('Live Artifact citation linker normalizes bare-domain source urls', () => {
     assert.equal(citation.getAttribute('href'), 'https://linux.do/');
     assert.equal(citation.getAttribute('data-live-artifact-source-url'), 'https://linux.do/');
     assert.equal(citation.getAttribute('target'), '_blank');
+});
+
+test('inline Live Artifacts accept JSON-encoded cited source arrays', () => {
+    installBrowserGlobals('<!doctype html><body><div id="message"></div></body>');
+    const container = document.getElementById('message');
+
+    renderLiveArtifactsForMessage(
+        container,
+        '<section><p>官网 [1]</p></section>',
+        {
+            messageId: 'message-json-sources',
+            sources: JSON.stringify(['linux.do/']),
+        },
+    );
+
+    const chip = container.querySelector('.live-artifact-source-chip');
+    const frame = container.querySelector('.live-artifact-inline-iframe');
+
+    assert.ok(chip);
+    assert.equal(chip.getAttribute('href'), 'https://linux.do/');
+    assert.match(frame.srcdoc, /data-live-artifact-source-url="https:\/\/linux\.do\/"/);
 });
 
 test('Live Artifact frame messages require a registered preview iframe source', () => {

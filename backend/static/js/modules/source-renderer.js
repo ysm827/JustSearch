@@ -66,7 +66,7 @@ function coerceSourceList(sources) {
     }
 }
 
-function normalizeSources(sources) {
+export function normalizeCitationSources(sources) {
     return coerceSourceList(sources)
         .map((source, index) => {
             if (typeof source === 'string') {
@@ -84,12 +84,12 @@ function normalizeSources(sources) {
 }
 
 export function hasCitationSources(sources) {
-    return normalizeSources(sources).length > 0;
+    return normalizeCitationSources(sources).length > 0;
 }
 
 function mergeSources(primarySources, fallbackSources) {
     const sourceById = new Map();
-    [...normalizeSources(fallbackSources), ...normalizeSources(primarySources)].forEach((source, index) => {
+    [...normalizeCitationSources(fallbackSources), ...normalizeCitationSources(primarySources)].forEach((source, index) => {
         const id = String(source?.id ?? index + 1).trim();
         if (!id) return;
         sourceById.set(id, { ...source, id });

@@ -977,8 +977,13 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     chat_source = chat_path.read_text(encoding="utf-8")
 
     assert "export function extractSources" in renderer_source
+    assert "export function normalizeCitationSources" in renderer_source
+    assert "export function hasCitationSources" in renderer_source
     assert "export function renderWithCitations" in renderer_source
     assert "function getFaviconUrl" in renderer_source
+    assert "hasCitationSources" in ui_source
+    assert "normalizeCitationSources" in ui_source
+    assert "hasCitationSources" in chat_source
     assert "from './source-renderer.js?v=7'" in ui_source
     assert "from './source-renderer.js?v=7'" in chat_source
     assert "from './ui.js?v=20'" in (
@@ -991,6 +996,8 @@ def test_source_rendering_helpers_are_split_from_ui_module():
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
+    assert "function hasCitationSources" not in ui_source
+    assert "function hasCitationSources" not in chat_source
     assert "export function renderWithCitations" not in ui_source
     assert "function getFaviconUrl" not in ui_source
 

@@ -1192,13 +1192,32 @@ function postInlineArtifactStream(frame, html) {
 }
 
 function normalizeArtifactSources(sources) {
-    if (!Array.isArray(sources)) return [];
-    return sources
-        .map((source, index) => ({
-            id: String(source?.id ?? index + 1).trim() || String(index + 1),
-            title: String(source?.title || source?.url || `Source ${index + 1}`).replace(/\s+/g, ' ').trim(),
-            url: String(source?.url || '').trim(),
-        }))
+    const sourceList = Array.isArray(sources) ? sources : (() => {
+        if (typeof sources !== 'string') return [];
+        try {
+            const parsed = JSON.parse(sources);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    })();
+
+    return sourceList
+        .map((source, index) => {
+            if (typeof source === 'string') {
+                const url = source.trim();
+                return {
+                    id: String(index + 1),
+                    title: url || `Source ${index + 1}`,
+                    url,
+                };
+            }
+            return {
+                id: String(source?.id ?? index + 1).trim() || String(index + 1),
+                title: String(source?.title || source?.url || `Source ${index + 1}`).replace(/\s+/g, ' ').trim(),
+                url: String(source?.url || '').trim(),
+            };
+        })
         .filter(source => source.title || source.url);
 }
 
