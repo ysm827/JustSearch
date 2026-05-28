@@ -1088,13 +1088,25 @@ def test_search_selector_hot_reload_keeps_last_good_config_on_bad_json(monkeypat
         {
             "searxng": {
                 "base_url": "https://searx.example/search?q={query}",
-                "selectors": {},
+                "selectors": {
+                    "result_container": [".result"],
+                    "title": "h3",
+                    "link": "a",
+                    "snippet": ".snippet",
+                    "date": ""
+                },
                 "captcha_check": [],
                 "wait_selector": ".result"
             },
             "custom": {
                 "base_url": "https://custom.example/search?q={query}",
-                "selectors": {},
+                "selectors": {
+                    "result_container": [".item"],
+                    "title": "h2",
+                    "link": "a",
+                    "snippet": "p",
+                    "date": ""
+                },
                 "captcha_check": [],
                 "wait_selector": ".result"
             }
@@ -1116,6 +1128,104 @@ def test_search_selector_hot_reload_keeps_last_good_config_on_bad_json(monkeypat
 
     assert reloaded["custom"]["base_url"] == "https://custom.example/search?q={query}"
     assert search_engine.get_all_engines() == ["searxng", "custom"]
+
+
+def test_search_selector_hot_reload_keeps_last_good_config_on_bad_shape(monkeypatch, tmp_path):
+    config_path = tmp_path / "search_selectors.json"
+    config_path.write_text(
+        """
+        {
+            "searxng": {
+                "base_url": "https://searx.example/search?q={query}",
+                "selectors": {
+                    "result_container": ".result",
+                    "title": "h3",
+                    "link": "a",
+                    "snippet": ".snippet"
+                },
+                "captcha_check": [],
+                "wait_selector": ".result"
+            },
+            "custom": {
+                "base_url": "https://custom.example/search?q={query}",
+                "selectors": {
+                    "result_container": [".item"],
+                    "title": "h2",
+                    "link": "a",
+                    "snippet": "p"
+                },
+                "captcha_check": [],
+                "wait_selector": ".item"
+            }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(search_engine, "__file__", str(tmp_path / "search_engine.py"))
+    monkeypatch.setattr(search_engine, "_config_cache", {})
+    monkeypatch.setattr(search_engine, "_config_mtime", 0.0)
+
+    loaded = search_engine.load_selectors(None)
+    assert loaded["custom"]["base_url"] == "https://custom.example/search?q={query}"
+
+    config_path.write_text(
+        """
+        {
+            "broken": {
+                "base_url": "https://broken.example/search?q={query}",
+                "selectors": {
+                    "result_container": []
+                },
+                "captcha_check": [],
+                "wait_selector": ""
+            }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(search_engine, "_config_mtime", -1)
+
+    reloaded = search_engine.load_selectors(None)
+
+    assert reloaded["custom"]["base_url"] == "https://custom.example/search?q={query}"
+    assert search_engine.get_all_engines() == ["searxng", "custom"]
+
+
+def test_search_selector_loader_skips_invalid_engines(monkeypatch, tmp_path):
+    config_path = tmp_path / "search_selectors.json"
+    config_path.write_text(
+        """
+        {
+            "broken": {
+                "base_url": "",
+                "selectors": {},
+                "captcha_check": [],
+                "wait_selector": ".result"
+            },
+            "custom": {
+                "base_url": "https://custom.example/search?q={query}",
+                "selectors": {
+                    "result_container": ".item",
+                    "title": "h2",
+                    "link": "a",
+                    "snippet": "p"
+                },
+                "captcha_check": "captcha",
+                "wait_selector": ".item"
+            }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(search_engine, "__file__", str(tmp_path / "search_engine.py"))
+    monkeypatch.setattr(search_engine, "_config_cache", {})
+    monkeypatch.setattr(search_engine, "_config_mtime", 0.0)
+
+    loaded = search_engine.load_selectors(None)
+
+    assert list(loaded.keys()) == ["custom"]
+    assert loaded["custom"]["selectors"]["result_container"] == [".item"]
+    assert loaded["custom"]["captcha_check"] == ["captcha"]
 
 
 def test_workflow_records_batch_timeouts_in_engine_health(monkeypatch):
