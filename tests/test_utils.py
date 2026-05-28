@@ -94,6 +94,64 @@ class TestLLMResponseParsing:
 
         assert "没有可用订阅" in _provider_error_message(error)
 
+    def test_llm_retry_backoff_releases_concurrency_slot(self, monkeypatch):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        original_sleep = asyncio.sleep
+        sleep_started = None
+        release_sleep = None
+        events = []
+
+        class RetryableError(Exception):
+            status_code = 429
+
+        class FakeCompletions:
+            def __init__(self):
+                self.retrying_calls = 0
+
+            async def create(self, model, messages):
+                events.append(f"call:{model}")
+                if model == "retrying":
+                    self.retrying_calls += 1
+                    if self.retrying_calls == 1:
+                        raise RetryableError("rate limited")
+                return SimpleNamespace(usage=None)
+
+        async def run_check():
+            nonlocal sleep_started, release_sleep
+            sleep_started = asyncio.Event()
+            release_sleep = asyncio.Event()
+
+            async def fake_sleep(_delay):
+                events.append("backoff")
+                sleep_started.set()
+                await release_sleep.wait()
+
+            monkeypatch.setattr(llm_module, "_LLM_CONCURRENCY", asyncio.Semaphore(1))
+            monkeypatch.setattr(llm_module.asyncio, "sleep", fake_sleep)
+
+            completions = FakeCompletions()
+            retrying = LLMClient(api_key="test-key", base_url="https://example.test/v1", model="retrying")
+            waiting = LLMClient(api_key="test-key", base_url="https://example.test/v1", model="waiting")
+            retrying.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+            waiting.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+            retrying_task = asyncio.create_task(retrying._call_with_retry([], retries=1))
+            await sleep_started.wait()
+
+            waiting_task = asyncio.create_task(waiting._call_with_retry([], retries=0))
+            for _ in range(5):
+                await original_sleep(0)
+                if "call:waiting" in events:
+                    break
+
+            assert "call:waiting" in events
+            release_sleep.set()
+            await asyncio.gather(retrying_task, waiting_task)
+
+        asyncio.run(run_check())
+
     def test_extract_response_content_accepts_sse_text_response(self):
         client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
 

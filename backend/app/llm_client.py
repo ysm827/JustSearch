@@ -272,12 +272,11 @@ class LLMClient:
 
     async def _call_with_retry(self, messages: list, retries: int = 2, timeout: float = None) -> Any:
         """带重试的 LLM 调用。处理 429/500 等可重试错误。使用指数退避 + 抖动。"""
-        import httpx
         import random as _rand
         request_timeout = timeout or _LLM_TIMEOUT
         for attempt in range(retries + 1):
-            async with _LLM_CONCURRENCY:
-                try:
+            try:
+                async with _LLM_CONCURRENCY:
                     response = await asyncio.wait_for(
                         self.client.chat.completions.create(
                             model=self.model,
@@ -285,27 +284,26 @@ class LLMClient:
                         ),
                         timeout=request_timeout,
                     )
-                    self._track_usage(response)
-                    return response
-                except asyncio.TimeoutError:
-                    logger.warning("[LLM] 请求超时 (%.0fs), 重试 %d/%d", request_timeout, attempt + 1, retries)
-                    if attempt >= retries:
-                        raise
-                    wait = (2 ** attempt) * 1.5 + _rand.uniform(0, 1)
-                    await asyncio.sleep(wait)
-                except Exception as e:
-                    err_str = str(e)
-                    status_code = getattr(e, 'status_code', 0)
-                    provider_message = _provider_error_message(e)
-                    if provider_message:
-                        raise LLMProviderConfigurationError(provider_message) from e
-                    # 可重试的状态码
-                    if status_code in (429, 500, 502, 503) and attempt < retries:
-                        wait = (2 ** attempt) * 1.5 + _rand.uniform(0, 1)
-                        logger.warning("[LLM] 请求失败 (%d), %.1f 秒后重试 (%d/%d)...", status_code, wait, attempt + 1, retries)
-                        await asyncio.sleep(wait)
-                        continue
+                self._track_usage(response)
+                return response
+            except asyncio.TimeoutError:
+                logger.warning("[LLM] 请求超时 (%.0fs), 重试 %d/%d", request_timeout, attempt + 1, retries)
+                if attempt >= retries:
                     raise
+                wait = (2 ** attempt) * 1.5 + _rand.uniform(0, 1)
+                await asyncio.sleep(wait)
+            except Exception as e:
+                status_code = getattr(e, 'status_code', 0)
+                provider_message = _provider_error_message(e)
+                if provider_message:
+                    raise LLMProviderConfigurationError(provider_message) from e
+                # 可重试的状态码
+                if status_code in (429, 500, 502, 503) and attempt < retries:
+                    wait = (2 ** attempt) * 1.5 + _rand.uniform(0, 1)
+                    logger.warning("[LLM] 请求失败 (%d), %.1f 秒后重试 (%d/%d)...", status_code, wait, attempt + 1, retries)
+                    await asyncio.sleep(wait)
+                    continue
+                raise
 
     def _track_usage(self, response):
         """Track token usage from response."""
