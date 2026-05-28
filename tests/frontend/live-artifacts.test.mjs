@@ -1132,7 +1132,7 @@ test('citation rendering resolves sparse source ids instead of array positions',
 
 test('citation rendering normalizes bare-domain source urls', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
+    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
 
     const html = renderWithCitations('官网 [2]', [
         { id: 2, title: 'Linux Do', url: 'linux.do/' },
@@ -1149,6 +1149,29 @@ test('citation rendering normalizes bare-domain source urls', async () => {
     assert.equal(citation.getAttribute('target'), '_blank');
     assert.equal(reference.getAttribute('href'), 'https://linux.do/');
     assert.equal(reference.getAttribute('target'), '_blank');
+    assert.equal(hasCitationSources(JSON.stringify([{ id: 2, title: 'Linux Do', url: 'linux.do/' }])), true);
+});
+
+test('citation rendering accepts JSON-encoded source arrays', async () => {
+    installBrowserGlobals();
+    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=7');
+
+    const html = renderWithCitations(
+        '<div><p>官网来源 [2]</p><code>[2]</code></div>',
+        JSON.stringify([{ id: 2, title: 'Linux Do', url: 'linux.do/' }]),
+    );
+    const container = document.createElement('div');
+    container.innerHTML = html;
+
+    const citation = container.querySelector('.citation-link');
+    const reference = container.querySelector('li#ref-2 a');
+
+    assert.equal(hasCitationSources('not json'), false);
+    assert.ok(citation);
+    assert.equal(citation.textContent.trim(), '2');
+    assert.equal(citation.getAttribute('href'), 'https://linux.do/');
+    assert.equal(container.querySelector('code').textContent, '[2]');
+    assert.equal(reference.getAttribute('href'), 'https://linux.do/');
 });
 
 test('citation rendering links citations from embedded reference markdown when sources are absent', async () => {

@@ -86,6 +86,12 @@ def _body_text(body: object, key: str, default: str = "") -> str:
     return str(value).strip()
 
 
+def _require_body_dict(body: object) -> dict:
+    if isinstance(body, dict):
+        return body
+    raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+
+
 @router.get("/api/history")
 async def get_history_endpoint():
     return await list_chats()
@@ -151,10 +157,11 @@ async def create_chat_group_endpoint(body: object = Body(default=None)):
 
 
 @router.patch("/api/history/groups/{group_id}")
-async def update_chat_group_endpoint(group_id: str, body: dict = Body(...)):
+async def update_chat_group_endpoint(group_id: str, body: object = Body(default=None)):
     group_id = _require_route_safe_id(group_id, "group_id")
-    title = body.get("title") if isinstance(body, dict) else None
-    is_expanded = body.get("is_expanded") if isinstance(body, dict) else None
+    body = _require_body_dict(body)
+    title = body.get("title")
+    is_expanded = body.get("is_expanded")
     group = await update_chat_group(
         group_id,
         title=str(title) if title is not None else None,
@@ -174,9 +181,10 @@ async def delete_chat_group_endpoint(group_id: str):
 
 
 @router.patch("/api/history/{session_id}/group")
-async def move_chat_to_group_endpoint(session_id: str, body: dict = Body(...)):
+async def move_chat_to_group_endpoint(session_id: str, body: object = Body(default=None)):
     session_id = _require_route_safe_id(session_id, "session_id")
-    group_id = body.get("group_id") if isinstance(body, dict) else None
+    body = _require_body_dict(body)
+    group_id = body.get("group_id")
     if group_id == "":
         group_id = None
     if group_id is not None:
@@ -241,7 +249,7 @@ async def export_all_chats(format: str = "markdown"):
 
 
 @router.post("/api/history/import")
-async def import_history_endpoint(body: dict = Body(...)):
+async def import_history_endpoint(body: object = Body(...)):
     """导入聊天记录 JSON 包。重复的会话和分组会跳过，不覆盖现有数据。"""
     try:
         summary = await import_history_package(body)
@@ -269,8 +277,9 @@ async def delete_chat_endpoint(session_id: str):
 
 
 @router.patch("/api/history/{session_id}")
-async def rename_chat_endpoint(session_id: str, body: dict = Body(...)):
+async def rename_chat_endpoint(session_id: str, body: object = Body(default=None)):
     session_id = _require_route_safe_id(session_id, "session_id")
+    body = _require_body_dict(body)
     new_title = _body_text(body, "title")
     if not new_title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")

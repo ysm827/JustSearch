@@ -155,7 +155,7 @@ async def cache_control_middleware(request, call_next):
     path = request.url.path
     if path.startswith("/static/"):
         if path.endswith((".js", ".css")):
-            response.headers["Cache-Control"] = "public, max-age=86400"  # 1 day
+            response.headers["Cache-Control"] = "no-cache"
         elif path.endswith((".png", ".jpg", ".svg", ".ico", ".woff2")):
             response.headers["Cache-Control"] = "public, max-age=604800"  # 1 week
         else:
@@ -195,7 +195,10 @@ def _render_index_html(request: Request) -> HTMLResponse:
     html = inject_html_bootstrap(html, build_html_bootstrap_payload(request))
     return HTMLResponse(
         content=html,
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store",
+            "Clear-Site-Data": '"cache"',
+        },
     )
 
 

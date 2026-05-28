@@ -52,9 +52,22 @@ export function extractSources(text) {
     return sources;
 }
 
+function coerceSourceList(sources) {
+    if (Array.isArray(sources)) return sources;
+    if (typeof sources !== 'string') return [];
+
+    const raw = sources.trim();
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
 function normalizeSources(sources) {
-    if (!Array.isArray(sources)) return [];
-    return sources
+    return coerceSourceList(sources)
         .map((source, index) => {
             if (typeof source === 'string') {
                 const url = source.trim();
@@ -68,6 +81,10 @@ function normalizeSources(sources) {
             return { ...source, id, title, url };
         })
         .filter(Boolean);
+}
+
+export function hasCitationSources(sources) {
+    return normalizeSources(sources).length > 0;
 }
 
 function mergeSources(primarySources, fallbackSources) {

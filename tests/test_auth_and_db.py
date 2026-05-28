@@ -192,6 +192,25 @@ def test_html_bootstrap_omits_token_for_remote_page_host(monkeypatch):
     asyncio.run(run())
 
 
+def test_spa_index_clears_stale_static_cache_and_scripts_revalidate():
+    from backend.app.main import app
+
+    async def run():
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 4321))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            index_response = await client.get("/")
+            script_response = await client.get("/static/js/main.js?v=55")
+
+        assert index_response.status_code == 200
+        assert index_response.headers["cache-control"] == "no-store"
+        assert index_response.headers["clear-site-data"] == '"cache"'
+        assert script_response.status_code == 200
+        assert script_response.headers["cache-control"] == "no-cache"
+        assert "clear-site-data" not in script_response.headers
+
+    asyncio.run(run())
+
+
 def test_default_model_settings_use_deepseek_defaults():
     from backend.app.database import DEFAULT_SETTINGS
 
@@ -758,6 +777,74 @@ def test_rename_chat_endpoint_tolerates_non_string_title_payloads(tmp_path):
         assert numeric_title.status_code == 200
         assert numeric_title.json() == {"status": "ok", "title": "12345"}
         assert (await database.load_chat_history("rename-me"))["title"] == "12345"
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_history_mutation_endpoints_reject_non_object_json_bodies(tmp_path):
+    from backend.app import database
+    from backend.app.routers.history import router
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+
+        await database.init_db()
+        group = await database.create_chat_group("Keep Group")
+        await database.save_chat_history(
+            "body-session",
+            [{"role": "user", "content": "body"}],
+            title="Keep Title",
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            update_group_null = await client.patch(
+                f"/api/history/groups/{group['id']}",
+                json=None,
+            )
+            move_chat_array = await client.patch(
+                "/api/history/body-session/group",
+                json=[],
+            )
+            rename_chat_array = await client.patch(
+                "/api/history/body-session",
+                json=[],
+            )
+            import_array = await client.post("/api/history/import", json=[])
+
+        assert update_group_null.status_code == 400
+        assert move_chat_array.status_code == 400
+        assert rename_chat_array.status_code == 400
+        assert import_array.status_code == 400
+        assert update_group_null.json()["detail"] == "请求体必须是 JSON 对象"
+        assert move_chat_array.json()["detail"] == "请求体必须是 JSON 对象"
+        assert rename_chat_array.json()["detail"] == "请求体必须是 JSON 对象"
+        assert import_array.json()["detail"] == "导入文件必须是 JSON 对象"
+
+        groups = await database.list_chat_groups()
+        chat = await database.load_chat_history("body-session")
+
+        assert groups[0]["title"] == "Keep Group"
+        assert groups[0]["is_expanded"] is True
+        assert chat["title"] == "Keep Title"
+        assert chat["group_id"] is None
 
         if database._engine is not None:
             await database._engine.dispose()
