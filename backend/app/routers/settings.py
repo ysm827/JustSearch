@@ -100,6 +100,20 @@ def _reset_runtime_caches():
     search_engine._config_mtime = 0.0
 
 
+def _recreate_browser_user_data_dir(user_data_dir: str):
+    if os.path.exists(user_data_dir):
+        shutil.rmtree(user_data_dir, ignore_errors=True)
+    os.makedirs(user_data_dir, exist_ok=True)
+
+
+async def _reset_browser_profile_data(user_data_dir: str):
+    from ..browser_context import reset_global_browser_contexts
+
+    await reset_global_browser_contexts(
+        lambda: _recreate_browser_user_data_dir(user_data_dir)
+    )
+
+
 def _body_str(body: dict, key: str, default: str = "") -> str:
     value = body.get(key, default)
     if value is None:
@@ -316,13 +330,11 @@ async def clear_cache_endpoint():
     # 1. 删除所有聊天记录
     await delete_all_chats()
 
-    # 2. 删除浏览器持久化数据
+    # 2. 关闭浏览器上下文，删除持久化数据，再重建上下文池
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
     user_data_dir = os.path.join(project_root, "user_data")
-    if os.path.exists(user_data_dir):
-        shutil.rmtree(user_data_dir, ignore_errors=True)
-        os.makedirs(user_data_dir, exist_ok=True)
+    await _reset_browser_profile_data(user_data_dir)
 
     # 3. 重置设置为默认值 – wipe all settings rows
     from ..database import Settings, get_session

@@ -3398,6 +3398,38 @@ def test_check_search_engines_reports_availability(monkeypatch):
     asyncio.run(run())
 
 
+def test_reset_browser_profile_data_runs_delete_inside_browser_reset(tmp_path, monkeypatch):
+    from backend.app import browser_context
+    from backend.app.routers import settings as settings_router
+
+    user_data_dir = tmp_path / "user_data"
+    user_data_dir.mkdir()
+    stale_file = user_data_dir / "stale-cookie"
+    stale_file.write_text("old", encoding="utf-8")
+    events = []
+
+    async def fake_reset_global_browser_contexts(reset_profile_data):
+        events.append(("contexts-closed", stale_file.exists()))
+        reset_profile_data()
+        events.append(("contexts-rebuilt", user_data_dir.is_dir(), stale_file.exists()))
+
+    monkeypatch.setattr(
+        browser_context,
+        "reset_global_browser_contexts",
+        fake_reset_global_browser_contexts,
+    )
+
+    async def run():
+        await settings_router._reset_browser_profile_data(str(user_data_dir))
+
+    asyncio.run(run())
+
+    assert events == [
+        ("contexts-closed", True),
+        ("contexts-rebuilt", True, False),
+    ]
+
+
 def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
     from backend.app import browser_manager, database, llm_client, search_engine
     from backend.app.engine_health import engine_health
@@ -3428,6 +3460,18 @@ def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
             "__file__",
             str(project_root / "backend/app/routers/settings.py"),
         )
+        browser_reset_events = []
+
+        async def fake_reset_browser_profile_data(path):
+            browser_reset_events.append(("start", Path(path), (user_data_dir / "stale-cookie").exists()))
+            settings_router._recreate_browser_user_data_dir(path)
+            browser_reset_events.append(("done", Path(path), (user_data_dir / "stale-cookie").exists()))
+
+        monkeypatch.setattr(
+            settings_router,
+            "_reset_browser_profile_data",
+            fake_reset_browser_profile_data,
+        )
 
         browser_manager._search_cache["searxng:cached"] = ([{"title": "old"}], 1.0)
         llm_client._ANALYSIS_CACHE["task:old"] = ({"type": "search"}, 1.0)
@@ -3453,6 +3497,10 @@ def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
         assert response.json() == {"status": "ok"}
         assert user_data_dir.is_dir()
         assert not (user_data_dir / "stale-cookie").exists()
+        assert browser_reset_events == [
+            ("start", user_data_dir, True),
+            ("done", user_data_dir, False),
+        ]
         assert browser_manager._search_cache == {}
         assert llm_client._ANALYSIS_CACHE == {}
         assert engine_health.get_stats() == {}

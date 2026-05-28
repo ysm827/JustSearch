@@ -15,7 +15,7 @@ import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from playwright.async_api import Page
 
@@ -285,6 +285,46 @@ async def _rotation_loop():
             await asyncio.sleep(_ROTATION_CHECK_INTERVAL)
 
 
+async def _stop_rotation_task():
+    """Stop the background rotation loop if it is running."""
+    global _rotation_task
+
+    if not _rotation_task:
+        return
+
+    _rotation_task.cancel()
+    try:
+        await _rotation_task
+    except asyncio.CancelledError:
+        pass
+    _rotation_task = None
+
+
+async def _close_context_pool_locked():
+    """Close all contexts. Caller must hold _pool_lock."""
+    for slot in _context_pool:
+        if slot.context:
+            try:
+                await slot.context.close()
+            except Exception as e:
+                logger.warning("Error closing context: %s", e)
+    _context_pool.clear()
+
+
+async def _stop_playwright():
+    """Stop Playwright if it has been started."""
+    global _GLOBAL_PLAYWRIGHT
+
+    if not _GLOBAL_PLAYWRIGHT:
+        return
+
+    try:
+        await _GLOBAL_PLAYWRIGHT.stop()
+    except Exception as e:
+        logger.warning("Error stopping playwright: %s", e)
+    _GLOBAL_PLAYWRIGHT = None
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -300,33 +340,59 @@ async def init_global_browser(headless_override: bool = None):
 
 async def shutdown_global_browser():
     """Close all contexts and stop playwright."""
-    global _GLOBAL_PLAYWRIGHT, _rotation_task
+    global _rotation_task
 
-    if _rotation_task:
-        _rotation_task.cancel()
-        try:
-            await _rotation_task
-        except asyncio.CancelledError:
-            pass
-        _rotation_task = None
+    await _stop_rotation_task()
 
     async with _pool_lock:
-        for slot in _context_pool:
-            if slot.context:
-                try:
-                    await slot.context.close()
-                except Exception as e:
-                    logger.warning("Error closing context: %s", e)
-        _context_pool.clear()
-
-    if _GLOBAL_PLAYWRIGHT:
-        try:
-            await _GLOBAL_PLAYWRIGHT.stop()
-        except Exception as e:
-            logger.warning("Error stopping playwright: %s", e)
-        _GLOBAL_PLAYWRIGHT = None
+        await _close_context_pool_locked()
+        await _stop_playwright()
 
     logger.info("Global Browser Shutdown.")
+
+
+async def reset_global_browser_contexts(
+    reset_profile_data: Optional[Callable[[], None]] = None,
+    headless_override: bool = None,
+):
+    """Close all browser state, optionally reset profile files, and rebuild the pool.
+
+    This keeps profile deletion and pool recreation under the same pool lock so a
+    concurrent page request cannot create a new persistent context against the
+    profile directory while it is being removed.
+    """
+    await _stop_rotation_task()
+
+    async with _pool_lock:
+        await _close_context_pool_locked()
+        await _stop_playwright()
+
+        if reset_profile_data:
+            await asyncio.to_thread(reset_profile_data)
+
+        target_headless = _CURRENT_HEADLESS_MODE if headless_override is None else headless_override
+        new_slots: list[ContextSlot] = []
+        try:
+            for slot_index in range(_POOL_SIZE):
+                ctx = await _create_context(slot_index, target_headless)
+                new_slots.append(ContextSlot(context=ctx, created_at=time.time(), request_count=0))
+        except Exception:
+            for slot in new_slots:
+                if slot.context:
+                    try:
+                        await slot.context.close()
+                    except Exception as e:
+                        logger.warning("Error closing partially reset context: %s", e)
+            _context_pool.clear()
+            raise
+
+        _context_pool[:] = new_slots
+
+    global _rotation_task
+    if _rotation_task is None or _rotation_task.done():
+        _rotation_task = asyncio.create_task(_rotation_loop())
+
+    logger.info("Global Browser Reset (%d contexts).", len(_context_pool))
 
 
 def _pick_slot_index() -> int:
