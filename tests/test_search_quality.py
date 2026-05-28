@@ -1066,6 +1066,58 @@ def test_searxng_search_url_can_be_overridden_for_self_hosting(monkeypatch):
     assert config["base_url"] == "http://searxng:8080/search?q={query}&format=html"
 
 
+def test_searxng_search_url_override_applies_to_fallback_config(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "SEARXNG_SEARCH_URL",
+        "http://searxng:8080/search?q={query}&format=html",
+    )
+    monkeypatch.setattr(search_engine, "__file__", str(tmp_path / "search_engine.py"))
+    monkeypatch.setattr(search_engine, "_config_cache", {})
+    monkeypatch.setattr(search_engine, "_config_mtime", 0.0)
+
+    config = search_engine.load_selectors("searxng")
+
+    assert config["base_url"] == "http://searxng:8080/search?q={query}&format=html"
+    assert search_engine.get_all_engines() == ["searxng"]
+
+
+def test_search_selector_hot_reload_keeps_last_good_config_on_bad_json(monkeypatch, tmp_path):
+    config_path = tmp_path / "search_selectors.json"
+    config_path.write_text(
+        """
+        {
+            "searxng": {
+                "base_url": "https://searx.example/search?q={query}",
+                "selectors": {},
+                "captcha_check": [],
+                "wait_selector": ".result"
+            },
+            "custom": {
+                "base_url": "https://custom.example/search?q={query}",
+                "selectors": {},
+                "captcha_check": [],
+                "wait_selector": ".result"
+            }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(search_engine, "__file__", str(tmp_path / "search_engine.py"))
+    monkeypatch.setattr(search_engine, "_config_cache", {})
+    monkeypatch.setattr(search_engine, "_config_mtime", 0.0)
+
+    loaded = search_engine.load_selectors(None)
+    assert loaded["custom"]["base_url"] == "https://custom.example/search?q={query}"
+
+    config_path.write_text("{bad json", encoding="utf-8")
+    monkeypatch.setattr(search_engine, "_config_mtime", -1)
+
+    reloaded = search_engine.load_selectors(None)
+
+    assert reloaded["custom"]["base_url"] == "https://custom.example/search?q={query}"
+    assert search_engine.get_all_engines() == ["searxng", "custom"]
+
+
 def test_workflow_records_batch_timeouts_in_engine_health(monkeypatch):
     async def never_finishes(*_args, **_kwargs):
         await asyncio.sleep(10)

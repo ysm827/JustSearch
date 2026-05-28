@@ -14,6 +14,21 @@ _SEARCH_URL_ENV_OVERRIDES = {
     "searxng": ("SEARXNG_SEARCH_URL", "JUSTSEARCH_SEARXNG_SEARCH_URL"),
 }
 
+_FALLBACK_SELECTOR_CONFIG = {
+    "searxng": {
+        "base_url": "https://searx.be/search?q={query}&format=html",
+        "selectors": {
+            "result_container": ["article.result", ".result"],
+            "title": "h3 a",
+            "link": "h3 a",
+            "snippet": ".content, p",
+            "date": "",
+        },
+        "captcha_check": [],
+        "wait_selector": "#results, .result",
+    }
+}
+
 
 def _apply_env_overrides(config: dict) -> dict:
     """Return selector config with deployment-specific search URLs applied."""
@@ -47,29 +62,16 @@ def load_selectors(engine: str = "searxng") -> dict:
         current_mtime = os.path.getmtime(config_path)
         if current_mtime != _config_mtime:
             with open(config_path, 'r', encoding='utf-8') as f:
-                _config_cache = json.load(f)
-                _config_mtime = current_mtime
-                logger.info("[SearchEngine] 重新加载搜索引擎配置 (mtime=%.0f)", _config_mtime)
-    except OSError as e:
+                loaded_config = json.load(f)
+            if not isinstance(loaded_config, dict):
+                raise ValueError("selector config root must be an object")
+            _config_cache = loaded_config
+            _config_mtime = current_mtime
+            logger.info("[SearchEngine] 重新加载搜索引擎配置 (mtime=%.0f)", _config_mtime)
+    except (OSError, json.JSONDecodeError, ValueError) as e:
         logger.error("[SearchEngine] 加载搜索引擎配置失败: %s", e)
     
-    config = _apply_env_overrides(_config_cache)
-    if not config:
-        # Fallback default
-        config = {
-            "searxng": {
-                "base_url": "https://searx.be/search?q={query}&format=html",
-                "selectors": {
-                    "result_container": ["article.result", ".result"],
-                    "title": "h3 a",
-                    "link": "h3 a",
-                    "snippet": ".content, p",
-                    "date": ""
-                },
-                "captcha_check": [],
-                "wait_selector": "#results, .result"
-            }
-        }
+    config = _apply_env_overrides(_config_cache or _FALLBACK_SELECTOR_CONFIG)
 
     if engine is None:
         return config
@@ -82,7 +84,5 @@ def load_selectors(engine: str = "searxng") -> dict:
 
 def get_all_engines() -> list:
     """Return a list of all available search engine names."""
-    global _config_cache
-    if not _config_cache:
-        load_selectors()  # Force load
-    return list(_config_cache.keys()) if _config_cache else ["searxng"]
+    config = load_selectors(None)
+    return list(config.keys()) if config else ["searxng"]
