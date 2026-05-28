@@ -45,6 +45,15 @@ async def _cancel_and_drain_tasks(tasks: list[asyncio.Task]) -> list[Any]:
     return await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def _task_terminal_exception(task: asyncio.Task) -> BaseException | None:
+    if task.cancelled():
+        return asyncio.CancelledError()
+    try:
+        return task.exception()
+    except asyncio.CancelledError as exc:
+        return exc
+
+
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
@@ -432,8 +441,14 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
                     yield ": keepalive\n\n"
                     continue
 
-            if task.exception():
-                yield f"data: {json.dumps({'type': 'error', 'content': str(task.exception())})}\n\n"
+            task_error = _task_terminal_exception(task)
+            if task_error:
+                error_content = (
+                    "请求已取消"
+                    if isinstance(task_error, asyncio.CancelledError)
+                    else str(task_error) or task_error.__class__.__name__
+                )
+                yield f"data: {json.dumps({'type': 'error', 'content': error_content})}\n\n"
                 return
 
             while not queue.empty():

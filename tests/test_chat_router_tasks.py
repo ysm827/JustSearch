@@ -32,3 +32,35 @@ def test_cancel_and_drain_tasks_cancels_pending_tasks_and_observes_exceptions():
 
 def test_cancel_and_drain_tasks_tolerates_empty_task_list():
     assert asyncio.run(chat_router._cancel_and_drain_tasks([])) == []
+
+
+def test_task_terminal_exception_observes_cancelled_tasks_without_raising():
+    async def run():
+        async def cancelled_worker():
+            raise asyncio.CancelledError()
+
+        task = asyncio.create_task(cancelled_worker())
+        await asyncio.sleep(0)
+
+        error = chat_router._task_terminal_exception(task)
+
+        assert isinstance(error, asyncio.CancelledError)
+        assert task.cancelled()
+
+    asyncio.run(run())
+
+
+def test_task_terminal_exception_returns_worker_failures():
+    async def run():
+        async def failing_worker():
+            raise RuntimeError("worker failed")
+
+        task = asyncio.create_task(failing_worker())
+        await asyncio.sleep(0)
+
+        error = chat_router._task_terminal_exception(task)
+
+        assert isinstance(error, RuntimeError)
+        assert str(error) == "worker failed"
+
+    asyncio.run(run())

@@ -3007,6 +3007,85 @@ def test_chat_endpoint_coerces_string_interactive_search_default(tmp_path, monke
     asyncio.run(run())
 
 
+def test_chat_endpoint_reports_cancelled_workflow_without_stream_crash(monkeypatch):
+    from backend.app.routers.chat import router
+
+    class CancelledWorkflow:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run(
+            self,
+            query,
+            progress_callback,
+            stream_callback,
+            context_messages,
+            source_callback,
+            stats_callback,
+        ):
+            raise asyncio.CancelledError()
+
+    async def fake_load_settings():
+        return {
+            "default_provider_id": "deepseek",
+            "providers": [
+                {
+                    "id": "deepseek",
+                    "name": "DeepSeek",
+                    "api_key": "deepseek-secret",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "model_id": "deepseek-chat",
+                },
+            ],
+            "workflow_step_models": {
+                "analysis": {"provider_id": "", "model_id": ""},
+                "relevance": {"provider_id": "", "model_id": ""},
+                "interaction": {"provider_id": "", "model_id": ""},
+                "answer": {"provider_id": "", "model_id": ""},
+            },
+            "search_engine": "searxng",
+        }
+
+    async def fake_load_chat_history(_path):
+        return None
+
+    async def run():
+        from backend.app.rate_limiter import chat_limiter
+
+        monkeypatch.setattr("backend.app.routers.chat.load_settings", fake_load_settings)
+        monkeypatch.setattr("backend.app.routers.chat.load_chat_history", fake_load_chat_history)
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", CancelledWorkflow)
+        chat_limiter._requests.clear()
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "cancelled-workflow-test",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 200
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: {")
+        ]
+        assert any(event.get("type") == "meta" for event in events)
+        assert any(
+            event.get("type") == "error" and event.get("content") == "请求已取消"
+            for event in events
+        )
+
+    asyncio.run(run())
+
+
 def test_chat_endpoint_clamps_request_search_limits(tmp_path, monkeypatch):
     from backend.app import database
     from backend.app.routers.chat import router
