@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JustSearch Bridge</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>JustSearch Bridge</h1>
+    <div class="status-row">
+      <span id="status-dot" class="dot"></span>
+      <span id="status-text">未知</span>
+    </div>
+  </header>
+
+  <section>
+    <label for="url-input">后端桥接地址</label>
+    <input id="url-input" type="text" spellcheck="false" />
+    <div class="btn-row">
+      <button id="save-btn" class="primary">保存并重连</button>
+      <button id="reconnect-btn">重载扩展</button>
+    </div>
+  </section>
+
+  <section class="meta">
+    <div>扩展实例 ID:<code id="instance-id">—</code></div>
+    <p class="hint">启动 JustSearch 后端后,扩展会自动连到上面的地址。连接成功后,后端的搜索/爬取会通过本扩展驱动 Chrome 标签页。</p>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

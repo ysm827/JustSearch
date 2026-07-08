@@ -7,9 +7,6 @@ if not exist "backend\settings.json" (
     copy backend\settings.json.example backend\settings.json
 )
 
-:: Create user_data directory
-if not exist "user_data" mkdir user_data
-
 :: Check for Docker
 docker --version >nul 2>&1
 if %errorlevel% equ 0 (
@@ -49,9 +46,6 @@ call venv\Scripts\activate
 
 echo 📦 Installing dependencies...
 pip install -r backend/requirements.txt
-
-echo 🌐 Installing Playwright browsers...
-playwright install chromium
 
 :: Run the application using run.bat
 if exist "run.bat" (

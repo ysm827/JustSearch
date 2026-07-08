@@ -846,7 +846,6 @@ DEFAULT_SETTINGS = {
     "max_iterations": "5",
     "interactive_search": "true",
     "live_artifacts_mode": False,
-    "max_concurrent_pages": "10",
 }
 
 _REMOVED_SETTINGS_KEYS = {"max_context_turns"}

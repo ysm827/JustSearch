@@ -1,6 +1,5 @@
 import base64
 import asyncio
-from contextlib import asynccontextmanager
 
 from backend.app import browser_manager
 from backend.app import page_crawler
@@ -10,7 +9,6 @@ from backend.app.crawler import content as crawler_content
 from backend.app.crawler import redirects
 from backend.app.crawler import security
 from backend.app.browser_manager import BrowserManager
-from backend.app.engine_health import EngineHealthMonitor, engine_health
 from backend.app.search_result_cleanup import is_search_engine_internal_page
 from backend.app.workflow import SearchWorkflow
 
@@ -68,209 +66,149 @@ def test_resolve_redirect_url_extracts_google_target_param():
     assert asyncio.run(redirects.resolve_redirect_url(google_url)) == "https://example.com/article"
 
 
-def test_resource_blocker_aborts_private_document_requests():
-    class FakeRequest:
-        def __init__(self, url, resource_type):
-            self.url = url
-            self.resource_type = resource_type
-
-    class FakeRoute:
-        def __init__(self, url, resource_type):
-            self.request = FakeRequest(url, resource_type)
-            self.aborted = False
-            self.continued = False
-
-        async def abort(self):
-            self.aborted = True
-
-        async def continue_(self):
-            self.continued = True
-
-    class FakePage:
-        async def route(self, _pattern, handler):
-            self.handler = handler
-
-    async def run_case():
-        page = FakePage()
-        await crawler_content.install_resource_blocker(
-            page,
-            should_block_url=lambda url: "127.0.0.1" in url,
-        )
-
-        private_route = FakeRoute("http://127.0.0.1/admin", "document")
-        await page.handler(private_route)
-
-        public_route = FakeRoute("https://example.com/page", "document")
-        await page.handler(public_route)
-
-        return private_route, public_route
-
-    private_route, public_route = asyncio.run(run_case())
-
-    assert private_route.aborted is True
-    assert private_route.continued is False
-    assert public_route.aborted is False
-    assert public_route.continued is True
+def test_resource_blocker_removed_in_bridge_refactor():
+    # 桥接重构后 install_resource_blocker 已移除(真实浏览器不拦截资源)。
+    # 保留 SSRF 守卫:is_private_url 仍用于在 navigate 前后校验目标 URL。
+    assert not hasattr(crawler_content, "install_resource_blocker")
+    assert hasattr(security, "is_private_url")
 
 
 def test_crawl_page_blocks_private_url_after_browser_redirect(monkeypatch):
-    class FakeResponse:
-        url = "http://127.0.0.1/admin"
+    # 桥接重构后 crawl_page 走 bridge.navigate + bridge.get_tab_url。
+    # 导航到私有地址后,SSRF 守卫应拦截并返回错误,不进入内容提取。
+    captured = {}
 
-    class FakePage:
-        url = "https://public.example/start"
+    class FakeTabPool:
+        def __init__(self, client):
+            self.client = client
 
-        async def route(self, *_args):
-            return None
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
 
-        async def goto(self, *_args, **_kwargs):
-            self.url = "http://127.0.0.1/admin"
-            return FakeResponse()
+        async def release(self, tab):
+            captured["released"] = tab
 
-        async def wait_for_load_state(self, *_args, **_kwargs):
-            return None
+        async def close_all_pending(self, session_id=None):
+            captured["finalized"] = True
 
-        async def evaluate(self, *_args):
-            return False
+    class FakeBridge:
+        async def navigate(self, tab_id, url, timeout_ms=20000):
+            captured["navigated"] = url
 
-    class FakeStealth:
-        async def apply_stealth_async(self, _page):
-            return None
-
-    fake_page = FakePage()
-    released = []
-
-    async def fake_get_new_page():
-        return fake_page
-
-    async def fake_release_page(page):
-        released.append(page)
+        async def get_tab_url(self, tab_id):
+            # 模拟浏览器跳转到了内网地址。
+            return "http://127.0.0.1/admin"
 
     async def fake_resolve(url, log_func=None):
         return url
 
-    async def fake_extract(_page, _url):
-        return "internal secret"
+    monkeypatch.setattr(page_crawler, "TabPool", FakeTabPool)
+    monkeypatch.setattr(page_crawler, "get_bridge_client", lambda: FakeBridge())
+    monkeypatch.setattr(page_crawler, "resolve_redirect_url", fake_resolve)
+    monkeypatch.setattr(page_crawler, "is_private_url", lambda url: "127.0.0.1" in str(url))
 
-    async def fake_og(_page):
+    async def fake_extract(*_a, **_k):
+        raise AssertionError("private redirect targets must not be extracted")
+
+    monkeypatch.setattr(page_crawler, "extract_page_content", fake_extract)
+
+    result = asyncio.run(
+        page_crawler.crawl_page("https://public.example/start")
+    )
+
+    assert result == "错误: 不允许访问内网地址"
+    assert captured.get("finalized") is True
+
+
+def test_crawl_page_prefers_page_url_when_response_url_is_original(monkeypatch):
+    # 跳转后 URL 与原 URL 一致(public),应进入正常提取流程。
+    class FakeTabPool:
+        def __init__(self, client):
+            pass
+
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
+
+        async def release(self, tab):
+            pass
+
+        async def close_all_pending(self, session_id=None):
+            pass
+
+    class FakeBridge:
+        async def navigate(self, tab_id, url, timeout_ms=20000):
+            pass
+
+        async def get_tab_url(self, tab_id):
+            return "https://public.example/start"
+
+        async def evaluate(self, tab_id, js, timeout_ms=None):
+            return False
+
+    async def fake_resolve(url, log_func=None):
+        return url
+
+    async def fake_extract(bridge, tab_id, url, log_func=None):
+        return "public content"
+
+    async def fake_og(bridge, tab_id):
         return {}
 
-    monkeypatch.setattr(page_crawler, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(page_crawler, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(page_crawler, "release_page", fake_release_page)
+    monkeypatch.setattr(page_crawler, "TabPool", FakeTabPool)
+    monkeypatch.setattr(page_crawler, "get_bridge_client", lambda: FakeBridge())
     monkeypatch.setattr(page_crawler, "resolve_redirect_url", fake_resolve)
     monkeypatch.setattr(page_crawler, "is_private_url", lambda url: "127.0.0.1" in str(url))
     monkeypatch.setattr(page_crawler, "extract_page_content", fake_extract)
     monkeypatch.setattr(page_crawler, "extract_og_metadata", fake_og)
 
     result = asyncio.run(
-        page_crawler.crawl_page("https://public.example/start", FakeStealth())
+        page_crawler.crawl_page("https://public.example/start")
     )
 
-    assert result == "错误: 不允许访问内网地址"
-    assert released == [fake_page]
-
-
-def test_crawl_page_prefers_page_url_when_response_url_is_original(monkeypatch):
-    class FakeResponse:
-        url = "https://public.example/start"
-
-    class FakePage:
-        url = "https://public.example/start"
-
-        async def route(self, *_args):
-            return None
-
-        async def goto(self, *_args, **_kwargs):
-            self.url = "http://127.0.0.1/admin"
-            return FakeResponse()
-
-        async def wait_for_load_state(self, *_args, **_kwargs):
-            return None
-
-        async def evaluate(self, *_args):
-            return False
-
-    class FakeStealth:
-        async def apply_stealth_async(self, _page):
-            return None
-
-    fake_page = FakePage()
-
-    async def fake_get_new_page():
-        return fake_page
-
-    async def fake_release_page(_page):
-        return None
-
-    async def fake_resolve(url, log_func=None):
-        return url
-
-    async def fake_extract(_page, _url):
-        raise AssertionError("private redirect targets must not be extracted")
-
-    monkeypatch.setattr(page_crawler, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(page_crawler, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(page_crawler, "release_page", fake_release_page)
-    monkeypatch.setattr(page_crawler, "resolve_redirect_url", fake_resolve)
-    monkeypatch.setattr(page_crawler, "is_private_url", lambda url: "127.0.0.1" in str(url))
-    monkeypatch.setattr(page_crawler, "extract_page_content", fake_extract)
-
-    result = asyncio.run(
-        page_crawler.crawl_page("https://public.example/start", FakeStealth())
-    )
-
-    assert result == "错误: 不允许访问内网地址"
+    assert result == "public content"
 
 
 def test_crawl_page_skips_pdf_after_browser_redirect(monkeypatch):
-    class FakeResponse:
-        url = "https://cdn.example/report.pdf?download=1"
+    class FakeTabPool:
+        def __init__(self, client):
+            pass
 
-    class FakePage:
-        url = "https://public.example/report"
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
 
-        async def route(self, *_args):
-            return None
+        async def release(self, tab):
+            pass
 
-        async def goto(self, *_args, **_kwargs):
-            self.url = "https://cdn.example/report.pdf?download=1"
-            return FakeResponse()
+        async def close_all_pending(self, session_id=None):
+            pass
 
-    class FakeStealth:
-        async def apply_stealth_async(self, _page):
-            return None
+    class FakeBridge:
+        async def navigate(self, tab_id, url, timeout_ms=20000):
+            pass
 
-    fake_page = FakePage()
-    released = []
-
-    async def fake_get_new_page():
-        return fake_page
-
-    async def fake_release_page(page):
-        released.append(page)
+        async def get_tab_url(self, tab_id):
+            return "https://cdn.example/report.pdf?download=1"
 
     async def fake_resolve(url, log_func=None):
         return url
 
-    async def fake_extract(_page, _url):
+    async def fake_extract(*_a, **_k):
         raise AssertionError("redirected PDFs should not enter generic extraction")
 
-    monkeypatch.setattr(page_crawler, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(page_crawler, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(page_crawler, "release_page", fake_release_page)
+    monkeypatch.setattr(page_crawler, "TabPool", FakeTabPool)
+    monkeypatch.setattr(page_crawler, "get_bridge_client", lambda: FakeBridge())
     monkeypatch.setattr(page_crawler, "resolve_redirect_url", fake_resolve)
+    monkeypatch.setattr(page_crawler, "is_private_url", lambda url: False)
     monkeypatch.setattr(page_crawler, "extract_page_content", fake_extract)
 
     result = asyncio.run(
-        page_crawler.crawl_page("https://public.example/report", FakeStealth())
+        page_crawler.crawl_page("https://public.example/report")
     )
 
     assert result == (
         "[PDF 文档] https://cdn.example/report.pdf?download=1\n"
         "注意: PDF 文件无法直接提取内容，请访问链接查看原文。"
     )
-    assert released == [fake_page]
 
 
 def test_private_url_blocks_direct_198_18_address_but_allows_proxy_resolved_domain(monkeypatch):
@@ -284,9 +222,11 @@ def test_private_url_blocks_direct_198_18_address_but_allows_proxy_resolved_doma
     assert security.is_private_url("https://example.test/page") is False
 
 
-def test_fallback_text_extract_cleans_multiline_search_titles():
-    class FakePage:
-        async def evaluate(self, *_args):
+def test_fallback_text_extract_cleans_multiline_search_titles(monkeypatch):
+    # 桥接重构后 _fallback_text_extract(bridge, tab_id, ...) 内部走 bridge.evaluate。
+    # 用一个 fake bridge 桩掉 evaluate,返回固定的锚点列表。
+    class FakeBridge:
+        async def evaluate(self, _tab_id, _js, timeout_ms=None):
             return [
                 {
                     "title": (
@@ -300,14 +240,14 @@ def test_fallback_text_extract_cleans_multiline_search_titles():
             ]
 
     manager = BrowserManager(engine="brave", max_results=3)
-    results = asyncio.run(manager._fallback_text_extract(FakePage(), "FastAPI CORS"))
+    results = asyncio.run(manager._fallback_text_extract(FakeBridge(), tab_id=1, query="FastAPI CORS"))
 
     assert results[0]["title"] == "CORS (Cross-Origin Resource Sharing) - FastAPI"
 
 
-def test_fallback_text_extract_skips_generic_more_about_links():
-    class FakePage:
-        async def evaluate(self, *_args):
+def test_fallback_text_extract_skips_generic_more_about_links(monkeypatch):
+    class FakeBridge:
+        async def evaluate(self, _tab_id, _js, timeout_ms=None):
             return [
                 {
                     "title": "更多关于 reddit.com 的信息",
@@ -322,7 +262,7 @@ def test_fallback_text_extract_skips_generic_more_about_links():
             ]
 
     manager = BrowserManager(engine="brave", max_results=3)
-    results = asyncio.run(manager._fallback_text_extract(FakePage(), "FastAPI CORS"))
+    results = asyncio.run(manager._fallback_text_extract(FakeBridge(), tab_id=1, query="FastAPI CORS"))
 
     assert len(results) == 1
     assert results[0]["id"] == 1
@@ -427,196 +367,165 @@ def test_search_engine_internal_page_detection_preserves_real_subdomain_results(
 
 
 def test_search_web_records_wait_selector_timeout_as_selector_failure(monkeypatch):
-    class FakeMouse:
-        async def move(self, *_args):
-            return None
+    # 桥接重构后 search_web 走 bridge + TabPool。用 fake bridge 桩掉:
+    # - navigate 成功
+    # - evaluate 永远返回 0(结果容器不存在)→ 走降级 → 也为空 → selector 失败
+    class FakeTabPool:
+        def __init__(self, client):
+            pass
 
-    class FakePage:
-        mouse = FakeMouse()
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
 
-        async def goto(self, *_args, **_kwargs):
-            return None
+        async def release(self, tab):
+            pass
 
-        async def evaluate(self, *_args):
-            return None
+        async def close_all_pending(self, session_id=None):
+            pass
 
-        async def content(self):
-            return ""
+    class FakeBridge:
+        async def init(self, wait_timeout=0.0):
+            return False
 
-        async def query_selector(self, *_args):
-            return None
+        async def navigate(self, tab_id, url, timeout_ms=20000):
+            return {"tabId": tab_id, "url": url}
 
-        async def wait_for_selector(self, *_args, **_kwargs):
-            raise TimeoutError("no results")
+        async def scroll_by(self, *a, **k):
+            pass
 
-    @asynccontextmanager
-    async def fake_rate_limit(_log_func=None):
-        yield
+        async def evaluate(self, tab_id, js, timeout_ms=None):
+            # 结果容器长度=0,降级提取也返回空列表。
+            if "function(selectors" in js:
+                return []
+            if ".length" in js:
+                return 0
+            return []
 
-    async def fake_release_page(_page):
-        return None
+        async def get_tab_url(self, tab_id):
+            return "https://searxng.example/search"
 
-    async def fake_get_new_page():
-        return FakePage()
-
-    engine_health._results.clear()
-    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
-    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
+    monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: FakeBridge())
 
     manager = BrowserManager(engine="searxng", max_results=3)
 
-    async def fake_apply_stealth(_page):
-        return None
-
-    manager.stealth.apply_stealth_async = fake_apply_stealth
-
     assert asyncio.run(manager.search_web("FastAPI CORS")) == []
-    stats = engine_health.get_stats()["searxng"]
-    assert stats["failures"] == 1
-    assert stats["healthy"] is True
-    assert stats["failure_reasons"] == {"selector": 1}
-    assert stats["failure_score"] == 1.0
-    assert stats["failure_streak"] == 1
-    assert stats["critical_failure_streak"] == 0
 
 
 def test_search_web_records_verification_page_as_blocked(monkeypatch):
-    class FakeMouse:
-        async def move(self, *_args):
+    # 检测到反爬页面(blocked):_read_page_state 返回包含标记的 content,
+    # 验证码/反爬轮询会一直等(这里把超时压到 0 让它快速返回)。
+    class FakeTabPool:
+        def __init__(self, client):
+            pass
+
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
+
+        async def release(self, tab):
+            pass
+
+        async def close_all_pending(self, session_id=None):
+            pass
+
+    class FakeBridge:
+        async def init(self, wait_timeout=0.0):
+            return False
+
+        async def navigate(self, tab_id, url, timeout_ms=20000):
+            return {"tabId": tab_id, "url": url}
+
+        async def scroll_by(self, *a, **k):
+            pass
+
+        async def evaluate(self, tab_id, js, timeout_ms=None):
             return None
 
-    class FakePage:
-        mouse = FakeMouse()
+        async def get_tab_url(self, tab_id):
+            return "https://brave.example/search"
 
-        async def goto(self, *_args, **_kwargs):
-            return None
+    async def fake_read_page_state(self, bridge, tab_id):
+        return "正在验证您不是机器人 在您继续搜索之前进行快速检查。 pow-captcha", ""
 
-        async def evaluate(self, *_args):
-            return None
-
-        async def content(self):
-            return "正在验证您不是机器人 在您继续搜索之前进行快速检查。 pow-captcha"
-
-        async def query_selector(self, *_args):
-            return None
-
-        async def wait_for_selector(self, *_args, **_kwargs):
-            raise AssertionError("blocked pages should return before waiting for results")
-
-    @asynccontextmanager
-    async def fake_rate_limit(_log_func=None):
-        yield
-
-    async def fake_release_page(_page):
-        return None
-
-    async def fake_get_new_page():
-        return FakePage()
-
-    engine_health._results.clear()
-    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
-    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
+    monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: FakeBridge())
+    monkeypatch.setattr(
+        browser_manager.BrowserManager, "_read_page_state", fake_read_page_state
+    )
+    # 把验证等待超时压到 0,立即失败返回 []。
+    monkeypatch.setattr(browser_manager, "_MANUAL_VERIFICATION_TIMEOUT_SECONDS", 0.0)
 
     manager = BrowserManager(engine="brave", max_results=3)
 
-    async def fake_apply_stealth(_page):
-        return None
-
-    manager.stealth.apply_stealth_async = fake_apply_stealth
-
     assert asyncio.run(manager.search_web("FastAPI CORS", allow_fallback=False)) == []
-    stats = engine_health.get_stats()["brave"]
-    assert stats["failure_reasons"] == {"blocked": 1}
-    assert stats["critical_failure_streak"] == 1
 
 
 def test_blocked_search_page_with_session_opens_manual_verification_and_continues(monkeypatch):
-    class FakeMouse:
-        async def move(self, *_args):
+    # 桥接重构后验证码改为轮询检测:第一次 _read_page_state 返回反爬标记,
+    # 轮询时第二次返回干净(用户已通过验证),搜索继续。
+    class FakeTabPool:
+        def __init__(self, client):
+            pass
+
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
+
+        async def release(self, tab):
+            pass
+
+        async def close_all_pending(self, session_id=None):
+            pass
+
+    class FakeBridge:
+        async def init(self, wait_timeout=0.0):
+            return False
+
+        async def navigate(self, tab_id, url, timeout_ms=20000):
+            return {"tabId": tab_id, "url": url}
+
+        async def scroll_by(self, *a, **k):
+            pass
+
+        async def evaluate(self, tab_id, js, timeout_ms=None):
+            # 提取 IIFE 以 (function(selectors 开头;wait-selector 探针只是 querySelectorAll(...).length。
+            # 必须先判 IIFE,因为 IIFE 内部也含 .length。
+            if "function(selectors" in js:
+                return [
+                    {
+                        "id": 1,
+                        "title": "CORS (Cross-Origin Resource Sharing) - FastAPI",
+                        "url": "https://fastapi.tiangolo.com/tutorial/cors/",
+                        "snippet": "allow_origins controls allowed origins.",
+                    }
+                ]
+            if ".length" in js:
+                return 1
             return None
 
-    class FakePage:
-        mouse = FakeMouse()
-
-        def __init__(self):
-            self.content_calls = 0
-
-        async def goto(self, *_args, **_kwargs):
-            return None
-
-        async def evaluate(self, script, *_args):
-            if "querySelectorAll" not in script:
-                return None
-            return [
-                {
-                    "id": 1,
-                    "title": "CORS (Cross-Origin Resource Sharing) - FastAPI",
-                    "url": "https://fastapi.tiangolo.com/tutorial/cors/",
-                    "snippet": "allow_origins controls allowed origins.",
-                }
-            ]
-
-        async def content(self):
-            self.content_calls += 1
-            if self.content_calls == 1:
-                return "正在验证您不是机器人 在您继续搜索之前进行快速检查。 pow-captcha"
-            return ""
-
-        async def query_selector(self, *_args):
-            return None
-
-        async def wait_for_load_state(self, *_args, **_kwargs):
-            return None
-
-        async def wait_for_selector(self, *_args, **_kwargs):
-            return None
-
-    @asynccontextmanager
-    async def fake_rate_limit(_log_func=None):
-        yield
-
-    async def fake_release_page(_page):
-        return None
-
-    fake_page = FakePage()
-
-    async def fake_get_new_page():
-        return fake_page
+        async def get_tab_url(self, tab_id):
+            return "https://brave.example/search"
 
     async def fake_resolve(url, log_func=None):
         return url
 
-    registered_sessions = []
-    removed_sessions = []
-
-    def fake_register(session_id, page, event):
-        registered_sessions.append((session_id, page))
-        asyncio.get_running_loop().call_soon(event.set)
-
-    def fake_remove(session_id):
-        removed_sessions.append(session_id)
-
     logs = []
+    call_count = {"n": 0}
 
-    engine_health._results.clear()
-    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
-    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+    async def fake_read_page_state(self, bridge, tab_id):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return "正在验证您不是机器人 在您继续搜索之前进行快速检查。 pow-captcha", ""
+        # 轮询期间:干净页面 → 验证通过。
+        return "", ""
+
+    monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
+    monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: FakeBridge())
     monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
-    monkeypatch.setattr(browser_manager, "register_interaction_session", fake_register)
-    monkeypatch.setattr(browser_manager, "remove_interaction_session", fake_remove)
+    monkeypatch.setattr(
+        browser_manager.BrowserManager, "_read_page_state", fake_read_page_state
+    )
 
     manager = BrowserManager(engine="brave", max_results=3)
-
-    async def fake_apply_stealth(_page):
-        return None
-
-    manager.stealth.apply_stealth_async = fake_apply_stealth
 
     results = asyncio.run(
         manager.search_web(
@@ -628,213 +537,120 @@ def test_blocked_search_page_with_session_opens_manual_verification_and_continue
     )
 
     assert results[0]["title"] == "CORS (Cross-Origin Resource Sharing) - FastAPI"
-    assert registered_sessions == [("session-1", fake_page)]
-    assert removed_sessions == ["session-1"]
     assert any("ACTION_REQUIRED: SEARCH_VERIFICATION_REQUIRED" in msg for msg in logs)
     assert any("收到验证完成信号" in msg for msg in logs)
 
 
 def test_google_captcha_without_session_returns_without_waiting(monkeypatch):
-    class FakeMouse:
-        async def move(self, *_args):
+    # 桥接重构后验证码改为轮询检测。无 session_id 时仍会提示用户手动解决,
+    # 但不会注册 interaction session(已移除)。这里验证:
+    # - _read_page_state 返回 CAPTCHA 标记
+    # - 轮询超时后返回 []
+    class FakeTabPool:
+        def __init__(self, client):
+            pass
+
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
+
+        async def release(self, tab):
+            pass
+
+        async def close_all_pending(self, session_id=None):
+            pass
+
+    class FakeBridge:
+        async def init(self, wait_timeout=0.0):
+            return False
+
+        async def navigate(self, tab_id, url, timeout_ms=20000):
+            return {"tabId": tab_id, "url": url}
+
+        async def scroll_by(self, *a, **k):
+            pass
+
+        async def evaluate(self, tab_id, js, timeout_ms=None):
             return None
 
-    class FakePage:
-        mouse = FakeMouse()
+        async def get_tab_url(self, tab_id):
+            return "https://www.google.com/search?q=FastAPI%20CORS"
 
-        async def goto(self, *_args, **_kwargs):
-            return None
+    async def fake_read_page_state(self, bridge, tab_id):
+        return "unusual traffic from your computer network", ""
 
-        async def evaluate(self, *_args):
-            return None
-
-        async def content(self):
-            return "unusual traffic from your computer network"
-
-        async def query_selector(self, *_args):
-            return None
-
-        async def wait_for_selector(self, *_args, **_kwargs):
-            raise AssertionError("non-interactive CAPTCHA should fail fast")
-
-    @asynccontextmanager
-    async def fake_rate_limit(_log_func=None):
-        yield
-
-    async def fake_release_page(_page):
-        return None
-
-    async def fake_get_new_page():
-        return FakePage()
-
-    engine_health._results.clear()
-    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
-    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+    monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
+    monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: FakeBridge())
+    monkeypatch.setattr(
+        browser_manager.BrowserManager, "_read_page_state", fake_read_page_state
+    )
+    # 把验证等待超时压到 0,立即失败返回 []。
+    monkeypatch.setattr(browser_manager, "_MANUAL_VERIFICATION_TIMEOUT_SECONDS", 0.0)
 
     manager = BrowserManager(engine="google", max_results=3)
 
-    async def fake_apply_stealth(_page):
-        return None
-
-    manager.stealth.apply_stealth_async = fake_apply_stealth
-
     assert asyncio.run(manager.search_web("FastAPI CORS", allow_fallback=False)) == []
-    stats = engine_health.get_stats()["google"]
-    assert stats["failure_reasons"] == {"captcha": 1}
-    assert stats["critical_failure_streak"] == 1
-
-
-def test_search_web_uses_fallback_after_engine_is_marked_unhealthy(monkeypatch):
-    class FakeMouse:
-        async def move(self, *_args):
-            return None
-
-    class FakePage:
-        mouse = FakeMouse()
-
-        def __init__(self):
-            self.loaded_urls = []
-
-        async def goto(self, url, **_kwargs):
-            self.loaded_urls.append(url)
-            return None
-
-        async def evaluate(self, script, *_args):
-            if "querySelectorAll" not in script:
-                return None
-            return [
-                {
-                    "id": 1,
-                    "title": "CORS (Cross-Origin Resource Sharing) - FastAPI",
-                    "url": "https://fastapi.tiangolo.com/tutorial/cors/",
-                    "snippet": "allow_origins - A list of origins that should be permitted.",
-                }
-            ]
-
-        async def content(self):
-            return ""
-
-        async def query_selector(self, *_args):
-            return None
-
-        async def wait_for_selector(self, *_args, **_kwargs):
-            return None
-
-    @asynccontextmanager
-    async def fake_rate_limit(_log_func=None):
-        yield
-
-    async def fake_release_page(_page):
-        return None
-
-    fake_page = FakePage()
-
-    async def fake_get_new_page():
-        return fake_page
-
-    async def fake_resolve(url, log_func=None):
-        return url
-
-    browser_manager._search_cache.clear()
-    engine_health._results.clear()
-    engine_health.record("brave", success=False, reason="timeout")
-    engine_health.record("brave", success=False, reason="timeout")
-    engine_health.record("brave", success=False, reason="timeout")
-    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
-    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
-    monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
-
-    manager = BrowserManager(engine="brave", max_results=3)
-
-    async def fake_apply_stealth(_page):
-        return None
-
-    manager.stealth.apply_stealth_async = fake_apply_stealth
-
-    results = asyncio.run(manager.search_web("FastAPI CORS"))
-
-    assert results == [
-        {
-            "id": 1,
-            "title": "CORS (Cross-Origin Resource Sharing) - FastAPI",
-            "url": "https://fastapi.tiangolo.com/tutorial/cors/",
-            "snippet": "allow_origins - A list of origins that should be permitted.",
-        }
-    ]
-    assert fake_page.loaded_urls == ["https://www.bing.com/search?q=FastAPI%20CORS"]
-    assert engine_health.get_stats()["brave"]["healthy"] is False
 
 
 def test_search_web_cache_is_isolated_from_returned_results(monkeypatch):
-    class FakeMouse:
-        async def move(self, *_args):
-            return None
+    # 桥接重构后 search_web 走 bridge + TabPool。验证缓存隔离。
+    class FakeTabPool:
+        def __init__(self, client):
+            pass
 
-    class FakePage:
-        mouse = FakeMouse()
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
 
+        async def release(self, tab):
+            pass
+
+        async def close_all_pending(self, session_id=None):
+            pass
+
+    class FakeBridge:
         def __init__(self):
             self.loaded_urls = []
 
-        async def goto(self, url, **_kwargs):
+        async def init(self, wait_timeout=0.0):
+            return False
+
+        async def navigate(self, tab_id, url, timeout_ms=20000):
             self.loaded_urls.append(url)
+            return {"tabId": tab_id, "url": url}
+
+        async def scroll_by(self, *a, **k):
+            pass
+
+        async def evaluate(self, tab_id, js, timeout_ms=None):
+            # 提取 IIFE 以 (function(selectors 开头;wait-selector 探针只是 querySelectorAll(...).length。
+            # 必须先判 IIFE,因为 IIFE 内部也含 .length。
+            if "function(selectors" in js:
+                return [
+                    {
+                        "id": 1,
+                        "title": "Original cached title",
+                        "url": "https://example.com/original",
+                        "snippet": "cache isolation",
+                    }
+                ]
+            if ".length" in js:
+                return 1
             return None
 
-        async def evaluate(self, script, *_args):
-            if "querySelectorAll" not in script:
-                return None
-            return [
-                {
-                    "id": 1,
-                    "title": "Original cached title",
-                    "url": "https://example.com/original",
-                    "snippet": "cache isolation",
-                }
-            ]
-
-        async def content(self):
-            return ""
-
-        async def query_selector(self, *_args):
-            return None
-
-        async def wait_for_selector(self, *_args, **_kwargs):
-            return None
-
-    @asynccontextmanager
-    async def fake_rate_limit(_log_func=None):
-        yield
-
-    async def fake_release_page(_page):
-        return None
-
-    fake_page = FakePage()
-
-    async def fake_get_new_page():
-        return fake_page
+        async def get_tab_url(self, tab_id):
+            return "https://searx.be/search?q=cache%20isolation&format=html"
 
     async def fake_resolve(url, log_func=None):
         return url
 
     browser_manager._search_cache.clear()
-    engine_health._results.clear()
-    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
-    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+
+    fake_bridge = FakeBridge()
+    monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
+    monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: fake_bridge)
     monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
     monkeypatch.setattr(browser_manager.random, "uniform", lambda *_args: 0)
 
     manager = BrowserManager(engine="searxng", max_results=3)
-
-    async def fake_apply_stealth(_page):
-        return None
-
-    manager.stealth.apply_stealth_async = fake_apply_stealth
 
     first = asyncio.run(manager.search_web("cache isolation"))
     first[0]["title"] = "Mutated by caller"
@@ -842,77 +658,69 @@ def test_search_web_cache_is_isolated_from_returned_results(monkeypatch):
     second = asyncio.run(manager.search_web("cache isolation"))
 
     assert second[0]["title"] == "Original cached title"
-    assert fake_page.loaded_urls == ["https://searx.be/search?q=cache%20isolation&format=html"]
+    assert fake_bridge.loaded_urls == ["https://searx.be/search?q=cache%20isolation&format=html"]
 
 
 def test_search_web_can_check_preferred_engine_without_fallback_or_cache(monkeypatch):
-    class FakeMouse:
-        async def move(self, *_args):
-            return None
+    # 桥接重构后 search_web 走 bridge + TabPool。验证 allow_fallback=False 时不回退。
+    class FakeTabPool:
+        def __init__(self, client):
+            pass
 
-    class FakePage:
-        mouse = FakeMouse()
+        async def acquire(self, session_id=None):
+            return {"tab_id": 1}
 
+        async def release(self, tab):
+            pass
+
+        async def close_all_pending(self, session_id=None):
+            pass
+
+    class FakeBridge:
         def __init__(self):
             self.loaded_urls = []
 
-        async def goto(self, url, **_kwargs):
+        async def init(self, wait_timeout=0.0):
+            return False
+
+        async def navigate(self, tab_id, url, timeout_ms=20000):
             self.loaded_urls.append(url)
+            return {"tabId": tab_id, "url": url}
+
+        async def scroll_by(self, *a, **k):
+            pass
+
+        async def evaluate(self, tab_id, js, timeout_ms=None):
+            # 提取 IIFE 以 (function(selectors 开头;wait-selector 探针只是 querySelectorAll(...).length。
+            # 必须先判 IIFE,因为 IIFE 内部也含 .length。
+            if "function(selectors" in js:
+                return [
+                    {
+                        "id": 1,
+                        "title": "JustSearch",
+                        "url": "https://example.com/justsearch",
+                        "snippet": "test result",
+                    }
+                ]
+            if ".length" in js:
+                return 1
             return None
 
-        async def evaluate(self, script, *_args):
-            if "querySelectorAll" not in script:
-                return None
-            return [
-                {
-                    "id": 1,
-                    "title": "JustSearch",
-                    "url": "https://example.com/justsearch",
-                    "snippet": "test result",
-                }
-            ]
-
-        async def content(self):
-            return ""
-
-        async def query_selector(self, *_args):
-            return None
-
-        async def wait_for_selector(self, *_args, **_kwargs):
-            return None
-
-    @asynccontextmanager
-    async def fake_rate_limit(_log_func=None):
-        yield
-
-    async def fake_release_page(_page):
-        return None
-
-    fake_page = FakePage()
-
-    async def fake_get_new_page():
-        return fake_page
+        async def get_tab_url(self, tab_id):
+            return "https://search.brave.com/search?q=JustSearch%20test"
 
     async def fake_resolve(url, log_func=None):
         return url
 
     browser_manager._search_cache.clear()
-    engine_health._results.clear()
-    engine_health.record("brave", success=False, reason="timeout")
-    engine_health.record("brave", success=False, reason="timeout")
-    engine_health.record("brave", success=False, reason="timeout")
-    monkeypatch.setattr(browser_manager, "get_context_pool_status", lambda: {"active_contexts": 1})
-    monkeypatch.setattr(browser_manager, "get_new_page", fake_get_new_page)
-    monkeypatch.setattr(browser_manager, "release_page", fake_release_page)
-    monkeypatch.setattr(browser_manager, "search_rate_limit", fake_rate_limit)
+
+    fake_bridge = FakeBridge()
+    monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
+    monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: fake_bridge)
     monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
+    monkeypatch.setattr(browser_manager.random, "uniform", lambda *_args: 0)
 
     manager = BrowserManager(engine="brave", max_results=3)
-
-    async def fake_apply_stealth(_page):
-        return None
-
-    manager.stealth.apply_stealth_async = fake_apply_stealth
 
     results = asyncio.run(
         manager.search_web(
@@ -923,134 +731,8 @@ def test_search_web_can_check_preferred_engine_without_fallback_or_cache(monkeyp
     )
 
     assert results[0]["title"] == "JustSearch"
-    assert fake_page.loaded_urls == ["https://search.brave.com/search?q=JustSearch%20test"]
+    assert fake_bridge.loaded_urls == ["https://search.brave.com/search?q=JustSearch%20test"]
     assert "brave:JustSearch test" not in browser_manager._search_cache
-
-
-def test_engine_health_treats_single_selector_failure_as_soft_signal():
-    monitor = EngineHealthMonitor()
-
-    monitor.record("searxng", success=False, reason="selector")
-    assert monitor.is_healthy("searxng") is True
-
-    stats = monitor.get_stats()["searxng"]
-    assert stats["failure_score"] == 1.0
-    assert stats["failure_streak"] == 1
-    assert stats["critical_failure_streak"] == 0
-
-
-def test_engine_health_treats_blocked_as_critical_failure():
-    monitor = EngineHealthMonitor()
-
-    monitor.record("brave", success=False, reason="blocked")
-
-    stats = monitor.get_stats()["brave"]
-    assert stats["failure_reasons"] == {"blocked": 1}
-    assert stats["failure_score"] == 3.0
-    assert stats["critical_failure_streak"] == 1
-
-
-def test_engine_health_treats_low_quality_as_soft_signal():
-    monitor = EngineHealthMonitor()
-
-    monitor.record("searxng", success=False, reason="low_quality")
-    monitor.record("searxng", success=False, reason="low_quality")
-
-    stats = monitor.get_stats()["searxng"]
-    assert stats["failure_reasons"] == {"low_quality": 2}
-    assert stats["failure_score"] == 2.0
-    assert stats["critical_failure_streak"] == 0
-    assert monitor.is_healthy("searxng") is True
-
-
-def test_engine_health_keeps_engine_healthy_after_two_timeout_failures():
-    monitor = EngineHealthMonitor()
-
-    monitor.record("searxng", success=False, reason="timeout")
-    assert monitor.is_healthy("searxng") is True
-
-    monitor.record("searxng", success=False, reason="timeout")
-    assert monitor.is_healthy("searxng") is True
-
-
-def test_engine_health_marks_engine_unhealthy_after_three_timeout_failures():
-    monitor = EngineHealthMonitor()
-
-    monitor.record("searxng", success=False, reason="timeout")
-    monitor.record("searxng", success=False, reason="timeout")
-    monitor.record("searxng", success=False, reason="timeout")
-
-    assert monitor.is_healthy("searxng") is False
-
-
-def test_engine_health_softens_batch_timeouts_when_batch_has_success():
-    monitor = EngineHealthMonitor()
-    batch_id = "node-docs"
-
-    monitor.record("brave", success=True, batch_id=batch_id)
-    monitor.record("brave", success=False, reason="timeout", batch_id=batch_id)
-    monitor.record("brave", success=False, reason="timeout", batch_id=batch_id)
-
-    stats = monitor.get_stats()["brave"]
-    assert stats["failures"] == 2
-    assert stats["failure_reasons"] == {"batch_soft_timeout": 2}
-    assert stats["failure_score"] == 1.0
-    assert stats["failure_streak"] == 0
-    assert stats["critical_failure_streak"] == 0
-    assert monitor.is_healthy("brave") is True
-
-
-def test_engine_health_marks_engine_unhealthy_after_three_selector_failures():
-    monitor = EngineHealthMonitor()
-
-    monitor.record("searxng", success=False, reason="selector")
-    monitor.record("searxng", success=False, reason="selector")
-    assert monitor.is_healthy("searxng") is True
-
-    monitor.record("searxng", success=False, reason="selector")
-    assert monitor.is_healthy("searxng") is False
-
-
-def test_engine_health_success_resets_failure_streaks():
-    monitor = EngineHealthMonitor()
-
-    monitor.record("brave", success=False, reason="timeout")
-    monitor.record("brave", success=True)
-
-    stats = monitor.get_stats()["brave"]
-    assert stats["failures"] == 1
-    assert stats["failure_streak"] == 0
-    assert stats["critical_failure_streak"] == 0
-    assert monitor.is_healthy("brave") is True
-
-
-def test_engine_health_prefers_stable_fallback_order_over_config_order():
-    monitor = EngineHealthMonitor()
-    monitor.record("searxng", success=False, reason="timeout")
-    monitor.record("searxng", success=False, reason="timeout")
-    monitor.record("searxng", success=False, reason="timeout")
-
-    fallback = monitor.get_fallback(
-        "searxng",
-        ["google", "bing", "duckduckgo", "sogou", "brave", "searxng"],
-    )
-
-    assert fallback == "bing"
-
-
-def test_engine_health_prefers_self_hosted_searxng_after_bing_and_sogou_fail():
-    monitor = EngineHealthMonitor()
-    for engine in ("bing", "sogou", "brave"):
-        monitor.record(engine, success=False, reason="blocked")
-        monitor.record(engine, success=False, reason="blocked")
-        monitor.record(engine, success=False, reason="blocked")
-
-    fallback = monitor.get_fallback(
-        "brave",
-        ["google", "bing", "duckduckgo", "sogou", "brave", "searxng"],
-    )
-
-    assert fallback == "searxng"
 
 
 def test_searxng_search_url_can_be_overridden_for_self_hosting(monkeypatch):
@@ -1228,11 +910,10 @@ def test_search_selector_loader_skips_invalid_engines(monkeypatch, tmp_path):
     assert loaded["custom"]["captcha_check"] == ["captcha"]
 
 
-def test_workflow_records_batch_timeouts_in_engine_health(monkeypatch):
+def test_workflow_records_batch_timeout_returns_empty(monkeypatch):
     async def never_finishes(*_args, **_kwargs):
         await asyncio.sleep(10)
 
-    engine_health._results.clear()
     monkeypatch.setattr(workflow_module, "_SEARCH_BATCH_TIMEOUT_SECONDS", 0.01)
 
     workflow = SearchWorkflow(
@@ -1259,11 +940,9 @@ def test_workflow_records_batch_timeouts_in_engine_health(monkeypatch):
     assert sources == []
     assert counter == 0
     assert result_count == 0
-    stats = engine_health.get_stats()["brave"]
-    assert stats["failure_reasons"] == {"timeout": 2}
 
 
-def test_workflow_records_low_quality_and_skips_crawl_when_no_results_are_relevant():
+def test_workflow_skips_crawl_when_no_results_are_relevant():
     class FakeLLM:
         async def assess_relevance(self, _query, _snippets):
             return []
@@ -1285,7 +964,6 @@ def test_workflow_records_low_quality_and_skips_crawl_when_no_results_are_releva
         async def crawl_page(self, *_args, **_kwargs):
             raise AssertionError("irrelevant search results should not be crawled")
 
-    engine_health._results.clear()
     workflow = SearchWorkflow(
         api_key="test",
         base_url="https://example.test/v1",
@@ -1311,9 +989,6 @@ def test_workflow_records_low_quality_and_skips_crawl_when_no_results_are_releva
     assert sources == []
     assert counter == 0
     assert result_count == 1
-    stats = engine_health.get_stats()["searxng"]
-    assert stats["failure_reasons"] == {"low_quality": 1}
-    assert stats["healthy"] is True
 
 
 def test_workflow_crawl_batch_keeps_successful_pages_when_one_fails():

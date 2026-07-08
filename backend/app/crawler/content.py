@@ -1,13 +1,15 @@
 import asyncio
 import logging
 
-from playwright.async_api import Page
-
 
 logger = logging.getLogger(__name__)
 
-# DOM-density content extraction script (runs in browser context).
-_JS_EXTRACT_CONTENT = """() => {
+# DOM-density content extraction script (runs in browser context via bridge.evaluate).
+# 走 chrome.debugger 的 Runtime.evaluate,任意 JS(含 cloneNode/remove 等 DOM 变更)都允许。
+_JS_EXTRACT_CONTENT = """(() => {
+    // Guard against document.body being null (e.g., on redirects/error pages).
+    const body = document.body;
+    if (!body) return "";
     const NOISE = [
         'nav','footer','aside','header',
         '[role="navigation"]','[role="banner"]','[role="contentinfo"]',
@@ -19,8 +21,7 @@ _JS_EXTRACT_CONTENT = """() => {
         '.breadcrumb','.pagination','.pager',
         'iframe','script','style','noscript','svg'
     ];
-
-    const clone = document.body.cloneNode(true);
+    const clone = body.cloneNode(true);
     NOISE.forEach(sel => {
         try { clone.querySelectorAll(sel).forEach(el => el.remove()); } catch(e) {}
     });
@@ -81,23 +82,13 @@ _JS_EXTRACT_CONTENT = """() => {
     }
 
     return text;
-}"""
-
-_BLOCKED_RESOURCE_TYPES = {
-    "image",
-    "media",
-    "font",
-    "stylesheet",
-    "websocket",
-    "manifest",
-    "texttrack",
-}
+})()"""
 
 
-async def extract_og_metadata(page: Page) -> dict:
+async def extract_og_metadata(bridge, tab_id: int) -> dict:
     """Extract OpenGraph metadata from a page for better source previews."""
     try:
-        return await page.evaluate(r"""() => {
+        return await bridge.evaluate(tab_id, r"""(() => {
             const getMeta = (name) => {
                 const el = document.querySelector(`meta[property="${name}"]`) ||
                            document.querySelector(`meta[name="${name}"]`);
@@ -111,47 +102,33 @@ async def extract_og_metadata(page: Page) -> dict:
                 author: getMeta('author'),
                 published_time: getMeta('article:published_time'),
             };
-        }""")
+        })()""", timeout_ms=10000)
     except Exception:
         return {}
 
 
-async def extract_page_content(page: Page, url: str) -> str:
-    """Extract main content from a page using DOM-density with retry logic."""
+async def extract_page_content(bridge, tab_id: int, url: str, log_func=None) -> str:
+    """Extract main content from a page using DOM-density with retry logic.
+
+    桥接走 Runtime.evaluate,执行上下文丢失时重试。无 page.wait_for_load_state,
+    改用固定 sleep 给 DOM 恢复时间。
+    """
+    last_err = None
     for attempt in range(3):
         try:
-            content = await page.evaluate(_JS_EXTRACT_CONTENT)
-            return content
+            content = await bridge.evaluate(tab_id, _JS_EXTRACT_CONTENT, timeout_ms=30000)
+            if isinstance(content, str):
+                return content
+            return ""
         except Exception as e:
-            if "Execution context was destroyed" in str(e) or "Cannot find context" in str(e):
+            last_err = e
+            msg = str(e)
+            if "Execution context was destroyed" in msg or "Cannot find context" in msg or "No execution context" in msg:
                 if attempt < 2:
-                    try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=5000)
-                    except Exception:
-                        await asyncio.sleep(2)
+                    await asyncio.sleep(2)
                     continue
             logger.error("Extraction error on %s: %s", url, e)
             break
+    if last_err and log_func:
+        log_func(f"浏览器: 内容提取失败 {url}: {last_err}")
     return ""
-
-
-async def install_resource_blocker(page: Page, should_block_url=None):
-    """Abort requests for non-essential resources during content crawling."""
-    async def _handle_route(route):
-        request = route.request
-        if request.resource_type in _BLOCKED_RESOURCE_TYPES:
-            await route.abort()
-            return
-
-        if should_block_url:
-            try:
-                if should_block_url(request.url):
-                    await route.abort()
-                    return
-            except Exception:
-                await route.abort()
-                return
-
-        await route.continue_()
-
-    await page.route("**/*", _handle_route)

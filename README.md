@@ -4,11 +4,13 @@
   <a href="./README.md">中文</a> | <a href="./README.en.md">English</a>
 </p>
 
-**JustSearch** 是一款基于大语言模型（LLM）和自动化浏览器技术的深度搜索工具。它不仅仅是一个搜索界面，更是一个能够像人类一样"思考、搜索、阅读、总结"的智能代理。它能自动拆解复杂问题，深入网页正文提取关键信息，并生成带有精确引用的详尽答案。
+**JustSearch** 是一款基于大语言模型（LLM）和浏览器桥接技术的深度搜索工具。它不仅仅是一个搜索界面，更是一个能够像人类一样"思考、搜索、阅读、总结"的智能代理。它能自动拆解复杂问题，深入网页正文提取关键信息，并生成带有精确引用的详尽答案。
+
+> v2.0 起,JustSearch 不再内置无头浏览器,而是通过 **自建 Chrome 扩展 + 本地 WebSocket 桥接** 驱动你**真实**的 Chrome——直接复用你的登录态/Cookie,反爬与验证码大幅减少。详见 [浏览器桥接](#-浏览器桥接自建扩展) 与 [`extension/README.md`](./extension/README.md)。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![Playwright](https://img.shields.io/badge/browser-Playwright-green.svg)](https://playwright.dev/)
+[![Browser Bridge](https://img.shields.io/badge/browser-Chrome%20Bridge-green.svg)](./extension/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
 ---
@@ -17,7 +19,7 @@
 
 传统的搜索引擎往往只给你一系列链接，而 JustSearch 会：
 1. **深度理解**：利用 LLM 拆解您的意图，不只是关键词匹配。
-2. **真机阅读**：通过 Playwright 模拟真人打开网页，绕过简单的反爬，获取正文。
+2. **真机阅读**：通过桥接驱动你真实的 Chrome 打开网页，直接复用登录态，绕过简单的反爬，获取正文。
 3. **事实核查**：在生成答案时强制要求标注引用，拒绝 AI 幻觉。
 4. **自主迭代**：如果初次搜索结果不足以回答，它会自己决定"再搜一次"。
 
@@ -26,16 +28,16 @@
 ## ✨ 核心特性
 
 - **🎯 任务多级拆解**：自动分析用户意图，将复杂问题拆解为多个搜索查询或直接访问特定 URL。
-- **🕵️ 深度爬取与分析**：模拟真实浏览器行为进入网页抓取正文。支持**交互模式**，能自动识别并点击"阅读更多"、"展开全文"等按钮（含中文按钮识别）。
+- **🕵️ 深度爬取与分析**：通过桥接驱动真实 Chrome 进入网页抓取正文。支持**交互模式**，能自动识别并点击"阅读更多"、"展开全文"等按钮（含中文按钮识别），并带虚拟光标可视化。
 - **🔄 迭代式搜索逻辑**：AI 会评估当前获取的信息是否足以回答问题。如果不足，会自动发起补充搜索，直到获取足够证据。
 - **📝 自动标注引用**：生成答案时会严格标注来源编号 `[1]`, `[2]`，并在文末提供对应的原始链接，确保信息真实可靠、可追溯。
-- **🛡️ 浏览器反爬规避**：集成 `playwright-stealth` 模拟真实人类行为，降低触发验证码（CAPTCHA）的概率。
+- **🛡️ 真机反爬**：直接使用你已登录的真实 Chrome，登录态/Cookie 与插件天然复用，触发验证码的概率远低于无头浏览器。
 - **🎨 现代 Web UI**：支持流式输出（Streaming）、实时搜索过程可视化、对话历史管理（支持重命名）、深色/浅色模式切换。
-- **🔐 安全认证**：自动生成 Bearer Token 保护 API 与浏览器控制通道；本机访问会由服务端自动注入，无需额外配置。
+- **🔐 安全认证**：自动生成 Bearer Token 保护 API；本机访问会由服务端自动注入，无需额外配置。桥接 WebSocket 仅接受 loopback 连接。
 - **🛡️ SSRF 防护**：阻止对内网地址（含 IPv4-mapped IPv6 和代理/VPN 虚拟 IP 段）的访问，防止服务端请求伪造。
 - **🐙 GitHub 深度优化**：针对 GitHub 用户和仓库页面进行了专门的爬取逻辑优化，更准确地获取星数、活跃度等信息。
 - **🔀 多模型切换**：支持配置多个模型 ID（逗号分隔），在对话界面顶部实时切换。
-- **🤖 验证码实时交互**：搜索过程中遇到验证码时，UI 自动弹出浏览器实时画面，用户点击即可解决，无需中断流程。
+- **🤖 验证码就地解决**：搜索过程中遇到验证码时,JustSearch 在你真实的 Chrome 里检测到并提示,你在浏览器里直接完成即可,搜索会自动继续。
 - **📥 对话导出**：支持将对话记录导出为 Markdown 文件，方便保存和分享。
 - **🌓 跟随系统主题**：支持浅色、深色、跟随系统三种主题模式。
 - **🔍 多搜索引擎**：支持 DuckDuckGo、Google、Bing、搜狗、Brave Search、SearXNG 六个搜索引擎。
@@ -44,7 +46,8 @@
 
 ## 🛠️ 技术栈
 
-- **后端**: Python 3.10+, FastAPI, Playwright (Headless Chromium)
+- **后端**: Python 3.10+, FastAPI, WebSocket (浏览器桥接服务端)
+- **浏览器桥接**: 自建 Chrome 扩展 (MV3) + `chrome.debugger` CDP，见 [`extension/`](./extension/)
 - **AI 模型**: 兼容 OpenAI API 协议（支持 DeepSeek, GPT-4, Claude, NVIDIA NIM, GLM 等）
 - **前端**: 原生 JS (ES6 Modules), CSS3, Markdown-it, DOMPurify
 - **部署**: Docker / Docker Compose / 本地 Python 环境
@@ -100,10 +103,12 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r backend/requirements.txt
 ```
 
-### 2. 安装浏览器内核
-```bash
-playwright install chromium
-```
+### 2. 加载浏览器桥接扩展
+1. 打开 Chrome,访问 `chrome://extensions`,开启右上角「开发者模式」。
+2. 点「加载已解压的扩展程序」,选择本仓库的 [`extension/`](./extension/) 目录。
+3. 扩展弹出页会显示连接状态(默认连 `ws://127.0.0.1:38975/justsearch`)。后端启动后会自动变绿。
+
+> 扩展只需加载一次;后端重启无需重载扩展(它会自动重连)。
 
 ### 3. 运行服务
 ```bash
@@ -118,9 +123,11 @@ python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
-| `HEADLESS` | `true` | 浏览器无头模式（`false` 显示浏览器窗口，便于调试） |
+| `JUSTSEARCH_BRIDGE_WS_HOST` | `127.0.0.1` | 桥接 WebSocket 监听地址(Docker 内用 `0.0.0.0`) |
+| `JUSTSEARCH_BRIDGE_WS_PORT` | `38975` | 桥接 WebSocket 端口 |
+| `JUSTSEARCH_BRIDGE_WS_PATH` | `/justsearch` | 桥接 WebSocket 路径 |
+| `BRIDGE_REQUEST_TIMEOUT_MS` | `30000` | 单次桥接 RPC 请求超时(毫秒) |
 | `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000,http://localhost,http://127.0.0.1` | 允许的 CORS 来源（逗号分隔） |
-| `MAX_CONCURRENT_PAGES` | `10` | 最大并发浏览器页面数，防止内存溢出 |
 | `OPENAI_API_KEY` | - | API Key 环境变量回退（优先使用设置面板中的配置） |
 
 ### Docker 部署
@@ -152,7 +159,7 @@ git pull
 ```bash
 docker-compose up -d --build
 ```
-> **注意**：使用 `--build` 参数确保 Docker 重新构建镜像以应用最新的代码和依赖变更。运行数据保存在 `data/` 和 `user_data/` 中，会通过 Docker volume 保留。
+> **注意**：使用 `--build` 参数确保 Docker 重新构建镜像以应用最新的代码和依赖变更。运行数据保存在 `data/` 中，会通过 Docker volume 保留。Docker 部署下,桥接 WebSocket 端口 `38975` 已映射到本机,确保 Chrome 扩展能连上容器内的后端。
 
 #### 本地 Python 用户
 ```bash
@@ -162,7 +169,6 @@ docker-compose up -d --build
 ```bash
 source venv/bin/activate
 pip install -r backend/requirements.txt
-playwright install chromium
 ```
 
 ---
@@ -179,19 +185,40 @@ JustSearch 采用多阶段迭代流程，确保回答的深度和准确性：
 
 ---
 
-## 🛠️ 实用工具：解决验证码 (CAPTCHA)
+## 🌐 浏览器桥接（自建扩展）
 
-### 自动解决（推荐）
+JustSearch 用一个自建 Chrome 扩展 + 后端 WebSocket 服务驱动你**真实**的 Chrome。好处:
 
-搜索过程中如果遇到验证码，JustSearch 会**自动弹出浏览器实时画面窗口**。您只需在弹窗中点击完成验证，搜索会自动继续。
+- 直接复用你的登录态/Cookie/插件,搜索与爬取在已登录的真实浏览器里发生,验证码显著减少。
+- 后端镜像无需打包 Chromium,体积小、部署轻。
+- 遇到验证码时,JustSearch 在你的 Chrome 里检测到并提示,你直接在浏览器里完成即可,搜索自动继续——不再需要弹窗远程操作。
 
-### 手动预登录
-
-如果您希望提前保存 Cookies 以减少验证码出现频率：
-```bash
-python tools/manual_login.py
+### 工作原理
 ```
-这会启动一个可见的 Chrome 窗口。登录您的常用搜索账号并完成一次搜索验证，JustSearch 的后台爬虫将共享这些登录状态。
+你的 Chrome(装了 JustSearch Bridge 扩展)
+   │ WebSocket 出站连接(JSON-RPC 2.0,自动重连)
+   ▼
+JustSearch 后端 FastAPI
+   └── extension_bridge.py  ← WS 服务端(ws://127.0.0.1:38975/justsearch)
+         持有唯一扩展连接、JSON-RPC 路由、tab 池
+```
+
+扩展借鉴了 [browser-control-bridge](https://github.com/...) 的设计(`chrome.debugger` CDP 路径 + 虚拟光标 + tab 生命周期),但**完全自建、只服务 JustSearch**,无 MCP 层、无 CDP allowlist(自用)。
+
+### 安装扩展
+1. `chrome://extensions` → 开启「开发者模式」。
+2. 「加载已解压的扩展程序」→ 选择仓库根目录的 `extension/` 文件夹。
+3. 启动 JustSearch 后端,扩展弹出页状态变绿即连接成功。
+
+详见 [`extension/README.md`](./extension/README.md)。
+
+---
+
+## 🤖 验证码处理
+
+搜索过程中如果遇到验证码,JustSearch 会在你的真实 Chrome 里检测到,并在对话流里提示「请在 Chrome 中手动完成」。你只需切到那个标签页完成验证,JustSearch 会自动检测通过并继续搜索,无需中断流程。
+
+> 旧版的「弹窗远程操作验证码」与「预登录脚本」在 v2.0 已移除——真实浏览器下这两者都不再需要。
 
 ---
 
@@ -205,13 +232,11 @@ JustSearch/
 │   │   ├── workflow.py          # 搜索工作流引擎（迭代式搜索核心）
 │   │   ├── llm_client.py        # LLM 客户端（任务分析/评估/生成/交互决策）
 │   │   ├── openai_client.py     # OpenAI 兼容客户端构造
-│   │   ├── browser_manager.py   # 浏览器搜索引擎封装
-│   │   ├── browser_context.py   # 全局浏览器生命周期与并发控制
-│   │   ├── page_crawler.py      # 页面正文爬取与 GitHub 页面优化
+│   │   ├── browser_manager.py   # 搜索引擎抓取(经桥接驱动真实 Chrome)
+│   │   ├── extension_bridge.py  # 浏览器桥接:WS 服务端 + JSON-RPC 客户端 + tab 池
+│   │   ├── page_crawler.py      # 页面正文爬取与 GitHub 等站点专用提取器
 │   │   ├── crawler/             # URL 安全校验与搜索引擎重定向解析
 │   │   ├── search_result_cleanup.py # 搜索结果标题/内部页过滤
-│   │   ├── engine_health.py     # 搜索引擎健康度与自动降级
-│   │   ├── interaction.py       # 用户交互会话管理（验证码等）
 │   │   ├── database.py          # SQLite 模型、对话历史、设置持久化
 │   │   ├── legacy_migration.py  # 旧 JSON 数据一次性迁移
 │   │   ├── auth.py              # Token 认证与 HTML 启动参数注入
@@ -223,15 +248,13 @@ JustSearch/
 │   │   ├── css/sections/        # base/sidebar/chat/modal/markdown/responsive 等样式分层
 │   │   ├── js/
 │   │   │   ├── main.js          # 前端启动编排
-│   │   │   └── modules/         # api/auth/chat/history/sidebar/settings/browser/source-renderer.js/ui 等模块
+│   │   │   └── modules/         # api/auth/chat/history/sidebar/settings/source-renderer.js/ui 等模块
 │   │   └── index.html
 │   ├── settings.json.example    # 配置模板
 │   └── requirements.txt
+├── extension/                   # 自建 Chrome 扩展(MV3):WS 桥接 + CDP + 虚拟光标
 ├── data/                        # SQLite 数据库运行目录（自动创建）
-├── tools/
-│   └── manual_login.py          # 手动登录脚本（保存 Cookies）
-├── user_data/                   # 浏览器持久化数据 (自动创建)
-├── Dockerfile                   # Docker 构建文件
+├── Dockerfile                   # Docker 构建文件(无 Chromium)
 ├── docker-compose.yml
 ├── deploy.sh / deploy.bat       # 一键部署脚本 (推荐)
 └── run.sh                       # 本地启动脚本
@@ -253,9 +276,11 @@ JustSearch/
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `HEADLESS` | `true` | 浏览器无头模式 |
+| `JUSTSEARCH_BRIDGE_WS_HOST` | `127.0.0.1` | 桥接 WS 监听地址 |
+| `JUSTSEARCH_BRIDGE_WS_PORT` | `38975` | 桥接 WS 端口 |
+| `JUSTSEARCH_BRIDGE_WS_PATH` | `/justsearch` | 桥接 WS 路径 |
+| `BRIDGE_REQUEST_TIMEOUT_MS` | `30000` | 桥接 RPC 请求超时(毫秒) |
 | `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000,http://localhost,http://127.0.0.1` | CORS 允许的源（逗号分隔） |
-| `MAX_CONCURRENT_PAGES` | `10` | 最大并发页面数 |
 | `OPENAI_API_KEY` | — | 备用 API Key |
 
 ---

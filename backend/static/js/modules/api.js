@@ -429,7 +429,6 @@ export async function streamChat(query, callbacks) {
                     max_results: state.settings.max_results,
                     max_iterations: state.settings.max_iterations,
                     interactive_search: state.settings.interactive_search,
-                    max_concurrent_pages: state.settings.max_concurrent_pages,
                     live_artifacts_mode: Boolean(liveArtifactsMode)
                 }),
                 signal: signal

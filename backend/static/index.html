@@ -11,19 +11,15 @@
     <meta name="description" content="JustSearch - 基于 AI 和深度搜索的智能研究助手">
     <meta name="keywords" content="AI搜索,深度搜索,智能助手,LLM,搜索增强">
     <!-- Preconnect to external resources for faster loading -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net">
     <link rel="preconnect" href="https://www.google.com">
     <link rel="stylesheet" href="/static/css/style.css?v=26">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" id="hljs-dark">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" id="hljs-light" disabled>
-    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+    <link rel="stylesheet" href="/static/fonts/fonts.css?v=1">
+    <!-- 三方库本地托管(markdown-it / dompurify / highlight.js),避免 jsdelivr CDN 在国内超时 -->
+    <script src="/static/vendor/markdown-it.min.js?v=14.0.0"></script>
+    <script src="/static/vendor/purify.min.js?v=3.0.8"></script>
+    <link rel="stylesheet" href="/static/vendor/highlight-github-dark.min.css?v=11.9.0" id="hljs-dark">
+    <link rel="stylesheet" href="/static/vendor/highlight-github.min.css?v=11.9.0" id="hljs-light" disabled>
+    <script src="/static/vendor/highlight.min.js?v=11.9.0"></script>
 </head>
 <body>
     <div id="mobile-overlay" class="mobile-overlay"></div>
@@ -342,10 +338,6 @@
                                         <label for="max-iterations-input">最大迭代次数</label>
                                         <input type="number" id="max-iterations-input" placeholder="5" min="1" max="10">
                                     </div>
-                                    <div class="form-group">
-                                        <label for="max-concurrent-pages-input">最大并发页面数</label>
-                                        <input type="number" id="max-concurrent-pages-input" placeholder="10" min="1" max="20" title="同时打开的浏览器页面上限，防止内存溢出">
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -476,7 +468,7 @@
                             <div class="about-meta-grid">
                                 <div class="about-meta-item">
                                     <span class="about-meta-label">技术栈：</span>
-                                    <span class="about-meta-value">FastAPI / Playwright</span>
+                                    <span class="about-meta-value">FastAPI / Chrome Bridge</span>
                                 </div>
                                 <span class="about-meta-dot">•</span>
                                 <div class="about-meta-item">
@@ -510,32 +502,6 @@
             <div class="modal-actions">
                 <button id="confirm-cancel-btn" class="secondary-btn">取消</button>
                 <button id="confirm-ok-btn" class="save-btn">确定</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Browser Control Modal -->
-    <div id="browser-modal" class="modal">
-        <div class="modal-content browser-modal-content">
-            <div class="modal-header">
-                <h2>浏览器手动验证</h2>
-                <span class="close-btn" id="browser-close-btn">&times;</span>
-            </div>
-            <div class="modal-body browser-modal-body">
-                <div class="browser-viewport-container">
-                    <img id="browser-viewport" src="" alt="Browser Viewport" draggable="false">
-                    <div id="browser-status" class="browser-status-overlay">正在连接...</div>
-                </div>
-                <div class="browser-controls">
-                    <p class="instruction">可在上方画面点击、滚动，或向当前焦点输入文本。</p>
-                    <div class="browser-input-row">
-                        <input type="text" id="browser-type-input" placeholder="输入验证码或文本" aria-label="向浏览器输入文本" autocomplete="off">
-                        <button type="button" id="browser-type-send-btn" class="browser-icon-btn" title="发送输入" aria-label="发送输入">
-                            <span class="material-symbols-rounded">keyboard_return</span>
-                        </button>
-                    </div>
-                    <button id="browser-complete-btn" class="primary-btn">完成验证，继续执行</button>
-                </div>
             </div>
         </div>
     </div>

@@ -94,8 +94,7 @@ def test_readme_project_structure_matches_current_files():
 
     current_references = [
         "database.py",
-        "engine_health.py",
-        "interaction.py",
+        "extension_bridge.py",
         "openai_client.py",
         "crawler/",
         "sections/",
@@ -107,15 +106,15 @@ def test_readme_project_structure_matches_current_files():
 
 
 def test_browser_manager_does_not_import_browser_context_private_search_state():
+    # 桥接重构后 browser_context 已删除;此断言改为确保 browser_manager 不再 import 它。
     source_path = PROJECT_ROOT / "backend/app/browser_manager.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
-    private_imports = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "browser_context":
-            private_imports.extend(alias.name for alias in node.names if alias.name.startswith("_"))
-
-    assert private_imports == []
+    imports_browser_context = any(
+        isinstance(node, ast.ImportFrom) and node.module == "browser_context"
+        for node in ast.walk(tree)
+    )
+    assert not imports_browser_context
 
 
 def test_search_result_cleanup_is_split_from_browser_manager():
@@ -135,7 +134,9 @@ def test_search_result_cleanup_is_split_from_browser_manager():
     assert "def _is_search_engine_internal_page" not in manager_source
 
 
-def test_captcha_interaction_session_is_registered_before_frontend_notification():
+def test_captcha_verification_logs_action_required_before_polling():
+    # 桥接重构后验证码改为轮询检测:在用户真实 Chrome 里自解。
+    # 这里断言 _wait_for_manual_verification 仍先 log ACTION_REQUIRED,再进入轮询等待。
     manager_source = (
         PROJECT_ROOT / "backend/app/browser_manager.py"
     ).read_text(encoding="utf-8")
@@ -145,20 +146,25 @@ def test_captcha_interaction_session_is_registered_before_frontend_notification(
         "async def _handle_verification_pages", 1
     )[0]
 
-    register_index = verification_block.index("register_interaction_session(session_id, page, event)")
     notify_index = verification_block.index("ACTION_REQUIRED:")
-
-    assert register_index < notify_index
+    # 轮询等待:不再注册 interaction session(已移除),改用 sleep 循环。
+    assert "register_interaction_session" not in verification_block
+    assert "asyncio.sleep" in verification_block
+    # ACTION_REQUIRED 提示在轮询之前发出。
+    sleep_index = verification_block.index("asyncio.sleep")
+    assert notify_index < sleep_index
 
 
 def test_frontend_opens_browser_modal_for_all_search_verification_actions():
+    # 桥接重构后验证码改为「在 Chrome 中就地解决」,不再弹 modal。
+    # 仍保留 ACTION_REQUIRED 日志触发,前端只改提示文案,不弹窗。
     chat_source = (
         PROJECT_ROOT / "backend/static/js/modules/chat.js"
     ).read_text(encoding="utf-8")
 
     assert "ACTION_REQUIRED: CAPTCHA_DETECTED" in chat_source
     assert "ACTION_REQUIRED: SEARCH_VERIFICATION_REQUIRED" in chat_source
-    assert "state.openBrowserModal" in chat_source
+    assert "openBrowserModal" not in chat_source
 
 
 def test_google_engine_uses_official_multicolor_icon():
@@ -251,7 +257,8 @@ def test_crawler_content_helpers_are_split_out():
 
     assert "async def extract_page_content" in content_source
     assert "async def extract_og_metadata" in content_source
-    assert "async def install_resource_blocker" in content_source
+    # 桥接重构后 install_resource_blocker 已移除(真实浏览器无需 page.route 拦截)。
+    assert "install_resource_blocker" not in content_source
     assert "const rawHref = a.getAttribute('href')" in content_source
     assert "const href = a.href || rawHref" in content_source
     assert "from .crawler.content import" in page_crawler_source
@@ -280,17 +287,14 @@ def test_legacy_chats_directory_is_not_part_of_source_tree():
     assert not (PROJECT_ROOT / "backend/chats/.gitkeep").exists()
 
 
-def test_browser_context_does_not_keep_obsolete_chat_router_comment():
-    source = (PROJECT_ROOT / "backend/app/browser_context.py").read_text(encoding="utf-8")
-
-    assert "chat router references this module" not in source
-    assert "Legacy compat import" not in source
+def test_browser_context_module_has_been_removed_in_bridge_refactor():
+    # 桥接重构后 browser_context.py 已删除;确保没有残留文件,也没有模块再 import 它。
+    assert not (PROJECT_ROOT / "backend/app/browser_context.py").exists()
 
 
 def test_frontend_interaction_modules_are_split_out():
     modules_dir = PROJECT_ROOT / "backend/static/js/modules"
     expected_modules = [
-        "browser-modal.js",
         "history-view.js",
         "settings-modal.js",
         "sidebar.js",
@@ -839,12 +843,9 @@ def test_default_max_search_results_is_fifty_across_app():
     assert 'max_results: int = 50' in workflow_source
     assert "normalizeNumberSetting(settings.max_results, 50, 1, 50)" in settings_js
     assert "normalizeNumberSetting(settings.max_iterations, 5, 1, 10)" in settings_js
-    assert "normalizeNumberSetting(settings.max_concurrent_pages, 10, 1, 20)" in settings_js
     assert "max_results: normalizeNumberSetting(document.getElementById('max-results-input').value, 50, 1, 50)" in settings_js
     assert "max_iterations: normalizeNumberSetting(document.getElementById('max-iterations-input').value, 5, 1, 10)" in settings_js
-    assert "max_concurrent_pages: normalizeNumberSetting(document.getElementById('max-concurrent-pages-input').value, 10, 1, 20)" in settings_js
     assert 'id="max-results-input" placeholder="50" min="1" max="50"' in index_source
-    assert 'id="max-concurrent-pages-input" placeholder="10" min="1" max="20"' in index_source
     assert '"max_results": 50' in settings_example
 
 
@@ -1051,7 +1052,6 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "from './modules/state.js?v=2'" in main_source
     assert "from './modules/ui.js?v=21'" in main_source
     assert "from './modules/chat.js?v=28'" in main_source
-    assert "from './modules/browser-modal.js?v=4'" in main_source
     assert "from './modules/history-view.js?v=23'" in main_source
     assert "from './modules/settings-modal.js?v=44'" in main_source
     assert "from './modules/sidebar.js?v=17'" in main_source
@@ -1682,32 +1682,20 @@ def test_live_artifacts_toggle_wires_amc_live_artifacts_mode():
     assert "complete document with <!doctype html>" not in prompts_source
 
 
-def test_browser_modal_queries_status_inside_its_modal():
-    source = (PROJECT_ROOT / "backend/static/js/modules/browser-modal.js").read_text(
-        encoding="utf-8"
-    )
+def test_browser_modal_module_has_been_removed_in_bridge_refactor():
+    # 桥接重构后验证码在用户真实 Chrome 里就地解决,不再有远程 modal。
+    assert not (PROJECT_ROOT / "backend/static/js/modules/browser-modal.js").exists()
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(encoding="utf-8")
+    assert 'id="browser-type-input"' not in index_source
+    assert 'id="browser-modal"' not in index_source
 
-    assert "modal.querySelector('.browser-status-overlay')" in source
-    assert "document.querySelector('.browser-status-overlay')" not in source
 
-
-def test_browser_modal_supports_text_entry_for_manual_verification():
-    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
-        encoding="utf-8"
-    )
-    modal_source = (PROJECT_ROOT / "backend/static/js/modules/browser-modal.js").read_text(
-        encoding="utf-8"
-    )
+def test_chat_router_has_no_browser_websocket_in_bridge_refactor():
     chat_router_source = (PROJECT_ROOT / "backend/app/routers/chat.py").read_text(
         encoding="utf-8"
     )
-
-    assert 'id="browser-type-input"' in index_source
-    assert 'id="browser-type-send-btn"' in index_source
-    assert "sendTypedText" in modal_source
-    assert "{ action: 'type', text }" in modal_source
-    assert 'elif action == "type":' in chat_router_source
-    assert "await page.keyboard.type(text)" in chat_router_source
+    assert "ws/browser" not in chat_router_source
+    assert "interaction" not in chat_router_source
 
 
 def test_escape_shortcut_closes_topmost_modal_only():

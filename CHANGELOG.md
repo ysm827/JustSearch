@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.2.0] - 2026-07-09
+
+### Changed
+- **浏览器桥接架构全面落地**:用自建 Chrome 扩展(MV3 + `chrome.debugger` CDP)+ 本地 WebSocket 桥接驱动你**真实**的 Chrome,取代旧版无头浏览器池。直接复用登录态/Cookie,验证码显著减少。新增 `extension/`(扩展源码)与 `backend/app/extension_bridge.py`(WS 服务端 + JSON-RPC 客户端 + tab 生命周期)。
+- **彻底移除 Playwright**:删除 `browser_context.py`、`interaction.py`、`tools/manual_login.py`、`browser-modal.js`;`requirements.txt` 不再含 Playwright,Docker 镜像不再打包 Chromium。
+- **Dockerfile** 移除 `COPY tools/`(已无该目录),镜像更小、构建更快。
+- **JS/CSS 静态资源** 改为 `public, max-age=3600` 缓存(带 `?v=` 版本号失效),减少刷新请求。
+
+### Removed(按需精简保护机制)
+- **搜索冷却**(`rate_limit.py` / `search_rate_limit` ≥4s 串行排队):已删除,搜索不再强制间隔。
+- **Chrome 标签并发上限**(`BRIDGE_MAX_CONCURRENT_PAGES` / `TabPool` semaphore / `max_concurrent_pages` 设置项):已删除,后台标签与爬取不再限并发。
+- **搜索引擎健康度与自动降级**(`engine_health.py` / `get_fallback` / `batch_id`):已删除,不再因失败率自动切换引擎。
+- **Chat 接口限流**(`rate_limiter.py` / `chat_limiter` 30 次/分钟):已删除,对话接口不再返回 429。
+
+### Fixed
+- 恢复 `search_web` 的搜索结果缓存读取(冷却移除时误删,已补回)。
+
+### Notes
+- `/api/health` 不再返回 `engines` 健康度字段。
+- 环境变量 `BRIDGE_MAX_CONCURRENT_PAGES` 与设置项 `max_concurrent_pages` 已废弃,相关 UI 输入框同步移除。
+
 ## [2.1.0] - 2026-03-29
 
 ### Added

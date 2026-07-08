@@ -9,7 +9,6 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
-from ..browser_context import get_context_pool_status
 from ..version import __version__
 
 logger = logging.getLogger(__name__)
@@ -96,10 +95,9 @@ async def get_engines():
 
 @router.get("/api/health")
 async def health_check():
-    pool_status = get_context_pool_status()
-    from ..engine_health import engine_health
+    from ..extension_bridge import is_extension_connected
     from ..database import _engine
-    
+
     # Memory usage info
     mem_mb = 0
     db_size_mb = 0
@@ -113,7 +111,7 @@ async def health_check():
         pass
     except Exception:
         pass
-    
+
     # Database file size
     try:
         from ..database import _DB_PATH
@@ -122,16 +120,17 @@ async def health_check():
             db_size_mb = round(_os.path.getsize(_DB_PATH) / 1024 / 1024, 2)
     except Exception:
         pass
-    
+
     # Uptime calculation
     uptime_seconds = int(time.monotonic() - _START_TIME) if _START_TIME else 0
+
+    extension_connected = is_extension_connected()
 
     return {
         "status": "ok",
         "version": __version__,
-        "browser": pool_status["active_contexts"] > 0,
-        "pool": pool_status,
-        "engines": engine_health.get_stats(),
+        "browser": extension_connected,
+        "bridge": {"extension_connected": extension_connected},
         "db_pool_size": _engine.pool.size() if _engine and hasattr(_engine, 'pool') else 0,
         "db_pool_checked_out": _engine.pool.checkedout() if _engine and hasattr(_engine, 'pool') else 0,
         "memory_mb": mem_mb,

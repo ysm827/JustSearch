@@ -1,19 +1,17 @@
 """
-Chat router – /api/chat and /ws/browser/{session_id}
+Chat router – /api/chat
 """
 
 import asyncio
 import json
 import logging
-import base64
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..auth import authorize_websocket
 from ..database import (
     load_settings, save_chat_history, load_chat_history, get_chat_path, get_next_api_key,
     delete_message, normalize_route_safe_id,
@@ -26,8 +24,6 @@ from ..providers import (
     require_provider_api_key,
 )
 from ..workflow import SearchWorkflow
-from ..interaction import get_interaction_session, mark_interaction_completed
-from ..rate_limiter import chat_limiter
 from ..logging_utils import set_request_id
 from ..search_engine import get_all_engines
 
@@ -68,7 +64,6 @@ class ChatRequest(BaseModel):
     max_results: Optional[int] = None
     max_iterations: Optional[int] = None
     interactive_search: Optional[bool] = None
-    max_concurrent_pages: Optional[int] = None
     live_artifacts_mode: Optional[bool] = None
     canvas_mode: Optional[bool] = None
 
@@ -196,105 +191,6 @@ def _resolve_search_engine(requested: str | None, saved: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# WebSocket
-# ---------------------------------------------------------------------------
-
-
-@router.websocket("/ws/browser/{session_id}")
-async def browser_control_endpoint(websocket: WebSocket, session_id: str):
-    if not await authorize_websocket(websocket):
-        return
-    await websocket.accept()
-
-    session = get_interaction_session(session_id)
-    if not session:
-        await websocket.close(code=4004, reason="No active interaction session")
-        return
-
-    page = session["page"]
-
-    async def send_frames():
-        try:
-            while True:
-                if websocket.client_state.name != "CONNECTED":
-                    break
-                try:
-                    screenshot = await page.screenshot(type="jpeg", quality=50)
-                    b64_img = base64.b64encode(screenshot).decode("utf-8")
-                    await websocket.send_json({"type": "frame", "image": b64_img})
-                except Exception as e:
-                    logger.error("Frame error: %s", e)
-                    break
-                await asyncio.sleep(0.5)
-        except Exception:
-            pass
-
-    async def receive_events():
-        try:
-            while True:
-                data = await websocket.receive_json()
-                action = data.get("action")
-
-                if action == "click":
-                    x = data.get("x")
-                    y = data.get("y")
-                    if x is not None and y is not None:
-                        try:
-                            await page.mouse.click(x, y)
-                        except Exception:
-                            pass
-
-                elif action == "scroll":
-                    delta_y = data.get("dy", 0)
-                    try:
-                        await page.mouse.wheel(0, delta_y)
-                    except Exception:
-                        pass
-
-                elif action == "type":
-                    text = data.get("text")
-                    if text:
-                        try:
-                            await page.keyboard.type(text)
-                        except Exception:
-                            pass
-
-                elif action == "key":
-                    key = data.get("key")
-                    if key:
-                        try:
-                            await page.keyboard.press(key)
-                        except Exception:
-                            pass
-
-                elif action == "complete":
-                    await mark_interaction_completed(session_id)
-                    await websocket.send_json({"type": "status", "msg": "Completed"})
-                    break
-
-        except WebSocketDisconnect:
-            logger.info("Browser control websocket disconnected: %s", session_id)
-        except Exception as e:
-            logger.error("Input error: %s", e)
-
-    tasks = [
-        asyncio.create_task(send_frames()),
-        asyncio.create_task(receive_events()),
-    ]
-
-    try:
-        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    except Exception:
-        pass
-    finally:
-        await _cancel_and_drain_tasks(tasks)
-        try:
-            await websocket.close()
-        except Exception:
-            pass
-
-
-# ---------------------------------------------------------------------------
 # Chat endpoint
 # ---------------------------------------------------------------------------
 
@@ -308,15 +204,6 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     query_text = request.query.strip()
     if not query_text:
         raise HTTPException(status_code=400, detail="query 不能为空")
-
-    # Rate limiting
-    client_host = http_request.client.host if http_request.client else "global"
-    allowed, retry_after = chat_limiter.check(client_host)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"请求过于频繁，请在 {retry_after} 秒后重试。",
-        )
 
     raw_session_id = str(request.session_id or "").strip()
     if raw_session_id:
@@ -362,12 +249,6 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         if request.interactive_search is not None
         else _coerce_bool(defaults.get("interactive_search"), True)
     )
-    max_concurrent_pages = _bounded_int(
-        request.max_concurrent_pages if request.max_concurrent_pages is not None else defaults.get("max_concurrent_pages", 3),
-        default=3,
-        minimum=1,
-        maximum=20,
-    )
     saved_live_artifacts_mode = _coerce_bool(defaults.get("live_artifacts_mode"), False)
     live_artifacts_mode = (
         _coerce_bool(request.live_artifacts_mode)
@@ -385,7 +266,6 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
             api_key, base_url, model, search_engine, max_results,
             max_iterations, interactive_search,
             session_id=session_id,
-            max_concurrent_pages=max_concurrent_pages,
             step_model_configs=workflow_step_models,
             live_artifacts_mode=live_artifacts_mode,
         )

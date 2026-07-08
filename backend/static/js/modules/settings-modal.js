@@ -283,8 +283,7 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         'engine-select',
         'max-results-input',
         'max-iterations-input',
-        'interactive-search-input',
-        'max-concurrent-pages-input'
+        'interactive-search-input'
     ];
 
     autoSaveInputs.forEach(id => {
@@ -401,7 +400,6 @@ function fillSettingsForm(settings) {
             settings.default_provider_id || '',
         );
         document.getElementById('interactive-search-input').checked = coerceBooleanSetting(settings.interactive_search, true);
-        document.getElementById('max-concurrent-pages-input').value = normalizeNumberSetting(settings.max_concurrent_pages, 10, 1, 20);
         updateProviderValidationUI();
         updateProviderCountLabel(collectProvidersForm().length);
         setSettingsSaveStatus('saved');
@@ -422,7 +420,6 @@ function collectSettingsForm() {
         providers,
         workflow_step_models: collectWorkflowStepModels(),
         interactive_search: document.getElementById('interactive-search-input').checked,
-        max_concurrent_pages: normalizeNumberSetting(document.getElementById('max-concurrent-pages-input').value, 10, 1, 20),
     };
 }
 

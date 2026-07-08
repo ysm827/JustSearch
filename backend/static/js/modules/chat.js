@@ -205,10 +205,7 @@ export function setupChatHandler(elements, renderHistory) {
                 onLog: (msg) => {
                     if (msg.includes('ACTION_REQUIRED: CAPTCHA_DETECTED') ||
                         msg.includes('ACTION_REQUIRED: SEARCH_VERIFICATION_REQUIRED')) {
-                        if (state.openBrowserModal) {
-                            state.openBrowserModal(state.currentSessionId);
-                        }
-                        msg = "需要人工验证。请在弹出的窗口中通过搜索引擎验证。";
+                        msg = "需要人工验证。请在 Chrome 中完成验证码/反爬验证,搜索将自动继续。";
                     }
                     // Detect engine fallback notification
                     if (msg.includes('自动切换到')) {

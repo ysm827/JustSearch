@@ -17,7 +17,6 @@ from ..database import (
     DEFAULT_SETTINGS, get_chat_path, load_chat_history,
 )
 from ..browser_manager import BrowserManager
-from ..engine_health import engine_health
 from ..llm_client import _provider_error_message
 from ..openai_client import create_openai_client
 from ..providers import (
@@ -38,15 +37,6 @@ router = APIRouter()
 
 _ENGINE_CHECK_QUERY = "JustSearch test"
 _ENGINE_CHECK_TIMEOUT_SECONDS = 75.0
-_ENGINE_FAILURE_MESSAGES = {
-    "batch_soft_timeout": "批次内部分查询超时",
-    "selector": "结果选择器未匹配",
-    "low_quality": "结果相关性过低",
-    "timeout": "检测超时",
-    "blocked": "验证/反爬页面",
-    "captcha": "检测到验证码",
-    "other": "检测失败",
-}
 
 
 class ProviderModel(BaseModel):
@@ -73,7 +63,6 @@ class SettingsModel(BaseModel):
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
     live_artifacts_mode: Optional[bool] = False
-    max_concurrent_pages: Optional[int] = 10
 
 
 class EngineCheckRequest(BaseModel):
@@ -82,14 +71,10 @@ class EngineCheckRequest(BaseModel):
 
 def _reset_runtime_caches():
     from .. import browser_manager, llm_client, search_engine
-    from ..rate_limiter import chat_limiter
     from . import stats as stats_router
 
     browser_manager._search_cache.clear()
     llm_client._ANALYSIS_CACHE.clear()
-    engine_health._results.clear()
-    chat_limiter._requests.clear()
-    chat_limiter._last_cleanup = time.time()
     stats_router.github_stats_cache.update({
         "stars": 0,
         "last_updated": None,
@@ -107,11 +92,8 @@ def _recreate_browser_user_data_dir(user_data_dir: str):
 
 
 async def _reset_browser_profile_data(user_data_dir: str):
-    from ..browser_context import reset_global_browser_contexts
-
-    await reset_global_browser_contexts(
-        lambda: _recreate_browser_user_data_dir(user_data_dir)
-    )
+    """清理浏览器持久化数据。user_data/ 目录是历史遗留,这里只删除目录内容。"""
+    _recreate_browser_user_data_dir(user_data_dir)
 
 
 def _body_str(body: dict, key: str, default: str = "") -> str:
@@ -193,8 +175,6 @@ async def update_settings_endpoint(settings: SettingsModel):
         update["max_results"] = max(1, min(50, int(update["max_results"])))
     if "max_iterations" in update:
         update["max_iterations"] = max(1, min(10, int(update["max_iterations"])))
-    if "max_concurrent_pages" in update:
-        update["max_concurrent_pages"] = max(1, min(20, int(update["max_concurrent_pages"])))
 
     # Validate search engine
     valid_engines = set(get_all_engines())
@@ -213,7 +193,6 @@ async def update_settings_endpoint(settings: SettingsModel):
 
 async def _check_single_engine(engine: str, query: str) -> dict:
     manager = BrowserManager(engine=engine, max_results=3)
-    started_at = time.time()
     try:
         results = await asyncio.wait_for(
             manager.search_web(
@@ -224,22 +203,14 @@ async def _check_single_engine(engine: str, query: str) -> dict:
             timeout=_ENGINE_CHECK_TIMEOUT_SECONDS,
         )
         result_count = len(results)
-        reason = "" if result_count > 0 else engine_health.get_latest_failure_reason(
-            engine,
-            since=started_at,
-        )
         return {
             "engine": engine,
             "available": result_count > 0,
             "result_count": result_count,
-            "reason": reason,
-            "error": "" if result_count > 0 else _ENGINE_FAILURE_MESSAGES.get(
-                reason,
-                "未解析到搜索结果",
-            ),
+            "reason": "" if result_count > 0 else "selector",
+            "error": "" if result_count > 0 else "未解析到搜索结果",
         }
     except asyncio.TimeoutError:
-        engine_health.record(engine, success=False, reason="timeout")
         return {
             "engine": engine,
             "available": False,
@@ -249,7 +220,6 @@ async def _check_single_engine(engine: str, query: str) -> dict:
         }
     except Exception as e:
         logger.warning("Search engine check failed for %s: %s", engine, e)
-        engine_health.record(engine, success=False, reason="other")
         return {
             "engine": engine,
             "available": False,

@@ -43,48 +43,6 @@ class TestLLMContextMessages:
         assert "答案已截断" not in context[1]["content"]
 
 
-class TestRateLimiter:
-    def _make_limiter(self):
-        import sys, os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-        from backend.app.rate_limiter import RateLimiter
-        return RateLimiter(max_requests=3, window_seconds=60)
-
-    def test_basic_rate_limiting(self):
-        limiter = self._make_limiter()
-        for _ in range(3):
-            allowed, retry = limiter.check("test_key")
-            assert allowed is True
-
-        allowed, retry = limiter.check("test_key")
-        assert allowed is False
-        assert retry > 0
-
-    def test_different_keys_independent(self):
-        limiter = self._make_limiter()
-        limiter.check("key_a")
-        limiter.check("key_a")
-        limiter.check("key_a")
-
-        allowed_a, _ = limiter.check("key_a")
-        assert allowed_a is False
-
-        allowed_b, _ = limiter.check("key_b")
-        assert allowed_b is True
-
-    def test_cleanup(self):
-        import time
-        from backend.app.rate_limiter import RateLimiter
-        limiter = RateLimiter(max_requests=5, window_seconds=1)
-
-        limiter.check("test_key")
-        time.sleep(1.1)
-        limiter.cleanup()
-
-        allowed, _ = limiter.check("test_key")
-        assert allowed is True
-
-
 class TestLLMResponseParsing:
     def test_provider_error_message_maps_subscription_failure(self):
         error = Exception(

@@ -7,7 +7,6 @@ import uuid
 from typing import List, Dict, Callable, Any, Optional
 from .llm_client import LLMClient, ensure_live_artifact_answer
 from .browser_manager import BrowserManager
-from .engine_health import engine_health
 
 logger = logging.getLogger(__name__)
 _SEARCH_BATCH_TIMEOUT_SECONDS = 60.0
@@ -15,7 +14,7 @@ _MAX_TOTAL_SEARCH_SECONDS = 180.0
 _WORKFLOW_LLM_STEPS = ("analysis", "relevance", "interaction", "answer")
 
 class SearchWorkflow:
-    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "searxng", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, max_concurrent_pages: int = 3, step_model_configs: Optional[dict] = None, live_artifacts_mode: bool = False, canvas_mode: Optional[bool] = None):
+    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "searxng", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, step_model_configs: Optional[dict] = None, live_artifacts_mode: bool = False, canvas_mode: Optional[bool] = None):
         self.llm = LLMClient(api_key, base_url, model)
         self._initial_default_llm = self.llm
         self.step_llms = self._build_step_llms(
@@ -30,7 +29,6 @@ class SearchWorkflow:
         self.history = []
         self.interactive_search = interactive_search
         self.session_id = session_id
-        self.max_concurrent_pages = max_concurrent_pages
         self.live_artifacts_mode = bool(live_artifacts_mode or canvas_mode)
         # Content cache: url -> content (avoid re-crawling same URL across iterations)
         self._content_cache: Dict[str, str] = {}
@@ -247,25 +245,18 @@ class SearchWorkflow:
         
         search_results = []
         if valid_queries:
-            progress_callback(f"阶段 II: 在 {engine_name} 上搜索: {', '.join(valid_queries)}...")
-            logger.info("[Workflow] 搜索引擎: %s, 查询: %s", engine_name, valid_queries)
-            batch_id = f"{self.session_id or 'session'}:{iteration}:{uuid.uuid4().hex[:8]}"
-            batch_engine = engine_health.get_fallback(
-                self.browser.engine,
-                list(self.browser.engine_config.keys()),
-            )
-            
-            # [03] Web Search (Parallel) with timeout and retry
+            progress_callback(f"阶段 II: 在 {self.browser.engine.capitalize()} 上搜索: {', '.join(valid_queries)}...")
+            logger.info("[Workflow] 搜索引擎: %s, 查询: %s", self.browser.engine, valid_queries)
+
             search_tasks = [
                 self.browser.search_web(
                     q,
                     log_func=progress_callback,
                     session_id=self.session_id if self.interactive_search else None,
-                    health_batch_id=batch_id,
                 )
                 for q in valid_queries
             ]
-            
+
             # First attempt with shorter timeout
             try:
                 results_list = await asyncio.wait_for(
@@ -274,13 +265,6 @@ class SearchWorkflow:
                 )
             except asyncio.TimeoutError:
                 progress_callback("搜索超时（60秒），使用已获取的结果...")
-                for _query in valid_queries:
-                    engine_health.record(
-                        batch_engine,
-                        success=False,
-                        reason="timeout",
-                        batch_id=batch_id,
-                    )
                 results_list = [[] for _ in search_tasks]
             
             # Handle exceptions from individual searches
@@ -332,12 +316,6 @@ class SearchWorkflow:
 
         valid_result_ids = {res['id'] for res in search_results}
         if not relevant_id_set.intersection(valid_result_ids):
-            engine_health.record(
-                batch_engine,
-                success=False,
-                reason="low_quality",
-                batch_id=batch_id,
-            )
             progress_callback("相关性评估未选中可用结果，跳过偏题搜索结果。")
             return [], source_id_counter, len(search_results)
         
@@ -399,19 +377,12 @@ class SearchWorkflow:
                 uncached_items.append(item)
                 uncached_indices.append(i)
 
-        # Crawl only uncached pages — limit concurrency to avoid API rate limits
+        # Crawl only uncached pages — unlimited concurrency
         if uncached_items:
-            # Use semaphore to limit parallel crawls (each crawl may trigger LLM calls)
-            max_concurrent = min(self.max_concurrent_pages, len(uncached_items))
-            semaphore = asyncio.Semaphore(max_concurrent)
-
-            async def _crawl_with_semaphore(task):
-                async with semaphore:
-                    return await task
-
-            tasks = [_crawl_with_semaphore(
+            tasks = [
                 self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self._llm_for_step("interaction"), session_id=self.session_id)
-            ) for item in uncached_items]
+                for item in uncached_items
+            ]
             contents = await asyncio.gather(*tasks, return_exceptions=True)
             # Cache results
             for content, orig_idx, item in zip(contents, uncached_indices, uncached_items):

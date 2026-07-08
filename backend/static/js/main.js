@@ -2,7 +2,6 @@ import { initializeAuth, normalizeSettings } from './modules/auth.js?v=1';
 import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/state.js?v=2';
 import { initUI, elements } from './modules/ui.js?v=21';
 import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=28';
-import { setupBrowserModal } from './modules/browser-modal.js?v=4';
 import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=23';
 import { setupSettingsModal } from './modules/settings-modal.js?v=44';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=17';
@@ -15,14 +14,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     initializeAuth();
     initCustomModelSelect();
 
-    const settings = normalizeSettings(await API.fetchSettings());
+    // 三个 API 并行拉取(原来是 settings 先 await 完才拉 history/groups,白白串行一次 RTT)。
+    const [settingsRes, chatHistory, chatGroups] = await Promise.all([
+        API.fetchSettings(),
+        API.fetchHistory(),
+        API.fetchChatGroups(),
+    ]);
+    const settings = normalizeSettings(settingsRes);
     setLiveArtifactsMode(settings.live_artifacts_mode);
     updateModelSelector(settings);
-
-    const [chatHistory, chatGroups] = await Promise.all([
-        API.fetchHistory(),
-        API.fetchChatGroups()
-    ]);
     const { loadChat, deleteChat } = setupChatHandler(elements, renderHistory);
     const historyCallbacks = { onSelect: loadChat, onDelete: deleteChat };
 
@@ -38,12 +38,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     setupSidebar(loadChat);
-    setupSettingsModal({ 
-        updateModelSelector, 
-        historyCallbacks, 
-        onSettingsSaved: syncQuickSettingsFromState 
+    setupSettingsModal({
+        updateModelSelector,
+        historyCallbacks,
+        onSettingsSaved: syncQuickSettingsFromState
     });
-    setupBrowserModal();
     setupHistoryGroups(historyCallbacks);
     setupHistorySearch(historyCallbacks);
     setupSystemThemeListener();

@@ -9,7 +9,6 @@ if [ ! -f "backend/settings.json" ]; then
 fi
 
 # Create directories if not exists
-mkdir -p user_data
 mkdir -p data
 
 # Function to run with docker
@@ -56,10 +55,7 @@ else
     echo "📦 Installing dependencies..."
     pip install --upgrade pip
     pip install -r backend/requirements.txt
-    
-    echo "🌐 Installing Playwright browsers..."
-    playwright install chromium
-    
+
     # Run the application using run.sh
     if [ -f "./run.sh" ]; then
         ./run.sh

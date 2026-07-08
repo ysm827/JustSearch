@@ -1440,154 +1440,6 @@ def test_history_lists_and_search_hide_route_unsafe_legacy_ids(tmp_path):
     asyncio.run(run())
 
 
-def test_context_user_data_dir_is_stable_for_slot(tmp_path):
-    from backend.app.browser_context import get_context_user_data_dir
-
-    project_root = Path(tmp_path)
-    expected = project_root / "user_data" / "ctx_3"
-    assert get_context_user_data_dir(project_root, 3) == expected
-
-
-def test_browser_config_recovers_from_malformed_json(tmp_path, monkeypatch):
-    from backend.app import browser_context
-
-    user_data_dir = tmp_path / "ctx_0"
-    user_data_dir.mkdir()
-    (user_data_dir / "browser_config.json").write_text("{bad json", encoding="utf-8")
-
-    monkeypatch.setattr(browser_context.random, "choice", lambda values: values[0])
-    monkeypatch.setattr(browser_context.random, "randint", lambda _start, _end: 0)
-
-    config = browser_context.get_browser_config(str(user_data_dir))
-
-    assert config == {
-        "user_agent": browser_context.CHROME_USER_AGENTS[0],
-        "viewport": {"width": 1280, "height": 720},
-    }
-
-
-def test_browser_config_sanitizes_invalid_payload(tmp_path, monkeypatch):
-    from backend.app import browser_context
-
-    user_data_dir = tmp_path / "ctx_0"
-    user_data_dir.mkdir()
-    (user_data_dir / "browser_config.json").write_text(
-        json.dumps({"user_agent": "", "viewport": {"width": "wide", "height": None}}),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(browser_context.random, "choice", lambda values: values[1])
-    monkeypatch.setattr(browser_context.random, "randint", lambda _start, _end: 3)
-
-    config = browser_context.get_browser_config(str(user_data_dir))
-
-    assert config == {
-        "user_agent": browser_context.CHROME_USER_AGENTS[1],
-        "viewport": {"width": 1283, "height": 723},
-    }
-
-
-def test_browser_config_clamps_existing_viewport(tmp_path):
-    from backend.app import browser_context
-
-    user_data_dir = tmp_path / "ctx_0"
-    user_data_dir.mkdir()
-    (user_data_dir / "browser_config.json").write_text(
-        json.dumps({"user_agent": "custom-agent", "viewport": {"width": 99, "height": 9999}}),
-        encoding="utf-8",
-    )
-
-    config = browser_context.get_browser_config(str(user_data_dir))
-
-    assert config == {
-        "user_agent": "custom-agent",
-        "viewport": {"width": 320, "height": 2160},
-    }
-
-
-def test_preferred_browser_channel_uses_bundled_chromium_without_system_chrome(monkeypatch):
-    from backend.app import browser_context
-
-    monkeypatch.delenv("PLAYWRIGHT_BROWSER_CHANNEL", raising=False)
-    monkeypatch.delenv("BROWSER_CHANNEL", raising=False)
-    monkeypatch.setattr(browser_context, "_system_chrome_available", lambda: False)
-
-    assert browser_context.get_preferred_browser_channel() is None
-
-
-def test_preferred_browser_channel_uses_system_chrome_when_available(monkeypatch):
-    from backend.app import browser_context
-
-    monkeypatch.delenv("PLAYWRIGHT_BROWSER_CHANNEL", raising=False)
-    monkeypatch.delenv("BROWSER_CHANNEL", raising=False)
-    monkeypatch.setattr(browser_context, "_system_chrome_available", lambda: True)
-
-    assert browser_context.get_preferred_browser_channel() == "chrome"
-
-
-def test_preferred_browser_channel_honors_explicit_browser_channel(monkeypatch):
-    from backend.app import browser_context
-
-    monkeypatch.setenv("BROWSER_CHANNEL", "msedge")
-    monkeypatch.delenv("PLAYWRIGHT_BROWSER_CHANNEL", raising=False)
-    monkeypatch.setattr(browser_context, "_system_chrome_available", lambda: False)
-
-    assert browser_context.get_preferred_browser_channel() == "msedge"
-
-    monkeypatch.setenv("PLAYWRIGHT_BROWSER_CHANNEL", "chromium")
-    assert browser_context.get_preferred_browser_channel() is None
-
-
-def test_search_rate_limit_releases_lock_before_context_body():
-    from backend.app import browser_context
-
-    async def run():
-        original_interval = browser_context._MIN_SEARCH_INTERVAL
-        original_last_request_time = browser_context._LAST_REQUEST_TIME
-
-        first_entered = asyncio.Event()
-        release_first = asyncio.Event()
-        second_entered = asyncio.Event()
-        first = None
-        second = None
-
-        async def first_task():
-            async with browser_context.search_rate_limit():
-                first_entered.set()
-                await release_first.wait()
-
-        async def second_task():
-            await first_entered.wait()
-            async with browser_context.search_rate_limit():
-                second_entered.set()
-
-        try:
-            browser_context._MIN_SEARCH_INTERVAL = 0
-            browser_context._LAST_REQUEST_TIME = 0
-
-            first = asyncio.create_task(first_task())
-            second = asyncio.create_task(second_task())
-
-            await asyncio.wait_for(first_entered.wait(), timeout=1)
-            await asyncio.sleep(0)
-            await asyncio.wait_for(second_entered.wait(), timeout=1)
-
-            release_first.set()
-            await asyncio.gather(first, second)
-        finally:
-            release_first.set()
-            for task in (first, second):
-                if task and not task.done():
-                    task.cancel()
-            tasks = [task for task in (first, second) if task]
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            browser_context._MIN_SEARCH_INTERVAL = original_interval
-            browser_context._LAST_REQUEST_TIME = original_last_request_time
-
-    asyncio.run(run())
-
-
 def test_validate_key_resolves_masked_key(tmp_path):
     from unittest.mock import AsyncMock, patch
     from backend.app import database
@@ -1940,7 +1792,6 @@ def test_settings_api_partial_update_preserves_existing_values(tmp_path):
                 "max_results": 17,
                 "max_iterations": 4,
                 "interactive_search": False,
-                "max_concurrent_pages": 6,
             }
         )
 
@@ -1960,7 +1811,6 @@ def test_settings_api_partial_update_preserves_existing_values(tmp_path):
         assert saved["max_results"] == 17
         assert saved["max_iterations"] == 4
         assert saved["interactive_search"] is False
-        assert saved["max_concurrent_pages"] == 6
         assert loaded["search_engine"] == "searxng"
 
         raw_settings = await database.load_settings()
@@ -1969,7 +1819,6 @@ def test_settings_api_partial_update_preserves_existing_values(tmp_path):
         assert raw_settings["max_results"] == 17
         assert raw_settings["max_iterations"] == 4
         assert raw_settings["interactive_search"] is False
-        assert raw_settings["max_concurrent_pages"] == 6
 
         if database._engine is not None:
             await database._engine.dispose()
@@ -2600,10 +2449,7 @@ def test_chat_endpoint_rejects_remote_provider_without_api_key(tmp_path, monkeyp
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -2699,10 +2545,7 @@ def test_chat_endpoint_rejects_route_unsafe_session_id(tmp_path, monkeypatch):
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -2862,7 +2705,6 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
             max_iterations,
             interactive_search,
             session_id=None,
-            max_concurrent_pages=3,
             step_model_configs=None,
             canvas_mode=False,
             live_artifacts_mode=False,
@@ -2877,7 +2719,6 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
                     "max_iterations": max_iterations,
                     "interactive_search": interactive_search,
                     "session_id": session_id,
-                    "max_concurrent_pages": max_concurrent_pages,
                     "step_model_configs": step_model_configs,
                     "canvas_mode": canvas_mode,
                     "live_artifacts_mode": live_artifacts_mode,
@@ -2932,7 +2773,6 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
                 "max_results": 7,
                 "max_iterations": 3,
                 "interactive_search": False,
-                "max_concurrent_pages": 2,
                 "workflow_step_models": {
                     "analysis": {"provider_id": "deepseek", "model_id": "deepseek-chat"},
                     "relevance": {"provider_id": "openai", "model_id": "gpt-4.1"},
@@ -2942,10 +2782,7 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -2958,7 +2795,6 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
                     "query": "hello",
                     "session_id": "provider-test",
                     "provider_id": "openai",
-                    "max_concurrent_pages": 9,
                     "canvas_mode": True,
                 },
             )
@@ -2973,7 +2809,6 @@ def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
         assert captured["max_results"] == 7
         assert captured["max_iterations"] == 3
         assert captured["interactive_search"] is False
-        assert captured["max_concurrent_pages"] == 9
         assert captured["canvas_mode"] is False
         assert captured["live_artifacts_mode"] is True
         assert captured["step_model_configs"]["analysis"]["provider_id"] == "deepseek"
@@ -3007,7 +2842,6 @@ def test_chat_endpoint_coerces_string_interactive_search_default(tmp_path, monke
             max_iterations,
             interactive_search,
             session_id=None,
-            max_concurrent_pages=3,
             step_model_configs=None,
             canvas_mode=False,
             live_artifacts_mode=False,
@@ -3047,7 +2881,6 @@ def test_chat_endpoint_coerces_string_interactive_search_default(tmp_path, monke
             "max_results": 8,
             "max_iterations": 4,
             "interactive_search": "false",
-            "max_concurrent_pages": 6,
         }
 
     async def run():
@@ -3063,11 +2896,8 @@ def test_chat_endpoint_coerces_string_interactive_search_default(tmp_path, monke
         database._SETTINGS_FILE = str(tmp_path / "settings.json")
         await database.init_db()
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.load_settings", fake_load_settings)
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3137,12 +2967,9 @@ def test_chat_endpoint_reports_cancelled_workflow_without_stream_crash(monkeypat
         return None
 
     async def run():
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.load_settings", fake_load_settings)
         monkeypatch.setattr("backend.app.routers.chat.load_chat_history", fake_load_chat_history)
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", CancelledWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3190,7 +3017,6 @@ def test_chat_endpoint_clamps_request_search_limits(tmp_path, monkeypatch):
             max_iterations,
             interactive_search,
             session_id=None,
-            max_concurrent_pages=3,
             step_model_configs=None,
             canvas_mode=False,
             live_artifacts_mode=False,
@@ -3199,7 +3025,6 @@ def test_chat_endpoint_clamps_request_search_limits(tmp_path, monkeypatch):
                 {
                     "max_results": max_results,
                     "max_iterations": max_iterations,
-                    "max_concurrent_pages": max_concurrent_pages,
                 }
             )
 
@@ -3240,14 +3065,10 @@ def test_chat_endpoint_clamps_request_search_limits(tmp_path, monkeypatch):
                 ],
                 "max_results": 8,
                 "max_iterations": 4,
-                "max_concurrent_pages": 6,
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3262,7 +3083,6 @@ def test_chat_endpoint_clamps_request_search_limits(tmp_path, monkeypatch):
                     "provider_id": "deepseek",
                     "max_results": 500,
                     "max_iterations": -2,
-                    "max_concurrent_pages": 0,
                 },
             )
 
@@ -3270,7 +3090,6 @@ def test_chat_endpoint_clamps_request_search_limits(tmp_path, monkeypatch):
         assert captured == {
             "max_results": 50,
             "max_iterations": 1,
-            "max_concurrent_pages": 1,
         }
 
         if database._engine is not None:
@@ -3298,7 +3117,6 @@ def test_chat_endpoint_defaults_to_searxng_when_no_engine_is_saved(tmp_path, mon
             max_iterations,
             interactive_search,
             session_id=None,
-            max_concurrent_pages=3,
             step_model_configs=None,
             canvas_mode=False,
             live_artifacts_mode=False,
@@ -3344,10 +3162,7 @@ def test_chat_endpoint_defaults_to_searxng_when_no_engine_is_saved(tmp_path, mon
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3409,10 +3224,7 @@ def test_chat_endpoint_rejects_unknown_requested_search_engine(tmp_path, monkeyp
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3457,7 +3269,6 @@ def test_chat_endpoint_falls_back_when_saved_search_engine_is_unknown(tmp_path, 
             max_iterations,
             interactive_search,
             session_id=None,
-            max_concurrent_pages=3,
             step_model_configs=None,
             canvas_mode=False,
             live_artifacts_mode=False,
@@ -3503,10 +3314,7 @@ def test_chat_endpoint_falls_back_when_saved_search_engine_is_unknown(tmp_path, 
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3550,7 +3358,6 @@ def test_chat_endpoint_falls_back_when_saved_search_engine_is_not_string(tmp_pat
             max_iterations,
             interactive_search,
             session_id=None,
-            max_concurrent_pages=3,
             step_model_configs=None,
             canvas_mode=False,
             live_artifacts_mode=False,
@@ -3596,10 +3403,7 @@ def test_chat_endpoint_falls_back_when_saved_search_engine_is_not_string(tmp_pat
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3682,10 +3486,7 @@ def test_chat_endpoint_saves_latest_source_snapshot_without_duplicates(tmp_path,
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3731,7 +3532,6 @@ def test_chat_endpoint_allows_local_provider_without_api_key(tmp_path, monkeypat
             max_iterations,
             interactive_search,
             session_id=None,
-            max_concurrent_pages=3,
             step_model_configs=None,
             canvas_mode=False,
             live_artifacts_mode=False,
@@ -3791,10 +3591,7 @@ def test_chat_endpoint_allows_local_provider_without_api_key(tmp_path, monkeypat
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", FakeWorkflow)
-        chat_limiter._requests.clear()
 
         app = FastAPI()
         app.include_router(router)
@@ -3857,10 +3654,6 @@ def test_chat_endpoint_rejects_gemini_25_model_request(tmp_path):
             }
         )
 
-        from backend.app.rate_limiter import chat_limiter
-
-        chat_limiter._requests.clear()
-
         app = FastAPI()
         app.include_router(router)
 
@@ -3888,10 +3681,8 @@ def test_chat_endpoint_rejects_gemini_25_model_request(tmp_path):
 
 def test_check_search_engines_reports_availability(monkeypatch):
     from backend.app.routers.settings import router
-    from backend.app.engine_health import engine_health
 
     calls = []
-    engine_health._results.clear()
 
     class FakeBrowserManager:
         def __init__(self, engine, max_results):
@@ -3905,7 +3696,6 @@ def test_check_search_engines_reports_availability(monkeypatch):
             session_id=None,
             allow_fallback=True,
             use_cache=True,
-            health_batch_id=None,
         ):
             calls.append(
                 {
@@ -3914,7 +3704,6 @@ def test_check_search_engines_reports_availability(monkeypatch):
                     "query": query,
                     "allow_fallback": allow_fallback,
                     "use_cache": use_cache,
-                    "health_batch_id": health_batch_id,
                 }
             )
             if self.engine == "bing":
@@ -3953,7 +3742,7 @@ def test_check_search_engines_reports_availability(monkeypatch):
                     "engine": "bing",
                     "available": False,
                     "result_count": 0,
-                    "reason": "",
+                    "reason": "selector",
                     "error": "未解析到搜索结果",
                 },
             ],
@@ -3965,7 +3754,6 @@ def test_check_search_engines_reports_availability(monkeypatch):
                 "query": "JustSearch test",
                 "allow_fallback": False,
                 "use_cache": False,
-                "health_batch_id": None,
             },
             {
                 "engine": "bing",
@@ -3973,49 +3761,33 @@ def test_check_search_engines_reports_availability(monkeypatch):
                 "query": "JustSearch test",
                 "allow_fallback": False,
                 "use_cache": False,
-                "health_batch_id": None,
             },
         ]
 
     asyncio.run(run())
 
 
-def test_reset_browser_profile_data_runs_delete_inside_browser_reset(tmp_path, monkeypatch):
-    from backend.app import browser_context
+def test_reset_browser_profile_data_wipes_legacy_user_data_dir(tmp_path):
+    # _reset_browser_profile_data 只删除/重建 user_data 目录。
     from backend.app.routers import settings as settings_router
 
     user_data_dir = tmp_path / "user_data"
     user_data_dir.mkdir()
     stale_file = user_data_dir / "stale-cookie"
     stale_file.write_text("old", encoding="utf-8")
-    events = []
-
-    async def fake_reset_global_browser_contexts(reset_profile_data):
-        events.append(("contexts-closed", stale_file.exists()))
-        reset_profile_data()
-        events.append(("contexts-rebuilt", user_data_dir.is_dir(), stale_file.exists()))
-
-    monkeypatch.setattr(
-        browser_context,
-        "reset_global_browser_contexts",
-        fake_reset_global_browser_contexts,
-    )
 
     async def run():
         await settings_router._reset_browser_profile_data(str(user_data_dir))
 
     asyncio.run(run())
 
-    assert events == [
-        ("contexts-closed", True),
-        ("contexts-rebuilt", True, False),
-    ]
+    # 目录被重建(空),旧文件消失。
+    assert user_data_dir.is_dir()
+    assert not stale_file.exists()
 
 
 def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
     from backend.app import browser_manager, database, llm_client, search_engine
-    from backend.app.engine_health import engine_health
-    from backend.app.rate_limiter import chat_limiter
     from backend.app.routers import settings as settings_router
     from backend.app.routers import stats as stats_router
 
@@ -4057,8 +3829,6 @@ def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
 
         browser_manager._search_cache["searxng:cached"] = ([{"title": "old"}], 1.0)
         llm_client._ANALYSIS_CACHE["task:old"] = ({"type": "search"}, 1.0)
-        engine_health.record("brave", success=False, reason="blocked")
-        chat_limiter._requests["127.0.0.1"] = [1.0]
         stats_router.github_stats_cache.update({
             "stars": 99,
             "last_updated": datetime.now(),
@@ -4085,8 +3855,6 @@ def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
         ]
         assert browser_manager._search_cache == {}
         assert llm_client._ANALYSIS_CACHE == {}
-        assert engine_health.get_stats() == {}
-        assert dict(chat_limiter._requests) == {}
         assert stats_router.github_stats_cache == {
             "stars": 0,
             "last_updated": None,
@@ -4107,8 +3875,6 @@ def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
     finally:
         browser_manager._search_cache.clear()
         llm_client._ANALYSIS_CACHE.clear()
-        engine_health._results.clear()
-        chat_limiter._requests.clear()
         stats_router.github_stats_cache.update({
             "stars": 0,
             "last_updated": None,
@@ -4121,7 +3887,6 @@ def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
 
 def test_check_search_engines_reports_recent_failure_reason(monkeypatch):
     from backend.app.routers.settings import router
-    from backend.app.engine_health import engine_health
 
     class FakeBrowserManager:
         def __init__(self, engine, max_results):
@@ -4135,12 +3900,9 @@ def test_check_search_engines_reports_recent_failure_reason(monkeypatch):
             session_id=None,
             allow_fallback=True,
             use_cache=True,
-            health_batch_id=None,
         ):
-            engine_health.record(self.engine, success=False, reason="blocked")
             return []
 
-    engine_health._results.clear()
     monkeypatch.setattr(
         "backend.app.routers.settings.BrowserManager",
         FakeBrowserManager,
@@ -4164,8 +3926,8 @@ def test_check_search_engines_reports_recent_failure_reason(monkeypatch):
                 "engine": "brave",
                 "available": False,
                 "result_count": 0,
-                "reason": "blocked",
-                "error": "验证/反爬页面",
+                "reason": "selector",
+                "error": "未解析到搜索结果",
             }
         ]
 

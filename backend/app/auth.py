@@ -14,6 +14,9 @@ _AUTH_TOKEN_CACHE: str | None = None
 _TOKEN_ENV_VAR = "JUSTSEARCH_AUTH_TOKEN"
 _TOKEN_FILE_ENV_VAR = "JUSTSEARCH_AUTH_TOKEN_FILE"
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+# Docker bridge 网段:容器里看到的客户端 IP 是网关(如 172.x.0.1),
+# 端口映射进来的本机请求也应视为可信 loopback,这样首页才会自动注入 token。
+_DOCKER_BRIDGE_PREFIXES = ("172.",)
 _PROTECTED_HTTP_PREFIXES = ("/api",)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DATA_DIR = _PROJECT_ROOT / "data"
@@ -46,7 +49,11 @@ def is_loopback_host(host: str | None) -> bool:
         return True
     if normalized.startswith("::ffff:"):
         normalized = normalized[7:]
-    return normalized == "127.0.0.1"
+    if normalized == "127.0.0.1":
+        return True
+    # Docker 端口映射:宿主机本机请求经 bridge 网关进容器,IP 形如 172.x.0.1。
+    # 视为可信 loopback,与 127.0.0.1 同等对待(自动注入 token + 免带 Bearer)。
+    return any(normalized.startswith(p) for p in _DOCKER_BRIDGE_PREFIXES)
 
 
 def get_request_host(request: Request) -> str:

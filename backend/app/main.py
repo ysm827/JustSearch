@@ -5,7 +5,7 @@ import httpx
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +23,12 @@ from .auth import (
     inject_html_bootstrap,
 )
 from .database import init_db
-from .browser_context import init_global_browser, shutdown_global_browser
+from .extension_bridge import (
+    get_ws_route_path,
+    handle_extension_websocket,
+    init_bridge,
+    shutdown_bridge,
+)
 from .routers import chat as chat_router
 from .routers import history as history_router
 from .routers import settings as settings_router
@@ -35,12 +40,10 @@ _cleanup_task = None
 
 
 async def _periodic_cleanup():
-    """Periodically clean up rate limiter and other in-memory state."""
+    """Periodically clean up in-memory caches."""
     while True:
         try:
             await asyncio.sleep(300)  # Every 5 minutes
-            from .rate_limiter import chat_limiter
-            chat_limiter.cleanup()
             # Clean expired search cache
             from .browser_manager import _search_cache, _SEARCH_CACHE_TTL
             import time
@@ -50,6 +53,14 @@ async def _periodic_cleanup():
                 del _search_cache[k]
             if expired:
                 logger.debug("Cleaned %d expired search cache entries", len(expired))
+            # 关闭桥接中残留的临时 tab。
+            from .extension_bridge import get_bridge_client
+            try:
+                client = get_bridge_client()
+                # 无需操作,TabPool 是每任务建;这里只是确认连接。
+                _ = client
+            except Exception:
+                pass
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -80,7 +91,7 @@ async def lifespan(app: FastAPI):
     _httpx_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
     stats_router.set_httpx_client(_httpx_client)
 
-    await init_global_browser()
+    await init_bridge()
 
     # Start periodic cleanup
     global _cleanup_task
@@ -105,7 +116,7 @@ async def lifespan(app: FastAPI):
         await _httpx_client.aclose()
         _httpx_client = None
         stats_router.set_httpx_client(None)
-    await shutdown_global_browser()
+    await shutdown_bridge()
 
 
 app = FastAPI(title="JustSearch", lifespan=lifespan)
@@ -155,7 +166,9 @@ async def cache_control_middleware(request, call_next):
     path = request.url.path
     if path.startswith("/static/"):
         if path.endswith((".js", ".css")):
-            response.headers["Cache-Control"] = "no-cache"
+            # JS/CSS 文件名带版本号(?v=57),改代码后版本号会变,浏览器会拉新文件
+            # 用 max-age 缓存,避免每次刷新都发 30+ 个请求
+            response.headers["Cache-Control"] = "public, max-age=3600"  # 1 hour
         elif path.endswith((".png", ".jpg", ".svg", ".ico", ".woff2")):
             response.headers["Cache-Control"] = "public, max-age=604800"  # 1 week
         else:
@@ -182,6 +195,14 @@ app.include_router(chat_router.router)
 app.include_router(history_router.router)
 app.include_router(settings_router.router)
 app.include_router(stats_router.router)
+
+# ---------------------------------------------------------------------------
+# WebSocket Routes:浏览器桥接扩展连接
+# ---------------------------------------------------------------------------
+@app.websocket(get_ws_route_path())
+async def extension_websocket(websocket: WebSocket):
+    await handle_extension_websocket(websocket)
+
 
 # ---------------------------------------------------------------------------
 # Root route

@@ -4,37 +4,47 @@ import logging
 import os
 import random
 import re
+from typing import Any
 
-from playwright.async_api import Page
-from playwright_stealth import Stealth
-
-from .browser_context import get_new_page, release_page, get_context_pool_status
 from .crawler.content import (
     extract_og_metadata,
     extract_page_content,
-    install_resource_blocker,
 )
 from .crawler.redirects import resolve_redirect_url
 from .crawler.security import is_private_url
-from .interaction import register_interaction_session, remove_interaction_session
+from .extension_bridge import get_bridge_client, TabPool
 
 logger = logging.getLogger(__name__)
 
 # PDF URL pattern
 _PDF_PATTERN = re.compile(r'\.pdf(\?.*)?$', re.IGNORECASE)
 
+# 虚拟光标 move_sequence 全局单调计数器(进程级)。扩展端用 (turn_id, move_sequence)
+# 去重贝塞尔路径并上报到达。进程重启会重置,但扩展端按 turn 去重,无冲突。
+_move_sequence_counter = 0
+
+
+def next_move_seq() -> int:
+    global _move_sequence_counter
+    _move_sequence_counter += 1
+    return _move_sequence_counter
+
 
 def _format_pdf_metadata(url: str) -> str:
     return f"[PDF 文档] {url}\n注意: PDF 文件无法直接提取内容，请访问链接查看原文。"
 
 
-async def crawl_github_api(page: Page, url: str, log_func=None) -> str | None:
+async def crawl_github_api(bridge, tab_id: int, url: str, log_func=None) -> str | None:
     """Handle GitHub API URLs - parse JSON and return a summary."""
     if log_func:
         log_func("浏览器: 检测到 GitHub API 请求，正在优化数据...")
     try:
-        await page.goto(url, wait_until="networkidle", timeout=30000)
-        json_content = await page.evaluate("() => document.body.innerText")
+        await bridge.navigate(tab_id, url, timeout_ms=30000)
+        # networkidle 在桥接里没有等价物;给 API 响应一点时间。
+        await asyncio.sleep(2.0)
+        json_content = await bridge.evaluate(tab_id, "document.body.innerText", timeout_ms=15000)
+        if not isinstance(json_content, str):
+            return None
         data = json.loads(json_content)
         if isinstance(data, list):
             summary = f"GitHub API Repository List Summary (First 30 items):\n"
@@ -62,12 +72,21 @@ async def crawl_github_api(page: Page, url: str, log_func=None) -> str | None:
     return None
 
 
-async def extract_github_repo_stats(page: Page, url: str, log_func=None) -> str | None:
+async def extract_github_repo_stats(bridge, tab_id: int, url: str, log_func=None) -> str | None:
     """Extract star counts from GitHub repository list pages."""
     try:
-        await page.wait_for_selector("#user-repositories-list", timeout=5000)
+        # 等待选择器:轮询 querySelector,最多 5s。
+        for _ in range(10):
+            found = await bridge.evaluate(
+                tab_id,
+                'document.querySelector("#user-repositories-list") !== null',
+                timeout_ms=3000,
+            )
+            if found:
+                break
+            await asyncio.sleep(0.5)
 
-        repo_stats = await page.evaluate("""() => {
+        repo_stats = await bridge.evaluate("""(() => {
             let totalStars = 0;
             let repos = [];
 
@@ -88,7 +107,7 @@ async def extract_github_repo_stats(page: Page, url: str, log_func=None) -> str 
             });
 
             return {totalStars, repos, count: repos.length};
-        }""")
+        })()""", timeout_ms=15000)
 
         if repo_stats and repo_stats.get('count', 0) > 0:
             if log_func:
@@ -111,13 +130,20 @@ async def extract_github_repo_stats(page: Page, url: str, log_func=None) -> str 
     return None
 
 
-async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None):
-    """Run interactive mode: extract clickable elements and ask LLM what to click."""
+async def run_interactive_mode(bridge, tab_id: int, query: str, llm_client, log_func=None,
+                              session_id: str = "default", turn_id: str | None = None):
+    """Run interactive mode: extract clickable elements and ask LLM what to click.
+
+    session_id/turn_id 透传给虚拟光标,让扩展端按 turn 去重路径、归组标签。
+    """
+    crawl_session_id = session_id or "default"
+    if turn_id is None:
+        turn_id = f"{crawl_session_id}-{next_move_seq()}"
     if log_func:
         log_func("浏览器: 交互模式已开启，正在提取可点击元素...")
 
     # Extract elements and store their positions (no DOM mutation)
-    elements = await page.evaluate(r"""() => {
+    elements = await bridge.evaluate(r"""(() => {
         const items = [];
         let idCounter = 0;
 
@@ -160,7 +186,7 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
             if (items.length >= 30) break;
         }
         return items;
-    }""")
+    })()""", timeout_ms=15000)
 
     if elements:
         if log_func:
@@ -182,10 +208,19 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
                     continue
                 x, y = pos_map[cid]
                 clicked = False
+                move_seq = next_move_seq()
                 # Retry up to 3 times
                 for attempt in range(3):
                     try:
-                        await page.mouse.click(x, y)
+                        # 先驱动虚拟光标动画到目标(弹簧/贝塞尔,复刻 BCB),再真实点击。
+                        await bridge.move_mouse(
+                            tab_id, x, y,
+                            session_id=crawl_session_id,
+                            turn_id=turn_id,
+                            move_sequence=move_seq,
+                            wait_for_arrival=True,
+                        )
+                        await bridge.click_at(tab_id, x, y)
                         if log_func:
                             log_func(f"浏览器: 已点击元素 {cid}")
                         clicked = True
@@ -201,11 +236,9 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
                                 log_func(f"浏览器: 点击元素 {cid} 最终失败: {e}")
 
                 if clicked:
-                    # Wait for any dynamic content to load after click
-                    try:
-                        await page.wait_for_load_state("networkidle", timeout=3000)
-                    except Exception:
-                        await asyncio.sleep(1.0)
+                    # Wait for any dynamic content to load after click.
+                    # 桥接无 networkidle,用固定等待代替。
+                    await asyncio.sleep(1.0)
         else:
             if log_func:
                 log_func("浏览器: AI 决定不点击任何元素。")
@@ -214,17 +247,12 @@ async def run_interactive_mode(page: Page, query: str, llm_client, log_func=None
             log_func("浏览器: 未找到显著的可交互元素。")
 
 
-async def crawl_page(url: str, stealth: Stealth, log_func=None,
+async def crawl_page(url: str, log_func=None,
                      interactive_mode: bool = False, query: str = None,
                      llm_client=None, session_id: str = None) -> str:
     """
-    Headless Browser Deep Crawling - resolves redirects, loads page, extracts content.
+    Deep Crawling - resolves redirects, loads page via bridge, extracts content.
     """
-    pool = get_context_pool_status()
-    if pool["active_contexts"] == 0:
-        from .browser_context import init_global_browser
-        await init_global_browser()
-
     final_url = await resolve_redirect_url(url, log_func)
 
     # SSRF protection: block private/internal network addresses
@@ -239,10 +267,10 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             log_func(f"浏览器: 检测到 PDF 文件，跳过深度爬取")
         return _format_pdf_metadata(final_url)
 
-    page = await get_new_page()
-    await stealth.apply_stealth_async(page)
-    # Block non-essential resources to speed up crawling
-    await install_resource_blocker(page, should_block_url=is_private_url)
+    bridge = get_bridge_client()
+    tab_pool = TabPool(bridge)
+    tab = await tab_pool.acquire(session_id=session_id)
+    tab_id = tab["tab_id"]
 
     try:
         if log_func:
@@ -250,32 +278,17 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
 
         # Special handling for GitHub API
         if "api.github.com" in final_url and "/repos" in final_url:
-            result = await crawl_github_api(page, final_url, log_func)
+            result = await crawl_github_api(bridge, tab_id, final_url, log_func)
             if result is not None:
                 return result
 
         try:
             if log_func:
                 log_func(f"浏览器: 正在加载页面...")
-            response = await page.goto(final_url, wait_until="domcontentloaded", timeout=20000)
-            navigated_url = (
-                getattr(page, "url", "")
-                or getattr(response, "url", "")
-                or final_url
-            )
-            if navigated_url != final_url:
-                if is_private_url(navigated_url):
-                    if log_func:
-                        log_func(f"浏览器: 拒绝访问跳转后的内网地址 {navigated_url}")
-                    return "错误: 不允许访问内网地址"
-                final_url = navigated_url
-                if _PDF_PATTERN.search(final_url):
-                    if log_func:
-                        log_func(f"浏览器: 跳转到 PDF 文件，跳过深度爬取")
-                    return _format_pdf_metadata(final_url)
+            await bridge.navigate(tab_id, final_url, timeout_ms=20000)
         except Exception as e:
             err_msg = str(e)
-            is_timeout = "Timeout" in err_msg or "timeout" in err_msg
+            is_timeout = "Timeout" in err_msg or "timeout" in err_msg or "timed out" in err_msg
             if log_func:
                 if is_timeout:
                     log_func(f"浏览器: 加载页面超时 {final_url}")
@@ -285,12 +298,29 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                 return "[CRAWL_TIMEOUT]"
             return ""
 
+        # 跳转后复查 URL(SSRF / PDF)。桥接 navigate 完成后读真实 URL。
+        try:
+            navigated_url = await bridge.get_tab_url(tab_id)
+        except Exception:
+            navigated_url = final_url
+        if navigated_url and navigated_url != final_url and navigated_url != "about:blank":
+            if is_private_url(navigated_url):
+                if log_func:
+                    log_func(f"浏览器: 拒绝访问跳转后的内网地址 {navigated_url}")
+                return "错误: 不允许访问内网地址"
+            final_url = navigated_url
+            if _PDF_PATTERN.search(final_url):
+                if log_func:
+                    log_func(f"浏览器: 跳转到 PDF 文件，跳过深度爬取")
+                return _format_pdf_metadata(final_url)
+
         # Wait for content to stabilize
         prepend_text = ""
         try:
             if log_func:
                 log_func(f"浏览器: 等待页面内容渲染...")
-            await page.wait_for_load_state("networkidle", timeout=8000)
+            # 桥接无 networkidle;给渲染一点时间。
+            await asyncio.sleep(1.5)
             # SPA / documentation sites often need extra rendering time
             spa_indicators = ['.wiki', '/docs/', '/documentation/', 'docusaurus', 'vitepress',
                              'notion.site', 'vercel.app', 'netlify.app',
@@ -299,18 +329,18 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             if is_spa:
                 await asyncio.sleep(2.0)  # Extra wait for client-side rendering
                 # Try to scroll to trigger lazy content
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+                await bridge.evaluate(tab_id, "window.scrollTo(0, document.body.scrollHeight / 2)")
                 await asyncio.sleep(1.0)
             if "github.com" in final_url:
                 if "tab=repositories" in final_url:
-                    prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
+                    prepend_text = await extract_github_repo_stats(bridge, tab_id, final_url, log_func) or ""
                 elif "/stars" in final_url:
                     # GitHub stars page optimization
-                    prepend_text = await extract_github_repo_stats(page, final_url, log_func) or ""
+                    prepend_text = await extract_github_repo_stats(bridge, tab_id, final_url, log_func) or ""
                 elif "/blob/" not in final_url and "/tree/" not in final_url and "/issues/" not in final_url:
                     # GitHub repo homepage — try to extract README content specifically
                     try:
-                        readme = await page.evaluate(r"""() => {
+                        readme = await bridge.evaluate(tab_id, r"""() => {
                             const readme = document.querySelector('[data-target="readme-toc.content"], article.markdown-body, .readme .markdown-body');
                             if (readme) {
                                 // Remove anchor links from headings
@@ -318,12 +348,12 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                                 return readme.innerText.substring(0, 8000);
                             }
                             return null;
-                        }""")
+                        }""", timeout_ms=15000)
                         if readme and len(readme) > 200:
                             if log_func:
                                 log_func(f"浏览器: GitHub README 提取成功 ({len(readme)} 字符)")
                             # Also get repo metadata
-                            meta = await page.evaluate(r"""() => {
+                            meta = await bridge.evaluate(tab_id, r"""() => {
                                 const parts = [];
                                 const desc = document.querySelector('[data-testid="about-description"], .f4.my-3');
                                 if (desc) parts.push('描述: ' + desc.innerText.trim());
@@ -334,7 +364,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                                 const lang = document.querySelector('[data-ga-click*="language"], ul.list-style-none li .color-fg-default');
                                 if (lang) parts.push('语言: ' + lang.innerText.trim());
                                 return parts.join('\n');
-                            }""")
+                            }""", timeout_ms=15000)
                             prepend_text = (meta + "\n\n--- README ---\n") if meta else "--- README ---\n"
                             prepend_text += readme + "\n--- END README ---\n\n"
                     except Exception:
@@ -345,7 +375,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for YouTube — extract video metadata and transcript
         if "youtube.com/watch" in final_url or "youtu.be/" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const parts = [];
                     const title = document.querySelector('h1 yt-formatted-string, h1');
                     if (title) parts.push('标题: ' + title.innerText);
@@ -361,7 +391,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                     const transcriptBtn = document.querySelector('[target-id="transcript"]');
                     if (transcriptBtn) parts.push('\n[有字幕/文字版可用]');
                     return parts.length > 0 ? parts.join('\n') : null;
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func(f"浏览器: YouTube 视频信息提取成功")
@@ -372,7 +402,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Bilibili — extract video metadata
         if "bilibili.com/video/" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const parts = [];
                     const title = document.querySelector('h1.video-info-title, h1');
                     if (title) parts.push('标题: ' + title.innerText);
@@ -383,7 +413,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                     const desc = document.querySelector('.desc-info-text, .basic-desc-info');
                     if (desc) parts.push('\n简介:\n' + desc.innerText.substring(0, 3000));
                     return parts.length > 0 ? parts.join('\n') : null;
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func(f"浏览器: Bilibili 视频信息提取成功")
@@ -394,7 +424,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for StackOverflow / StackExchange — extract Q&A
         if "stackoverflow.com" in final_url or "stackexchange.com" in final_url or "serverfault.com" in final_url or "superuser.com" in final_url or "askubuntu.com" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const parts = [];
                     const question = document.querySelector('.question .s-prose, .question .post-text');
                     if (question) parts.push('## 问题\n' + question.innerText.substring(0, 4000));
@@ -405,7 +435,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                     });
                     if (answerText) parts.push(answerText);
                     return parts.length > 0 ? parts.join('\n\n') : null;
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func(f"浏览器: StackExchange 问答提取成功")
@@ -416,7 +446,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Arxiv papers (abstract page only; HTML version uses default extraction)
         if "arxiv.org/abs/" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const parts = [];
                     const title = document.querySelector('h1.title');
                     if (title) parts.push('标题: ' + title.innerText.replace('Title:', '').trim());
@@ -427,7 +457,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                     const date = document.querySelector('.dateline');
                     if (date) parts.push('日期: ' + date.innerText.trim());
                     return parts.length > 0 ? parts.join('\n') : null;
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func(f"浏览器: Arxiv 论文信息提取成功")
@@ -438,7 +468,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Zhihu — click "阅读全文" / "展开阅读全文" to expand
         if "zhihu.com" in final_url:
             try:
-                expanded = await page.evaluate(r"""() => {
+                expanded = await bridge.evaluate(tab_id, r"""() => {
                     const btns = document.querySelectorAll('button');
                     for (const btn of btns) {
                         const text = btn.innerText.trim();
@@ -448,7 +478,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                         }
                     }
                     return false;
-                }""")
+                }""", timeout_ms=15000)
                 if expanded:
                     await asyncio.sleep(1.5)
                     if log_func:
@@ -459,40 +489,40 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Medium — remove paywall overlay
         if "medium.com" in final_url:
             try:
-                await page.evaluate(r"""() => {
+                await bridge.evaluate(tab_id, r"""() => {
                     // Remove paywall overlays
                     document.querySelectorAll('[aria-label="Member-only story"], .metabar, .js-sticky-footer, .overlay').forEach(el => el.remove());
                     // Try to expand truncated content
                     const expandBtn = document.querySelector('button[data-action="expand"]');
                     if (expandBtn) expandBtn.click();
-                }""")
+                }""", timeout_ms=15000)
             except Exception:
                 pass
 
         # Special handling for WeChat articles — expand collapsed content
         if "mp.weixin.qq.com" in final_url:
             try:
-                await page.evaluate(r"""() => {
+                await bridge.evaluate(tab_id, r"""() => {
                     const expandBtn = document.querySelector('#js_content_overflow_mask');
                     if (expandBtn) {
                         const clickEvent = new Event('click');
                         expandBtn.dispatchEvent(clickEvent);
                     }
-                }""")
+                }""", timeout_ms=15000)
             except Exception:
                 pass
 
         # Special handling for Baidu Baike — extract article content only
         if "baike.baidu.com" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const summary = document.querySelector('.lemma-summary, .lemma-desc');
                     const mainContent = document.querySelector('.main-content, .lemma-main-content, #J-lemma-content');
                     const parts = [];
                     if (summary) parts.push(summary.innerText);
                     if (mainContent) parts.push(mainContent.innerText);
                     return parts.length > 0 ? parts.join('\n\n') : null;
-                }""")
+                }""", timeout_ms=15000)
                 if content and len(content) > 200:
                     if log_func:
                         log_func(f"浏览器: 百度百科内容提取成功 ({len(content)} 字符)")
@@ -503,10 +533,10 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Zhihu Zhuanlan — expand full article
         if "zhuanlan.zhihu.com" in final_url:
             try:
-                await page.evaluate(r"""() => {
+                await bridge.evaluate(tab_id, r"""() => {
                     const btn = document.querySelector('.ContentItem-expandButton');
                     if (btn) btn.click();
-                }""")
+                }""", timeout_ms=15000)
                 await asyncio.sleep(1.0)
             except Exception:
                 pass
@@ -514,11 +544,11 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Toutiao articles — extract article body
         if "toutiao.com/article/" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const article = document.querySelector('.article-content, .syl-article-base, #article-root');
                     if (article) return article.innerText;
                     return null;
-                }""")
+                }""", timeout_ms=15000)
                 if content and len(content) > 200:
                     if log_func:
                         log_func(f"浏览器: 头条文章内容提取成功 ({len(content)} 字符)")
@@ -529,7 +559,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for CSDN — remove ads and recommendations
         if "csdn.net" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const article = document.querySelector('#article_content, #content_views');
                     if (article) {
                         const clone = article.cloneNode(true);
@@ -537,7 +567,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                         return clone.innerText;
                     }
                     return null;
-                }""")
+                }""", timeout_ms=15000)
                 if content and len(content) > 200:
                     if log_func:
                         log_func(f"浏览器: CSDN 文章内容提取成功 ({len(content)} 字符)")
@@ -548,11 +578,11 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Juejin (掘金) — extract article body
         if "juejin.cn" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const article = document.querySelector('.article-content, .markdown-body');
                     if (article) return article.innerText;
                     return null;
-                }""")
+                }""", timeout_ms=15000)
                 if content and len(content) > 200:
                     if log_func:
                         log_func(f"浏览器: 掘金文章内容提取成功 ({len(content)} 字符)")
@@ -563,13 +593,13 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Wikipedia — extract main article content only
         if "wikipedia.org/wiki/" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const article = document.querySelector('#mw-content-text .mw-parser-output');
                     if (!article) return null;
                     const clone = article.cloneNode(true);
                     clone.querySelectorAll('.reference, .noprint, .mw-editsection, .sidebar, .navbox, .infobox, table, .toc').forEach(el => el.remove());
                     return clone.innerText;
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func(f"浏览器: Wikipedia 内容提取成功")
@@ -580,7 +610,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Xiaohongshu (小红书) — extract note content
         if "xiaohongshu.com/explore/" in final_url or "xiaohongshu.com/discovery/item/" in final_url or "xhslink.com" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const parts = [];
                     const title = document.querySelector('#detail-title, .note-content .title');
                     if (title) parts.push('标题: ' + title.innerText.trim());
@@ -594,7 +624,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                         if (tagText) parts.push('\n标签: ' + tagText);
                     }
                     return parts.length > 0 ? parts.join('\n') : null;
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func(f"浏览器: 小红书笔记内容提取成功")
@@ -605,7 +635,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for GitHub — extract README, issues, or PR content
         if "github.com" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     // README on repo page
                     const readme = document.querySelector('#readme article, .markdown-body');
                     if (readme) {
@@ -628,7 +658,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                         return result.substring(0, 8000);
                     }
                     return null;
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func(f"浏览器: GitHub 页面内容提取成功")
@@ -639,7 +669,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for Bilibili (B站) — extract video info and comments
         if "bilibili.com/video/" in final_url or "b23.tv/" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const parts = [];
                     const title = document.querySelector('h1.video-title, .video-info-container .video-title');
                     if (title) parts.push('标题: ' + title.innerText.trim());
@@ -666,7 +696,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                         }
                     }
                     return parts.length > 0 ? parts.join('\n') : null;
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func("浏览器: B站视频信息提取成功")
@@ -677,7 +707,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Special handling for WeChat Official Account articles (微信公众号)
         if "mp.weixin.qq.com" in final_url:
             try:
-                content = await page.evaluate(r"""() => {
+                content = await bridge.evaluate(tab_id, r"""() => {
                     const title = document.querySelector('#activity-name, .rich_media_title');
                     const author = document.querySelector('#js_name, .rich_media_meta_nickname a');
                     const date = document.querySelector('#publish_time, .rich_media_meta_primary_category');
@@ -689,7 +719,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                     if (date) result += '时间: ' + date.innerText.trim() + '\n';
                     result += '\n' + body.innerText.trim();
                     return result.substring(0, 10000);
-                }""")
+                }""", timeout_ms=15000)
                 if content:
                     if log_func:
                         log_func(f"浏览器: 微信公众号文章提取成功")
@@ -698,7 +728,7 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                 pass
 
         # Detect Cloudflare challenge page
-        is_cf_challenge = await page.evaluate(r"""() => {
+        is_cf_challenge = await bridge.evaluate(tab_id, r"""() => {
             const title = document.title || '';
             const body = document.body ? document.body.innerText : '';
             return title.includes('Just a moment') ||
@@ -706,19 +736,20 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
                    body.includes('Checking your browser') ||
                    body.includes('cf-browser-verification') ||
                    document.querySelector('#challenge-running, .challenge-running') !== null;
-        }""")
+        }""", timeout_ms=15000)
         if is_cf_challenge:
             if log_func:
                 log_func("浏览器: 检测到 Cloudflare 验证页面，等待通过...")
             try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                # 桥接无 networkidle;Cloudflare 验证通常几秒内自行通过,等待后复查。
+                await asyncio.sleep(8.0)
             except Exception:
                 pass
             # Re-check after waiting
-            still_blocked = await page.evaluate(r"""() => {
+            still_blocked = await bridge.evaluate(tab_id, r"""() => {
                 const title = document.title || '';
                 return title.includes('Just a moment') || title.includes('Attention Required');
-            }""")
+            }""", timeout_ms=15000)
             if still_blocked:
                 if log_func:
                     log_func("浏览器: Cloudflare 验证未通过，跳过此页面")
@@ -727,17 +758,20 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
         # Interactive Mode
         if interactive_mode and query and llm_client:
             try:
-                await run_interactive_mode(page, query, llm_client, log_func)
+                await run_interactive_mode(
+                    bridge, tab_id, query, llm_client, log_func,
+                    session_id=session_id or "default",
+                )
             except Exception as e:
                 if log_func:
                     log_func(f"浏览器: 交互模式执行出错: {e}")
 
         if log_func:
             log_func(f"浏览器: 正在提取页面内容...")
-        content = await extract_page_content(page, final_url)
+        content = await extract_page_content(bridge, tab_id, final_url, log_func)
 
         # Extract OpenGraph metadata for better context
-        og = await extract_og_metadata(page)
+        og = await extract_og_metadata(bridge, tab_id)
         if og and any(og.values()):
             meta_lines = []
             if og.get('og_description'):
@@ -763,4 +797,5 @@ async def crawl_page(url: str, stealth: Stealth, log_func=None,
             log_func(f"浏览器错误: {msg}")
         return f"爬取页面时出错: {str(e)}"
     finally:
-        await release_page(page)
+        await tab_pool.release(tab)
+        await tab_pool.close_all_pending(session_id=session_id)
