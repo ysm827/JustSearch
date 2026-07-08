@@ -1,0 +1,439 @@
+// RPC 方法实现:JustSearch 后端通过 JSON-RPC 调用这些方法驱动真实 Chrome。
+// 注册到 JsonRpcBridge。
+
+import { attachTab, detachTab, executeCdp, detachAll, isTabAttached } from "./debugger-api.js";
+import { TabGroupStore } from "./tab-groups.js";
+
+// 保存 navigate 等待完成的 listener。
+const _navCompletes = new Map(); // tabId -> { resolve, timer }
+
+// 光标到达等待器:moveSequence -> { resolve, timer }。
+// moveMouse(waitForArrival=true) 注册一个,AGENT_CURSOR_ARRIVED 到达时 resolve。
+const _cursorArrivalWaiters = new Map();
+const CURSOR_ARRIVAL_TIMEOUT_MS = 1500;
+
+// 注入点:由 background.js 在注册 handler 前设置,避免循环依赖。
+let _cursorOverlays = null;
+let _nextCursorMoveSequence = 1;
+
+export function setCursorOverlayController(controller) {
+  _cursorOverlays = controller;
+}
+
+export function getCursorOverlayController() {
+  return _cursorOverlays;
+}
+
+// content script 上报光标到达 → 直接 resolve 对应的 moveMouse 等待器(进程内,不发回后端)。
+export function notifyCursorArrived({ sessionId, turnId, moveSequence } = {}) {
+  const key = `${sessionId ?? ""}:${turnId ?? ""}:${moveSequence ?? ""}`;
+  const waiter = _cursorArrivalWaiters.get(key);
+  if (waiter) waiter.resolve();
+}
+
+// 所有 agent 标签归入同一个全局分组,而不是按 session 分多组(多组占地方)。
+// 光标 controller 仍按真实 session_id 运作(动画/turn 去重不受影响)。
+const AGENT_GROUP_SESSION = "justsearch-agent";
+
+// 全局 agent 标签集合(不按 session 分桶,因为分组是全局的)。
+const _allAgentTabs = new Set();
+
+export function registerHandlers(bridge) {
+  const tabGroups = TabGroupStore.getInstance();
+
+  bridge.registerRequestHandler("ping", async () => ({ ok: true, ts: Date.now() }));
+
+  bridge.registerRequestHandler("createTab", async ({ url, session_id } = {}) => {
+    const sessionId = typeof session_id === "string" && session_id ? session_id : "default";
+    const tab = await chrome.tabs.create({ url: url ?? "about:blank", active: false });
+    // 归入唯一的全局 agent 分组。existingAgentTabIds 让 TabGroupStore 复用已有组而非新建。
+    try {
+      await tabGroups.ensureAgentTabGroup(AGENT_GROUP_SESSION, tab.id, [..._allAgentTabs]);
+    } catch (err) {
+      // tabGroups API 可能不可用(权限/版本),降级为不分组。
+    }
+    _allAgentTabs.add(tab.id);
+    return { tabId: tab.id, url: tab.url ?? url ?? "about:blank" };
+  });
+
+  bridge.registerRequestHandler("closeTab", async ({ tabId, session_id } = {}) => {
+    requireInt(tabId, "tabId");
+    const sessionId = typeof session_id === "string" && session_id ? session_id : "default";
+    try { await chrome.tabs.remove(tabId); } catch (err) {
+      // 标签已不存在,忽略。
+    }
+    try { await detachTab(tabId); } catch {}
+    try { await _cursorOverlays?.untrackTab(sessionId, tabId); } catch {}
+    try { await tabGroups.refreshManagedGroupsFromChrome(); } catch {}
+    _allAgentTabs.delete(tabId);
+    return { ok: true };
+  });
+
+  bridge.registerRequestHandler("finalizeTabs", async ({ tabIds, session_id } = {}) => {
+    if (!Array.isArray(tabIds)) throw new Error("finalizeTabs requires tabIds array");
+    const sessionId = typeof session_id === "string" && session_id ? session_id : "default";
+    await Promise.allSettled(tabIds.map((id) => {
+      if (typeof id !== "number") return Promise.resolve();
+      return chrome.tabs.remove(id).catch(() => {}).then(() => detachTab(id).catch(() => {}));
+    }));
+    // 关闭的标签从 managed group 移除(refresh 会清理空组)。
+    try { await tabGroups.releaseTabsFromManagedGroups(tabIds); } catch {}
+    try { await tabGroups.refreshManagedGroupsFromChrome(); } catch {}
+    for (const id of tabIds) {
+      if (typeof id === "number") {
+        _allAgentTabs.delete(id);
+        try { await _cursorOverlays?.untrackTab(sessionId, id); } catch {}
+      }
+    }
+    return { ok: true };
+  });
+
+  bridge.registerRequestHandler("nameSession", async ({ name, session_id } = {}) => {
+    // 命名统一作用于全局 agent 分组(只有一个组)。
+    try {
+      await tabGroups.setSessionGroupTitle(AGENT_GROUP_SESSION, name, [..._allAgentTabs]);
+    } catch {}
+    return { ok: true };
+  });
+
+  // 显式把一个已存在的 tab 纳入全局 agent 分组 + 跟踪光标。
+  // createTab 已带 session_id 时无需调用;用于后续 claimUserTab 类场景。
+  bridge.registerRequestHandler("attachTabToSession", async ({ tabId, session_id } = {}) => {
+    requireInt(tabId, "tabId");
+    const sessionId = typeof session_id === "string" && session_id ? session_id : "default";
+    try {
+      await tabGroups.ensureAgentTabGroup(AGENT_GROUP_SESSION, tabId, [..._allAgentTabs]);
+    } catch {}
+    _allAgentTabs.add(tabId);
+    try { await _cursorOverlays?.trackTab(sessionId, tabId, { publish: true }); } catch {}
+    return { ok: true };
+  });
+
+  bridge.registerRequestHandler("navigate", async ({ tabId, url, timeoutMs = 20000 } = {}) => {
+    requireInt(tabId, "tabId");
+    requireStr(url, "url");
+    await chrome.tabs.update(tabId, { url });
+    await waitForTabComplete(tabId, url, timeoutMs);
+    const updated = await chrome.tabs.get(tabId);
+    return { tabId, url: updated.url ?? url };
+  });
+
+  bridge.registerRequestHandler("getTabUrl", async ({ tabId } = {}) => {
+    requireInt(tabId, "tabId");
+    const t = await chrome.tabs.get(tabId);
+    return { url: t.url ?? "" };
+  });
+
+  bridge.registerRequestHandler("getTabTitle", async ({ tabId } = {}) => {
+    requireInt(tabId, "tabId");
+    const t = await chrome.tabs.get(tabId);
+    return { title: t.title ?? "" };
+  });
+
+  // 核心:在 tab 里跑任意 JS,返回 Runtime.evaluate 的 value。
+  bridge.registerRequestHandler("evaluate", async ({ tabId, expression, awaitPromise = true, returnByValue = true, timeoutMs = 30000 } = {}) => {
+    requireInt(tabId, "tabId");
+    requireStr(expression, "expression");
+    const result = await executeCdp({
+      tabId,
+      method: "Runtime.evaluate",
+      params: { expression, awaitPromise, returnByValue, allowUnsafeEvalBlocking: false },
+      timeoutMs,
+    });
+    // Runtime.evaluate 返回 { result: { type, value, ... }, exceptionDetails }
+    if (!result) return { value: null };
+    if (result.exceptionDetails) {
+      const ex = result.exceptionDetails;
+      const text = ex.exception?.description ?? ex.text ?? "eval error";
+      throw new Error(`Runtime.evaluate failed: ${text}`);
+    }
+    return { value: result.result?.value ?? null, type: result.result?.type };
+  });
+
+  bridge.registerRequestHandler("screenshot", async ({ tabId, fullPage = false, format = "jpeg", quality = 80 } = {}) => {
+    requireInt(tabId, "tabId");
+    if (fullPage) {
+      // 对 fullPage,先取 metrics 再 clip。
+      try {
+        const metrics = await executeCdp({ tabId, method: "Page.getLayoutMetrics", params: {}, timeoutMs: 5000 });
+        const m = metrics?.cssLayoutViewport ?? metrics?.layoutViewport;
+        const contentSize = metrics?.cssContentSize ?? metrics?.contentSize;
+        if (m && contentSize) {
+          const clip = { x: 0, y: 0, width: contentSize.width, height: contentSize.height, scale: 1 };
+          const r = await executeCdp({
+            tabId,
+            method: "Page.captureScreenshot",
+            params: { format, quality, clip },
+            timeoutMs: 30000,
+          });
+          return { data: r?.data ?? null };
+        }
+      } catch {}
+    }
+    const r = await executeCdp({
+      tabId,
+      method: "Page.captureScreenshot",
+      params: { format, quality },
+      timeoutMs: 30000,
+    });
+    return { data: r?.data ?? null };
+  });
+
+  bridge.registerRequestHandler("clickAt", async ({ tabId, x, y, button = "left", clickCount = 1 } = {}) => {
+    requireInt(tabId, "tabId");
+    requireNum(x, "x"); requireNum(y, "y");
+    await executeCdp({
+      tabId,
+      method: "Input.dispatchMouseEvent",
+      params: { type: "mouseMoved", x, y },
+      timeoutMs: 5000,
+    });
+    await executeCdp({
+      tabId,
+      method: "Input.dispatchMouseEvent",
+      params: { type: "mousePressed", x, y, button, clickCount },
+      timeoutMs: 5000,
+    });
+    await executeCdp({
+      tabId,
+      method: "Input.dispatchMouseEvent",
+      params: { type: "mouseReleased", x, y, button, clickCount },
+      timeoutMs: 5000,
+    });
+    return { ok: true };
+  });
+
+  bridge.registerRequestHandler("scrollBy", async ({ tabId, deltaX = 0, deltaY = 0, x = 0, y = 0 } = {}) => {
+    requireInt(tabId, "tabId");
+    await executeCdp({
+      tabId,
+      method: "Input.dispatchMouseEvent",
+      params: { type: "mouseWheel", x, y, deltaX, deltaY, button: "none" },
+      timeoutMs: 5000,
+    });
+    return { ok: true };
+  });
+
+  bridge.registerRequestHandler("typeText", async ({ tabId, text } = {}) => {
+    requireInt(tabId, "tabId");
+    requireStr(text, "text");
+    // Input.insertText 不经过输入法,适合直接插文本。
+    await executeCdp({
+      tabId,
+      method: "Input.insertText",
+      params: { text },
+      timeoutMs: 10000,
+    });
+    return { ok: true };
+  });
+
+  bridge.registerRequestHandler("pressKey", async ({ tabId, key } = {}) => {
+    requireInt(tabId, "tabId");
+    requireStr(key, "key");
+    // 简化:key 直接作为 keyCode 文本,常见键用 dispatchKeyEvent。
+    const keyDown = { type: "keyDown", key, text: key.length === 1 ? key : undefined };
+    const keyUp = { type: "keyUp", key };
+    await executeCdp({ tabId, method: "Input.dispatchKeyEvent", params: keyDown, timeoutMs: 5000 });
+    await executeCdp({ tabId, method: "Input.dispatchKeyEvent", params: keyUp, timeoutMs: 5000 });
+    return { ok: true };
+  });
+
+  // 提取可见可点击元素:跑 page_crawler 那段 JS,返回 {id,text,tag,x,y}[]。
+  bridge.registerRequestHandler("getVisibleElements", async ({ tabId } = {}) => {
+    requireInt(tabId, "tabId");
+    const { value } = await evaluateJs(tabId, GET_VISIBLE_ELEMENTS_JS, 15000);
+    return { elements: Array.isArray(value) ? value : [] };
+  });
+
+  // 虚拟光标:驱动 content script 把光标动画移到 (x,y),到达后返回。
+  // 完整复刻 BCB:走 CursorOverlayController.setCursorState(spring 物理 + bezier),
+  // 可选 waitForArrival 等待 content script 上报到达。
+  bridge.registerRequestHandler("moveMouse", async ({
+    tabId, x, y,
+    session_id = "default", turn_id, move_sequence = 0,
+    wait_for_arrival = true,
+  } = {}) => {
+    requireInt(tabId, "tabId");
+    requireNum(x, "x"); requireNum(y, "y");
+    const sessionId = typeof session_id === "string" && session_id ? session_id : "default";
+    const turnId = typeof turn_id === "string" && turn_id ? turn_id : `${sessionId}:${move_sequence}`;
+    const moveSequence = Number.isInteger(move_sequence) ? move_sequence : 0;
+
+    if (!_cursorOverlays) {
+      // 控制器未注入(理论上不会发生),降级:直接发消息。
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          type: "AGENT_CURSOR_STATE",
+          state: { cursor: { x, y, visible: true, moveSequence }, isVisible: false, sessionId, turnId },
+        });
+      } catch {}
+      return { ok: true, arrived: false };
+    }
+
+    // 确保 session 处于 running 态并跟踪该 tab(发布光标状态前)。
+    await _cursorOverlays.startSession(sessionId, turnId, { publishTabs: false });
+    await _cursorOverlays.trackTab(sessionId, tabId, { publish: false });
+
+    const tabVisible = _cursorOverlays.isObserved(tabId);
+    const canWaitForArrival = wait_for_arrival !== false && tabVisible;
+
+    const waiter = canWaitForArrival
+      ? createCursorArrivalWaiter({ sessionId, turnId, moveSequence })
+      : null;
+
+    const published = await _cursorOverlays.setCursorState(
+      sessionId,
+      tabId,
+      turnId,
+      {
+        // tab 不可见时不动画(snap),与 BCB 一致。
+        ...(tabVisible ? {} : { animateMovement: false }),
+        moveSequence,
+        visible: true,
+        x,
+        y,
+      },
+      { publish: tabVisible },
+    );
+
+    if (!waiter) return { ok: true, arrived: false };
+    if (!published) {
+      waiter.cancel();
+      return { ok: true, arrived: false };
+    }
+    await waiter.promise;
+    return { ok: true, arrived: true };
+  });
+
+  // content script 上报光标到达(notification:后端→扩展)。本地等待器也由
+  // background.js 的 AGENT_CURSOR_ARRIVED 直接 resolve,此处保持通知通道对称。
+  bridge.registerNotificationHandler("cursorArrived", async ({ sessionId, turnId, moveSequence } = {}) => {
+    notifyCursorArrived({ sessionId, turnId, moveSequence });
+  });
+
+  bridge.registerRequestHandler("detachTab", async ({ tabId } = {}) => {
+    requireInt(tabId, "tabId");
+    await detachTab(tabId);
+    return { ok: true };
+  });
+
+  bridge.registerRequestHandler("getStatus", async () => {
+    return { attachedTabs: [...(await getAttachedTabIds())] };
+  });
+}
+
+// --- helpers ---
+
+function requireInt(v, name) {
+  if (!Number.isInteger(v)) throw new Error(`Expected integer for ${name}, got: ${v}`);
+}
+function requireStr(v, name) {
+  if (typeof v !== "string" || !v) throw new Error(`Expected non-empty string for ${name}`);
+}
+function requireNum(v, name) {
+  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`Expected number for ${name}, got: ${v}`);
+}
+
+async function evaluateJs(tabId, expression, timeoutMs) {
+  const result = await executeCdp({
+    tabId,
+    method: "Runtime.evaluate",
+    params: { expression, awaitPromise: true, returnByValue: true, allowUnsafeEvalBlocking: false },
+    timeoutMs,
+  });
+  if (!result) return { value: null };
+  if (result.exceptionDetails) {
+    const ex = result.exceptionDetails;
+    throw new Error(`Runtime.evaluate failed: ${ex.exception?.description ?? ex.text ?? "eval error"}`);
+  }
+  return { value: result.result?.value ?? null };
+}
+
+async function getAttachedTabIds() {
+  try {
+    const targets = await chrome.debugger.getTargets();
+    return targets.filter((t) => typeof t.tabId === "number" && t.attached).map((t) => t.tabId);
+  } catch {
+    return [];
+  }
+}
+
+// 等待 tab 加载到 complete 状态。
+// 只在 info.status === "complete" 时 resolve,不在 URL 变化时提前返回。
+// 旧版在 info.url 变化时就 resolve,导致 navigate() 在页面 DOM 还没就绪时返回,
+// 后续 evaluate() 执行 document.body.cloneNode() 报 null 错误。
+function waitForTabComplete(tabId, expectedUrl, timeoutMs) {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const listener = (id, info) => {
+      if (id === tabId && info.status === "complete") {
+        finish();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    // 超时也视为完成(让调用方继续)。
+    const timer = setTimeout(finish, timeoutMs);
+    // 若已经是 complete,立即返回。
+    chrome.tabs.get(tabId).then((t) => {
+      if (t && t.status === "complete") finish();
+    }).catch(finish);
+  });
+}
+
+// 光标到达等待器工厂。
+function createCursorArrivalWaiter({ sessionId, turnId, moveSequence }) {
+  const key = `${sessionId}:${turnId}:${moveSequence}`;
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  const timer = setTimeout(() => {
+    _cursorArrivalWaiters.delete(key);
+    reject(new Error(`Cursor arrival timeout for ${key}`));
+  }, CURSOR_ARRIVAL_TIMEOUT_MS);
+  const cancel = () => {
+    clearTimeout(timer);
+    _cursorArrivalWaiters.delete(key);
+  };
+  const waiter = { promise, resolve, cancel };
+  _cursorArrivalWaiters.set(key, waiter);
+  return waiter;
+}
+
+// 与 page_crawler.py:120-163 的提取 JS 一致,直接复用。
+const GET_VISIBLE_ELEMENTS_JS = `(() => {
+  const items = [];
+  let idCounter = 0;
+  function isVisible(elem) {
+    if (!elem.getBoundingClientRect || !elem.checkVisibility) return false;
+    const rect = elem.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && elem.checkVisibility();
+  }
+  const candidates = document.querySelectorAll('button, a[href], [role="button"]');
+  const blacklist = /^(home|login|sign in|sign up|menu|privacy|terms|登录|注册|分享|首页|关闭|评论|like|share|follow|subscribe|cookie|accept|dismiss|下载 app|open in app|get app|feedback|举报|投诉|more actions)$/i;
+  const navPatterns = /^(back|next|previous|prev|1|2|3|4|5|6|7|8|9|10|first|last|<|>|<<|>>)$/i;
+  for (const el of candidates) {
+    if (!isVisible(el)) continue;
+    const text = (el.innerText || el.textContent || '').trim();
+    if (text.length < 2 || text.length > 50) continue;
+    if (blacklist.test(text)) continue;
+    if (navPatterns.test(text)) continue;
+    const parent = el.closest('header, footer, nav, .navbar, .footer, .header, .sidebar, .nav-bar, #header, #footer, #nav');
+    if (parent) continue;
+    const rect = el.getBoundingClientRect();
+    items.push({
+      id: "js-interact-" + (idCounter++),
+      text: text,
+      tag: el.tagName.toLowerCase(),
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2
+    });
+    if (items.length >= 30) break;
+  }
+  return items;
+})()`;
