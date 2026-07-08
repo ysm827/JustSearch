@@ -73,4 +73,8 @@ def is_search_engine_internal_page(url: str) -> bool:
         return path.startswith(("/web", "/link"))
     if hostname == "search.brave.com":
         return path == "/search"
+    if hostname == "baidu.com":
+        return path in {"/s", "/baidu"} or path.startswith(("/link", "/from="))
+    if hostname == "yandex.com":
+        return path == "/search"
     return False

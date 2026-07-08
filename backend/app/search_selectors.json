@@ -103,5 +103,36 @@
         },
         "captcha_check": [],
         "wait_selector": "#results, .result"
+    },
+    "baidu": {
+        "base_url": "https://www.baidu.com/s?wd={query}&rn={num}",
+        "selectors": {
+            "result_container": [
+                ".c-container",
+                "#content_left .result",
+                ".result"
+            ],
+            "title": "h3 a, .t a",
+            "link": "h3 a, .t a",
+            "snippet": ".c-abstract, .c-span9, .c-color-text",
+            "date": ".newTimeFactor__time, .c-color-gray"
+        },
+        "captcha_check": [],
+        "wait_selector": "#content_left, .c-container"
+    },
+    "yandex": {
+        "base_url": "https://yandex.com/search/?text={query}",
+        "selectors": {
+            "result_container": [
+                "li.serp-item",
+                ".serp-item"
+            ],
+            "title": "h2 a, .OrganicTitleLink",
+            "link": "h2 a, .OrganicTitleLink",
+            "snippet": ".OrganicText, .text-container",
+            "date": ".OrganicTimestamp"
+        },
+        "captcha_check": [],
+        "wait_selector": ".serp-list, .content"
     }
 }

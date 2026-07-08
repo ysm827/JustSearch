@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.0] - 2026-07-09
+
+### Added
+- **百度搜索**(baidu)与 **Yandex 搜索**(yandex)引擎支持:在 `search_selectors.json` 新增两套选择器配置,`browser_manager.py` 的导航链接过滤与 `search_result_cleanup.py` 的内部页面判定同步纳入这两个域名。
+
+### Changed
+- 版本升至 2.3.0(`version.py` / `Dockerfile` LABEL)。
+
 ## [2.2.0] - 2026-07-09
 
 ### Changed

@@ -446,6 +446,12 @@ class BrowserManager:
                         if (hostMatches(host, 'sogou.com')) {
                             return parsed.pathname === '/web';
                         }
+                        if (hostMatches(host, 'baidu.com')) {
+                            return parsed.pathname === '/s' || parsed.pathname === '/baidu';
+                        }
+                        if (hostMatches(host, 'yandex.com')) {
+                            return parsed.pathname === '/search';
+                        }
                     } catch (e) {
                         return true;
                     }
