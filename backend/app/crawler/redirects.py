@@ -11,11 +11,23 @@ async def resolve_redirect_url(url: str, log_func=None) -> str:
     is_google = _is_google_redirect_url(url)
     is_duckduckgo = _is_duckduckgo_redirect_url(url)
     is_sogou = _is_sogou_link_url(url)
-    if not (is_bing or is_google or is_duckduckgo or is_sogou):
+    is_baidu = _is_baidu_link_url(url)
+    if not (is_bing or is_google or is_duckduckgo or is_sogou or is_baidu):
         return final_url
 
     if log_func:
         log_func("浏览器: 检测到重定向 URL，正在尝试提取目标...")
+
+    if is_baidu:
+        try:
+            target = await _resolve_baidu_link_url(url)
+            if target and _is_http_url(target):
+                final_url = target
+                if log_func:
+                    log_func(f"浏览器: 提取百度重定向 URL 成功: {final_url}")
+        except Exception as e:
+            if log_func:
+                log_func(f"浏览器: 提取百度重定向 URL 失败: {e}")
 
     if is_duckduckgo:
         try:
@@ -124,6 +136,42 @@ def _is_sogou_link_url(url: str) -> bool:
 
     hostname = parsed.hostname or ""
     return _hostname_matches(hostname, "sogou.com") and parsed.path.startswith("/link")
+
+
+def _is_baidu_link_url(url: str) -> bool:
+    """Return True for Baidu result-wrapper URLs (baidu.com/link?url=...)."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+
+    hostname = parsed.hostname or ""
+    return _hostname_matches(hostname, "baidu.com") and parsed.path.startswith("/link")
+
+
+async def _resolve_baidu_link_url(url: str) -> str:
+    """Follow a baidu.com/link?url=... redirect to its final target.
+
+    百度 link 页返回的是 JS 跳转(类似搜狗),也可能直接 302。先试 no-follow
+    拿响应体,再从 HTML/JS 里抽目标 URL;若响应头有 Location 直接用。
+    """
+    import httpx
+
+    async with httpx.AsyncClient(
+        follow_redirects=False,
+        timeout=10.0,
+        headers={"User-Agent": "JustSearch/1.0"},
+    ) as client:
+        response = await client.get(url)
+        # 302/301 直接读 Location
+        location = response.headers.get("location", "")
+        if location and _is_http_url(location):
+            return location
+        # 否则从响应体里抽 JS/meta 跳转目标
+        target = _extract_html_redirect_url(response.text)
+        if target:
+            return target
+    return ""
 
 
 async def _fetch_sogou_redirect_html(url: str) -> str:

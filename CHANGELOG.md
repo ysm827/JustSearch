@@ -3,9 +3,11 @@
 ## [2.3.0] - 2026-07-09
 
 ### Added
-- **百度搜索**(baidu)与 **Yandex 搜索**(yandex)引擎支持:在 `search_selectors.json` 新增两套选择器配置,`browser_manager.py` 的导航链接过滤与 `search_result_cleanup.py` 的内部页面判定同步纳入这两个域名。
+- **百度搜索**(baidu)与 **Yandex 搜索**(yandex)引擎支持:在 `search_selectors.json` 新增两套选择器配置,`browser_manager.py` 的导航链接过滤与 `search_result_cleanup.py` 的内部页面判定同步纳入这两个域名。百度结果链接的 `/link?url=` 跳转由 `crawler/redirects.py` 新增的 `_resolve_baidu_link_url` 解析。
 
 ### Changed
+- **彻底移除验证码/反爬检测**:桥接真实 Chrome 几乎不触发验证码,原有的 captcha_check 标记在数百 KB 的渲染 DOM 里极易子串误伤(如 Google 正常结果页被 `sorry/index` 误判成验证码,导致卡 60 秒超时)。删除 `_detect_captcha` / `_handle_verification_pages` / `_wait_for_manual_verification` / `_read_page_state` / `_blocked_search_reason` 及相关常量,移除所有引擎的 `captcha_check` 配置与前端"易触发验证码"标签。
+- **修复扩展标签分组**:并发创建标签时多个请求同时判定"无组"各自建组,导致一个搜索一个分组。改为串行化分组操作 + 先登记 tab 再查组,保证所有标签归入唯一的全局 "JustSearch" 分组。
 - 版本升至 2.3.0(`version.py` / `Dockerfile` LABEL)。
 
 ## [2.2.0] - 2026-07-09

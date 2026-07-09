@@ -673,8 +673,10 @@ function getEngineDisplayName(engine) {
         bing: 'Bing',
         sogou: '搜狗（中文备用）',
         searxng: 'SearXNG（默认，自托管）',
-        duckduckgo: 'DuckDuckGo（易触发验证）',
-        google: 'Google（易触发验证码）',
+        baidu: '百度（中文）',
+        yandex: 'Yandex',
+        duckduckgo: 'DuckDuckGo',
+        google: 'Google',
         brave: 'Brave Search',
     };
     return names[engine] || engine || 'Unknown';

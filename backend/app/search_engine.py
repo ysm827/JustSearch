@@ -24,7 +24,6 @@ _FALLBACK_SELECTOR_CONFIG = {
             "snippet": ".content, p",
             "date": "",
         },
-        "captcha_check": [],
         "wait_selector": "#results, .result",
     }
 }
@@ -75,20 +74,9 @@ def _normalize_engine_config(engine: str, raw_config: dict) -> dict:
             f"{engine}: missing selector fields: {', '.join(missing_selector_fields)}"
         )
 
-    captcha_check = raw_config.get("captcha_check", [])
-    if isinstance(captcha_check, str):
-        captcha_check = [captcha_check]
-    elif not isinstance(captcha_check, list):
-        captcha_check = []
-
     return {
         "base_url": base_url,
         "selectors": normalized_selectors,
-        "captcha_check": [
-            str(marker).strip()
-            for marker in captcha_check
-            if str(marker).strip()
-        ],
         "wait_selector": wait_selector,
     }
 

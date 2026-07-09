@@ -38,6 +38,17 @@ const AGENT_GROUP_SESSION = "justsearch-agent";
 // 全局 agent 标签集合(不按 session 分桶,因为分组是全局的)。
 const _allAgentTabs = new Set();
 
+// 分组操作的串行锁:并发 createTab 时,避免多个请求同时判定"无组存在"
+// 而各自 createGroup 导致出现多个分组。所有 ensureAgentTabGroup 调用
+// 必须排队执行,这样第一个请求建组后,后续请求能复用它。
+let _groupOpChain = Promise.resolve();
+function serializeGroupOp(fn) {
+  const run = _groupOpChain.then(fn, fn);
+  // 吞掉异常,保证链不断;调用方自己 try/catch。
+  _groupOpChain = run.then(() => {}, () => {});
+  return run;
+}
+
 export function registerHandlers(bridge) {
   const tabGroups = TabGroupStore.getInstance();
 
@@ -46,13 +57,17 @@ export function registerHandlers(bridge) {
   bridge.registerRequestHandler("createTab", async ({ url, session_id } = {}) => {
     const sessionId = typeof session_id === "string" && session_id ? session_id : "default";
     const tab = await chrome.tabs.create({ url: url ?? "about:blank", active: false });
-    // 归入唯一的全局 agent 分组。existingAgentTabIds 让 TabGroupStore 复用已有组而非新建。
+    // 归入唯一的全局 agent 分组。串行化 + 先登记 tab,保证并发 createTab
+    // 复用同一组而非各建新组(SW 重启后还能从持久化的 groupMetadata 复用)。
     try {
-      await tabGroups.ensureAgentTabGroup(AGENT_GROUP_SESSION, tab.id, [..._allAgentTabs]);
+      await serializeGroupOp(async () => {
+        _allAgentTabs.add(tab.id);
+        await tabGroups.ensureAgentTabGroup(AGENT_GROUP_SESSION, tab.id, [..._allAgentTabs]);
+      });
     } catch (err) {
-      // tabGroups API 可能不可用(权限/版本),降级为不分组。
+      // tabGroups API 可能不可用(权限/版本),降级为不分组,但仍登记 tab。
+      _allAgentTabs.add(tab.id);
     }
-    _allAgentTabs.add(tab.id);
     return { tabId: tab.id, url: tab.url ?? url ?? "about:blank" };
   });
 
@@ -102,9 +117,11 @@ export function registerHandlers(bridge) {
     requireInt(tabId, "tabId");
     const sessionId = typeof session_id === "string" && session_id ? session_id : "default";
     try {
-      await tabGroups.ensureAgentTabGroup(AGENT_GROUP_SESSION, tabId, [..._allAgentTabs]);
+      await serializeGroupOp(async () => {
+        _allAgentTabs.add(tabId);
+        await tabGroups.ensureAgentTabGroup(AGENT_GROUP_SESSION, tabId, [..._allAgentTabs]);
+      });
     } catch {}
-    _allAgentTabs.add(tabId);
     try { await _cursorOverlays?.trackTab(sessionId, tabId, { publish: true }); } catch {}
     return { ok: true };
   });

@@ -22,8 +22,6 @@ from .extension_bridge import get_bridge_client, TabPool
 # Simple search result cache: query -> (results, timestamp)
 _search_cache: dict = {}
 _SEARCH_CACHE_TTL = 300  # 5 minutes
-_MANUAL_VERIFICATION_TIMEOUT_SECONDS = 600.0
-_MAX_MANUAL_VERIFICATION_STEPS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -36,24 +34,6 @@ def _clone_search_results(results: List[Dict]) -> List[Dict]:
 def json_selector_arg(selector: str) -> str:
     """Serialize a CSS selector into a JS string literal for Runtime.evaluate."""
     return json.dumps(selector)
-
-
-def _blocked_search_reason(content: str, current_url: str = "") -> str:
-    """Return a reason when a search page is an anti-bot/error interstitial."""
-    text = f"{current_url}\n{content}".lower()
-    blocked_markers = (
-        "static-pages/418.html",
-        "unexpected error. please try again",
-        "pow-captcha",
-        "verifying your request",
-        "正在验证您不是机器人",
-        "在您继续搜索之前进行快速检查",
-        "quick check before you continue searching",
-        "sorry this pages exist in order to keep the service usable",
-    )
-    if any(marker in text for marker in blocked_markers):
-        return "blocked"
-    return ""
 
 
 class BrowserManager:
@@ -124,23 +104,6 @@ class BrowserManager:
             except Exception as e:
                 if log_func:
                     log_func(f"浏览器: 搜索页面加载失败: {e}")
-                return []
-
-            # Check for CAPTCHA / blocked page
-            content, current_url = await self._read_page_state(bridge, tab_id)
-
-            verification_ok = await self._handle_verification_pages(
-                bridge=bridge,
-                tab_id=tab_id,
-                content=content,
-                current_url=current_url,
-                config=config,
-                engine_name=self.engine.capitalize(),
-                actual_engine=self.engine,
-                session_id=session_id,
-                log_func=log_func,
-            )
-            if not verification_ok:
                 return []
 
             # Wait for results container
@@ -286,131 +249,6 @@ class BrowserManager:
             await tab_pool.release(tab)
             await tab_pool.close_all_pending(session_id=session_id)
 
-    async def _read_page_state(self, bridge, tab_id: int) -> tuple[str, str]:
-        """读取当前页面的 HTML 文本与 URL,用于验证码/反爬检测。"""
-        try:
-            content = await bridge.evaluate(
-                tab_id,
-                "document.documentElement.outerHTML",
-                timeout_ms=8000,
-            )
-            if not isinstance(content, str):
-                content = ""
-        except Exception:
-            content = ""
-        try:
-            current_url = await bridge.get_tab_url(tab_id)
-        except Exception:
-            current_url = ""
-        return content, current_url
-
-    async def _detect_captcha(self, bridge, tab_id: int, content: str, config: Dict) -> bool:
-        """检测 CAPTCHA。选择器走 querySelector,标记走文本包含。"""
-        for check in config["captcha_check"]:
-            if check.startswith("#"):
-                try:
-                    found = await bridge.evaluate(
-                        tab_id,
-                        f"document.querySelector({json_selector_arg(check)}) !== null",
-                        timeout_ms=5000,
-                    )
-                    if found:
-                        return True
-                except Exception:
-                    pass
-            elif check in content:
-                return True
-        return False
-
-    async def _wait_for_manual_verification(
-        self,
-        bridge,
-        tab_id: int,
-        session_id: str | None,
-        log_func,
-        action: str,
-        message: str,
-        config: Dict,
-    ) -> bool:
-        """真实浏览器可见,用户自行在 Chrome 里解决验证码,这里轮询等待。
-
-        不再走 WebSocket modal——用户在自己的浏览器里看到验证码直接点。
-        """
-        if log_func:
-            log_func(f"ACTION_REQUIRED: {action}")
-            log_func(message)
-
-        deadline = asyncio.get_event_loop().time() + _MANUAL_VERIFICATION_TIMEOUT_SECONDS
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(2.0)
-            try:
-                content, _ = await self._read_page_state(bridge, tab_id)
-            except Exception:
-                continue
-            if not await self._detect_captcha(bridge, tab_id, content, config):
-                blocked = _blocked_search_reason(content, "")
-                if not blocked:
-                    if log_func:
-                        log_func("浏览器: 收到验证完成信号，继续执行...")
-                    return True
-        if log_func:
-            log_func("浏览器: 等待手动验证超时 (10分钟)。")
-        return False
-
-    async def _handle_verification_pages(
-        self,
-        bridge,
-        tab_id: int,
-        content: str,
-        current_url: str,
-        config: Dict,
-        engine_name: str,
-        actual_engine: str,
-        session_id: str | None,
-        log_func,
-    ) -> bool:
-        for _ in range(_MAX_MANUAL_VERIFICATION_STEPS):
-            if await self._detect_captcha(bridge, tab_id, content, config):
-                logger.warning("CAPTCHA detected on %s!", engine_name)
-                if log_func:
-                    log_func("浏览器: 检测到验证码！请在 Chrome 中手动解决...")
-
-                verified = await self._wait_for_manual_verification(
-                    bridge, tab_id, session_id, log_func,
-                    "CAPTCHA_DETECTED",
-                    "浏览器: 请在 Chrome 中解决验证码,JustSearch 会自动检测并继续。",
-                    config,
-                )
-                if not verified:
-                    return False
-                content, current_url = await self._read_page_state(bridge, tab_id)
-                continue
-
-            blocked_reason = _blocked_search_reason(content, current_url)
-            if blocked_reason:
-                logger.warning("Search blocked on %s: %s", engine_name, blocked_reason)
-                if log_func:
-                    log_func(f"浏览器: {engine_name} 返回验证/反爬页面,请在 Chrome 中手动通过...")
-
-                verified = await self._wait_for_manual_verification(
-                    bridge, tab_id, session_id, log_func,
-                    "SEARCH_VERIFICATION_REQUIRED",
-                    "浏览器: 请在 Chrome 中通过搜索引擎验证,JustSearch 会自动检测并继续。",
-                    config,
-                )
-                if not verified:
-                    if log_func:
-                        log_func(f"浏览器: {engine_name} 返回验证/错误页面，跳过该引擎。")
-                    return False
-                content, current_url = await self._read_page_state(bridge, tab_id)
-                continue
-
-            return True
-
-        if log_func:
-            log_func(f"浏览器: {engine_name} 验证后仍未进入结果页，跳过该引擎。")
-        return False
-
     async def _fallback_text_extract(self, bridge, tab_id: int, query: str, log_func=None) -> List[Dict]:
         """
         降级方案:当 CSS 选择器解析失败时,从页面纯文本 + 链接提取搜索结果。
@@ -447,6 +285,7 @@ class BrowserManager:
                             return parsed.pathname === '/web';
                         }
                         if (hostMatches(host, 'baidu.com')) {
+                            // 百度结果链接是 /link?url= 跳转格式,不是内部页 —— 保留
                             return parsed.pathname === '/s' || parsed.pathname === '/baidu';
                         }
                         if (hostMatches(host, 'yandex.com')) {

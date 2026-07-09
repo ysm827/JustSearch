@@ -13,12 +13,6 @@
             "snippet": "div[style*='-webkit-line-clamp'], div.IsZvec, .VwiC3b, [data-sncf], .hb8SA",
             "date": ".LEwnzc, span.f, span.dna-a"
         },
-        "captcha_check": [
-            "#captcha-form",
-            "异常流量",
-            "sorry/index",
-            "unusual traffic"
-        ],
         "wait_selector": "#rso, [data-ved]"
     },
     "bing": {
@@ -32,9 +26,6 @@
             "snippet": ".b_caption p, .b_algoSlug, .b_lineclamp2",
             "date": ".news_dt, .b_demoteText"
         },
-        "captcha_check": [
-            "Ref A:"
-        ],
         "wait_selector": "#b_results"
     },
     "duckduckgo": {
@@ -53,7 +44,6 @@
             "snippet": "[data-testid='result-snippet'], .result__snippet, .result_snippet",
             "date": ".result__timestamp"
         },
-        "captcha_check": [],
         "wait_selector": "#react-layout, .react-results--main, article[data-testid='result']"
     },
     "sogou": {
@@ -68,10 +58,6 @@
             "snippet": ".str-text-info, .str_info",
             "date": ".fb"
         },
-        "captcha_check": [
-            "用户输入参数有误",
-            "antispider"
-        ],
         "wait_selector": "#main, .results"
     },
     "brave": {
@@ -86,7 +72,6 @@
             "snippet": ".snippet-description, .snippet-content p",
             "date": ""
         },
-        "captcha_check": [],
         "wait_selector": "#results, .snippet"
     },
     "searxng": {
@@ -101,7 +86,6 @@
             "snippet": ".content, p",
             "date": ""
         },
-        "captcha_check": [],
         "wait_selector": "#results, .result"
     },
     "baidu": {
@@ -117,7 +101,6 @@
             "snippet": ".c-abstract, .c-span9, .c-color-text",
             "date": ".newTimeFactor__time, .c-color-gray"
         },
-        "captcha_check": [],
         "wait_selector": "#content_left, .c-container"
     },
     "yandex": {
@@ -132,7 +115,6 @@
             "snippet": ".OrganicText, .text-container",
             "date": ".OrganicTimestamp"
         },
-        "captcha_check": [],
         "wait_selector": ".serp-list, .content"
     }
 }

@@ -53,7 +53,12 @@ def is_generic_search_aux_title(title: str) -> bool:
 
 
 def is_search_engine_internal_page(url: str) -> bool:
-    """Return True for search pages that should not be crawled as sources."""
+    """Return True for search pages that should not be crawled as sources.
+
+    NOTE: baidu.com/link?url=... 是结果跳转链接,不是内部页 —— 不能在此过滤,
+    否则会被 is_search_engine_internal_page 当垃圾链接丢掉。百度 link 解析
+    在 redirects.resolve_redirect_url 里处理。
+    """
     try:
         parsed = urllib.parse.urlparse(url)
     except Exception:
@@ -74,7 +79,7 @@ def is_search_engine_internal_page(url: str) -> bool:
     if hostname == "search.brave.com":
         return path == "/search"
     if hostname == "baidu.com":
-        return path in {"/s", "/baidu"} or path.startswith(("/link", "/from="))
+        return path in {"/s", "/baidu"} or path.startswith("/from=")
     if hostname == "yandex.com":
         return path == "/search"
     return False
