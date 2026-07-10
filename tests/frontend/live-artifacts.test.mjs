@@ -225,7 +225,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=28');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -303,7 +303,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=28');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -409,7 +409,9 @@ test('saved HTML answers with sources render citation links instead of inline ar
         </body>
     `);
 
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=21');
+    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+    setLiveArtifactsMode(false);
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=22');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -444,7 +446,9 @@ test('saved rich HTML table answers link citation tags in place', async () => {
         </body>
     `);
 
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=21');
+    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+    setLiveArtifactsMode(false);
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=22');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -492,7 +496,9 @@ test('saved HTML answers with JSON-encoded sources still render citation links',
         </body>
     `);
 
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=21');
+    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+    setLiveArtifactsMode(false);
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=22');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -684,7 +690,7 @@ test('streamChat sends live_artifacts_mode without the old Canvas request field'
 
     assert.equal(doneCalled, true);
     assert.equal(capturedBody.live_artifacts_mode, true);
-    assert.equal(capturedBody.max_concurrent_pages, 4);
+    assert.equal(capturedBody.max_concurrent_pages, undefined);
     assert.equal(Object.prototype.hasOwnProperty.call(capturedBody, 'canvas_mode'), false);
 });
 
@@ -971,8 +977,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=21');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=28');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=22');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -1063,8 +1069,8 @@ test('streaming chat marks SSE error events as failed instead of completed', asy
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=21');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=28');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=22');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'error-status-session' },
@@ -1153,8 +1159,8 @@ test('streaming raw HTML answer exits inline artifact mode when sources arrive',
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=21');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=28');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=22');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1248,8 +1254,8 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=21');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=28');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=22');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [

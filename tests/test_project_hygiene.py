@@ -988,13 +988,13 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "hasCitationSources" in chat_source
     assert "from './source-renderer.js?v=8'" in ui_source
     assert "from './source-renderer.js?v=8'" in chat_source
-    assert "from './ui.js?v=21'" in (
+    assert "from './ui.js?v=22'" in (
         PROJECT_ROOT / "backend/static/js/modules/history-view.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=21'" in (
+    assert "from './ui.js?v=22'" in (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=21'" in (
+    assert "from './ui.js?v=22'" in (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
@@ -1050,8 +1050,8 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "@import url('./sections/polish.css?v=6');" in style_source
     assert "from './modules/auth.js?v=1'" in main_source
     assert "from './modules/state.js?v=2'" in main_source
-    assert "from './modules/ui.js?v=21'" in main_source
-    assert "from './modules/chat.js?v=28'" in main_source
+    assert "from './modules/ui.js?v=22'" in main_source
+    assert "from './modules/chat.js?v=29'" in main_source
     assert "from './modules/history-view.js?v=23'" in main_source
     assert "from './modules/settings-modal.js?v=44'" in main_source
     assert "from './modules/sidebar.js?v=17'" in main_source

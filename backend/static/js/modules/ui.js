@@ -337,7 +337,9 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
         const answerBody = document.createElement('div');
         answerBody.className = 'message-answer-body';
         answerBody.dataset.liveArtifactsMessageId = `history-${messageIndex ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const suppressUnfencedInlineArtifact = hasCitationSources(resolvedSources);
+        // Live Artifacts 模式下保留内联 HTML 走 iframe 预览（样式完整、引用照常链接）；
+        // 仅在该模式关闭时，遇到意外 HTML 才退回带引用的 Markdown 渲染。
+        const suppressUnfencedInlineArtifact = !state.liveArtifactsMode && hasCitationSources(resolvedSources);
         if (!getInlineLiveArtifact(content, answerBody.dataset.liveArtifactsMessageId, false, { suppressUnfencedInlineArtifact })) {
             answerBody.innerHTML = renderWithCitations(content, resolvedSources);
         }

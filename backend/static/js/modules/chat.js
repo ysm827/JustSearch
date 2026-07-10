@@ -1,7 +1,7 @@
 import { coerceBooleanSetting, state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=2';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
 import { updateActiveHistoryItem } from './history-view.js?v=23';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=21';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=22';
 import { extractSources, hasCitationSources, linkCitationsInElement, renderWithCitations } from './source-renderer.js?v=8';
 import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=11';
 import { showToast } from './toast.js';
@@ -162,7 +162,9 @@ export function setupChatHandler(elements, renderHistory) {
             const resolvedSources = hasCitationSources(currentSources)
                 ? currentSources
                 : extractSources(currentAnswerBuffer);
-            const suppressUnfencedInlineArtifact = hasCitationSources(resolvedSources);
+            // Live Artifacts 模式下保留内联 HTML 走 iframe 预览（样式完整、引用照常链接）；
+            // 仅在该模式关闭时，遇到意外 HTML 才退回带引用的 Markdown 渲染。
+            const suppressUnfencedInlineArtifact = !state.liveArtifactsMode && hasCitationSources(resolvedSources);
             if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, isStreaming, { suppressUnfencedInlineArtifact })) {
                 contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, resolvedSources);
             }

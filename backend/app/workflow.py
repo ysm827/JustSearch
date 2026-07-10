@@ -9,8 +9,6 @@ from .llm_client import LLMClient, ensure_live_artifact_answer
 from .browser_manager import BrowserManager
 
 logger = logging.getLogger(__name__)
-_SEARCH_BATCH_TIMEOUT_SECONDS = 60.0
-_MAX_TOTAL_SEARCH_SECONDS = 180.0
 _WORKFLOW_LLM_STEPS = ("analysis", "relevance", "interaction", "answer")
 
 class SearchWorkflow:
@@ -195,9 +193,6 @@ class SearchWorkflow:
         )
         return ensure_live_artifact_answer(prefix + answer)
 
-    def _remaining_seconds(self, start_time: float) -> float:
-        return max(0.0, _MAX_TOTAL_SEARCH_SECONDS - (time.monotonic() - start_time))
-
     async def _handle_direct_url(self, url: str, visited_urls: set,
                                   progress_callback: Callable[[str], None],
                                   user_input: str, source_id_counter: int) -> tuple:
@@ -257,15 +252,8 @@ class SearchWorkflow:
                 for q in valid_queries
             ]
 
-            # First attempt with shorter timeout
-            try:
-                results_list = await asyncio.wait_for(
-                    asyncio.gather(*search_tasks, return_exceptions=True),
-                    timeout=_SEARCH_BATCH_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                progress_callback("搜索超时（60秒），使用已获取的结果...")
-                results_list = [[] for _ in search_tasks]
+            # Wait for all searches to complete; individual failures return [].
+            results_list = await asyncio.gather(*search_tasks, return_exceptions=True)
             
             # Handle exceptions from individual searches
             processed_results = []
@@ -435,19 +423,13 @@ class SearchWorkflow:
             
             while iteration < self.max_iterations:
                 iteration += 1
-                # Total timeout check
-                elapsed = time.monotonic() - start_time
-                if elapsed > _MAX_TOTAL_SEARCH_SECONDS:
-                    progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
-                    logger.info("[Workflow] 总搜索超时 (%.1fs), 已完成 %d 次迭代", elapsed, iteration - 1)
-                    break
                 if iteration == 1:
                     progress_callback(f"🔍 第 1 轮搜索 — 阶段 I: 分析问题...")
                 else:
                     progress_callback(f"🔄 第 {iteration}/{self.max_iterations} 轮补充搜索 — 分析缺失信息...")
                 logger.info("[Workflow] === 迭代 %d/%d 开始 ===", iteration, self.max_iterations)
                 logger.info("[Workflow] 用户输入: %s", user_input[:100])
-                
+
                 # [02] Task Analysis
                 if iteration == 1:
                     analysis_input = user_input
@@ -458,50 +440,28 @@ class SearchWorkflow:
                         f"Reason previous results were insufficient: {last_feedback}\n"
                         f"Task: Generate a NEW, different search query (or specific URL) to find the missing information."
                     )
-                
-                # Pass conversation history to help understand context (e.g. "it", "he")
-                try:
-                    analysis = await asyncio.wait_for(
-                        self._llm_for_step("analysis").analyze_task(analysis_input, history),
-                        timeout=max(1.0, self._remaining_seconds(start_time)),
-                    )
-                except asyncio.TimeoutError:
-                    progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
-                    break
+
+                analysis = await self._llm_for_step("analysis").analyze_task(analysis_input, history)
                 logger.info("[Workflow] 任务分析结果: type=%s, data=%s", analysis.get("type", ""), json.dumps(analysis, ensure_ascii=False)[:150])
-                
+
                 new_sources = []
-                
+
                 if analysis.get("type") == "direct":
                     raw_url = analysis.get("url")
                     url = raw_url
-                    try:
-                        new_sources, source_id_counter = await asyncio.wait_for(
-                            self._handle_direct_url(
-                                url, visited_urls, progress_callback, user_input, source_id_counter
-                            ),
-                            timeout=max(1.0, self._remaining_seconds(start_time)),
-                        )
-                    except asyncio.TimeoutError:
-                        progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
-                        break
+                    new_sources, source_id_counter = await self._handle_direct_url(
+                        url, visited_urls, progress_callback, user_input, source_id_counter
+                    )
                 else:
                     search_queries = analysis.get("queries", [])
                     # Fallback for single query or if model returns old format
                     if not search_queries and analysis.get("query"):
                         search_queries = [analysis.get("query")]
-                    
-                    try:
-                        new_sources, source_id_counter, search_count = await asyncio.wait_for(
-                            self._handle_search(
-                                search_queries, search_history, visited_urls, iteration,
-                                progress_callback, user_input, source_id_counter
-                            ),
-                            timeout=max(1.0, self._remaining_seconds(start_time)),
-                        )
-                    except asyncio.TimeoutError:
-                        progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
-                        break
+
+                    new_sources, source_id_counter, search_count = await self._handle_search(
+                        search_queries, search_history, visited_urls, iteration,
+                        progress_callback, user_input, source_id_counter
+                    )
                     total_search_results += search_count
                 
                 accumulated_sources.extend(new_sources)
@@ -524,20 +484,13 @@ class SearchWorkflow:
                 if source_callback:
                     source_callback(accumulated_sources)
                 
-                try:
-                    result = await asyncio.wait_for(
-                        self._llm_for_step("answer").generate_answer(
-                            user_input,
-                            accumulated_sources,
-                            history,
-                            stream_callback,
-                            live_artifacts_mode=self.live_artifacts_mode,
-                        ),
-                        timeout=max(1.0, self._remaining_seconds(start_time)),
-                    )
-                except asyncio.TimeoutError:
-                    progress_callback(f"已超过总搜索时限 ({int(_MAX_TOTAL_SEARCH_SECONDS)}秒)，正在整理现有结果...")
-                    break
+                result = await self._llm_for_step("answer").generate_answer(
+                    user_input,
+                    accumulated_sources,
+                    history,
+                    stream_callback,
+                    live_artifacts_mode=self.live_artifacts_mode,
+                )
                 
                 if result.get("status") == "sufficient":
                     progress_callback("答案状态: 充分")
@@ -607,12 +560,12 @@ class SearchWorkflow:
                 if self.live_artifacts_mode:
                     return self._format_live_artifact_partial_answer(
                         last_partial_answer,
-                        "已达到本次搜索的时间限制",
+                        "已达到本次搜索的最大迭代次数",
                     )
                 return self._format_partial_answer(
                     last_partial_answer,
                     accumulated_sources,
-                    "已达到本次搜索的时间限制"
+                    "已达到本次搜索的最大迭代次数"
                 )
 
             return "多次尝试后未能生成有效答案。建议您尝试：\n1. 换用不同的关键词重新提问\n2. 简化问题，分步骤提问\n3. 切换搜索引擎后重试"

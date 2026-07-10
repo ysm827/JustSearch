@@ -1,7 +1,7 @@
 import { initializeAuth, normalizeSettings } from './modules/auth.js?v=1';
 import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/state.js?v=2';
-import { initUI, elements } from './modules/ui.js?v=21';
-import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=28';
+import { initUI, elements } from './modules/ui.js?v=22';
+import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=29';
 import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=23';
 import { setupSettingsModal } from './modules/settings-modal.js?v=44';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=17';

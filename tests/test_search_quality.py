@@ -4,13 +4,12 @@ import asyncio
 from backend.app import browser_manager
 from backend.app import page_crawler
 from backend.app import search_engine
-from backend.app import workflow as workflow_module
 from backend.app.crawler import content as crawler_content
+from backend.app.workflow import SearchWorkflow
 from backend.app.crawler import redirects
 from backend.app.crawler import security
 from backend.app.browser_manager import BrowserManager
 from backend.app.search_result_cleanup import is_search_engine_internal_page
-from backend.app.workflow import SearchWorkflow
 
 
 def test_resolve_redirect_url_extracts_sogou_script_target(monkeypatch):
@@ -910,11 +909,9 @@ def test_search_selector_loader_skips_invalid_engines(monkeypatch, tmp_path):
     assert loaded["custom"]["captcha_check"] == ["captcha"]
 
 
-def test_workflow_records_batch_timeout_returns_empty(monkeypatch):
-    async def never_finishes(*_args, **_kwargs):
-        await asyncio.sleep(10)
-
-    monkeypatch.setattr(workflow_module, "_SEARCH_BATCH_TIMEOUT_SECONDS", 0.01)
+def test_workflow_records_failed_searches_as_empty(monkeypatch):
+    async def raises_error(*_args, **_kwargs):
+        raise RuntimeError("search engine exploded")
 
     workflow = SearchWorkflow(
         api_key="test",
@@ -923,7 +920,7 @@ def test_workflow_records_batch_timeout_returns_empty(monkeypatch):
         search_engine="brave",
         max_results=3,
     )
-    workflow.browser.search_web = never_finishes
+    workflow.browser.search_web = raises_error
 
     sources, counter, result_count = asyncio.run(
         workflow._handle_search(
@@ -1398,7 +1395,7 @@ def test_workflow_keeps_partial_live_artifact_answers_in_artifact_format():
     assert "\n\n---" not in result
 
 
-def test_workflow_returns_partial_answer_when_time_limit_hits_after_insufficient_result(monkeypatch):
+def test_workflow_returns_partial_answer_after_exhausting_iterations():
     class AnalysisLLM:
         async def analyze_task(self, _query, _history):
             return {"type": "search", "queries": ["SearXNG 是什么"]}
@@ -1414,8 +1411,6 @@ def test_workflow_returns_partial_answer_when_time_limit_hits_after_insufficient
                 "answer": "SearXNG 是一个免费的开源元搜索引擎。",
             }
 
-    monkeypatch.setattr(workflow_module, "_MAX_TOTAL_SEARCH_SECONDS", 0.01)
-
     workflow = SearchWorkflow(
         api_key="test",
         base_url="https://example.test/v1",
@@ -1427,7 +1422,6 @@ def test_workflow_returns_partial_answer_when_time_limit_hits_after_insufficient
     workflow.step_llms["answer"] = AnswerLLM()
 
     async def fake_handle_search(*_args, **_kwargs):
-        await asyncio.sleep(0.02)
         return (
             [
                 {
@@ -1456,11 +1450,11 @@ def test_workflow_returns_partial_answer_when_time_limit_hits_after_insufficient
         )
     )
 
-    assert "已达到本次搜索的时间限制" in result
+    assert "无法确认资料足够完整" in result
     assert "SearXNG 是一个免费的开源元搜索引擎。" in result
     assert "多次尝试后未能生成有效答案" not in result
     assert "[SearXNG docs](https://docs.searxng.org/)" in result
-    assert any("已超过总搜索时限" in item for item in progress)
-    assert stats["sites_searched"] == 1
+    assert any("已达到最大迭代次数" in item for item in progress)
+    assert stats["iterations"] == 6
     assert stats["prompt_tokens"] == 3
     assert stats["completion_tokens"] == 5
