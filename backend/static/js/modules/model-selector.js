@@ -2,6 +2,95 @@
  * JustSearch — Custom Model Dropdown Selector Module
  */
 
+export const SELECTED_MODEL_STORAGE_KEY = 'justsearch_selected_model';
+
+function safeGetLocalStorageItem(key, fallback = '') {
+    try {
+        return localStorage.getItem(key) ?? fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function safeSetLocalStorageItem(key, value) {
+    try {
+        localStorage.setItem(key, String(value));
+    } catch {
+        /* private mode / quota — ignore */
+    }
+}
+
+/**
+ * @returns {{ providerId: string, modelId: string } | null}
+ */
+export function loadSelectedModelPreference() {
+    const raw = safeGetLocalStorageItem(SELECTED_MODEL_STORAGE_KEY, '').trim();
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+            const providerId = String(parsed.providerId ?? parsed.provider_id ?? '').trim();
+            const modelId = String(parsed.modelId ?? parsed.model_id ?? '').trim();
+            if (modelId) return { providerId, modelId };
+        }
+    } catch {
+        // legacy "providerId|modelId" or plain model id
+    }
+    if (raw.includes('|')) {
+        const idx = raw.indexOf('|');
+        const providerId = raw.slice(0, idx);
+        const modelId = raw.slice(idx + 1);
+        if (modelId) return { providerId, modelId };
+    }
+    return { providerId: '', modelId: raw };
+}
+
+/**
+ * @param {string} providerId
+ * @param {string} modelId
+ */
+export function saveSelectedModelPreference(providerId, modelId) {
+    const model = String(modelId || '').trim();
+    if (!model) return;
+    safeSetLocalStorageItem(
+        SELECTED_MODEL_STORAGE_KEY,
+        JSON.stringify({
+            providerId: String(providerId || '').trim(),
+            modelId: model,
+        })
+    );
+}
+
+/**
+ * Persist from a native <select> option / selectedIndex.
+ * @param {HTMLSelectElement | null | undefined} nativeSelect
+ */
+export function persistSelectedModelFromSelect(nativeSelect) {
+    if (!nativeSelect || nativeSelect.selectedIndex < 0) return;
+    const option = nativeSelect.options[nativeSelect.selectedIndex];
+    if (!option) return;
+    saveSelectedModelPreference(option.dataset.providerId || '', option.value || '');
+}
+
+/**
+ * Find the best matching option for a saved preference among select options.
+ * @param {HTMLOptionsCollection | ArrayLike<HTMLOptionElement>} options
+ * @param {{ providerId?: string, modelId?: string } | null} preference
+ * @returns {HTMLOptionElement | null}
+ */
+export function findOptionForModelPreference(options, preference) {
+    if (!preference?.modelId) return null;
+    const list = Array.from(options || []);
+    const providerId = String(preference.providerId || '');
+    const modelId = String(preference.modelId || '');
+    const exact = list.find(
+        (opt) => opt.value === modelId && (opt.dataset.providerId || '') === providerId
+    );
+    if (exact) return exact;
+    // provider 变了但 model id 仍在列表中时做宽松匹配
+    return list.find((opt) => opt.value === modelId) || null;
+}
+
 export function initCustomModelSelect() {
     const container = document.getElementById('custom-model-select-container');
     const trigger = document.getElementById('model-select-trigger');
@@ -11,6 +100,11 @@ export function initCustomModelSelect() {
     if (!container || !trigger || !menu || !nativeSelect) return;
 
     let highlightedIndex = -1;
+
+    // 用户切换模型时写入 localStorage，刷新后由 updateModelSelector 恢复
+    nativeSelect.addEventListener('change', () => {
+        persistSelectedModelFromSelect(nativeSelect);
+    });
 
     function openDropdown() {
         container.classList.add('open');

@@ -18,7 +18,9 @@
     gap: 10px;
     width: 100%;
     box-sizing: border-box;
-    z-index: 10;
+    /* 高于消息气泡 sticky 头像 (.message-side z-index: 10)，避免模型下拉被挡住 */
+    position: relative;
+    z-index: 40;
     background: var(--glass-bg);
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
@@ -319,15 +321,16 @@
 }
 
 .hero-brand-logo {
-    width: min(420px, 82vw);
-    height: 108px;
-    object-fit: cover;
+    width: min(460px, 88vw);
+    height: auto;
+    max-height: 96px;
+    object-fit: contain;
     object-position: center;
-    border-radius: var(--radius-md);
+    border-radius: 0;
 }
 
 .hero-brand-logo-light {
-    background: #ffffff;
+    background: transparent;
 }
 
 .hero-brand-logo-dark {
@@ -342,38 +345,6 @@
 
 [data-theme="dark"] .hero-brand-logo-dark {
     display: block;
-}
-
-.hero-logo {
-    width: 56px;
-    height: 56px;
-    background: linear-gradient(135deg, var(--primary), #8b5cf6);
-    border-radius: var(--radius-lg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: float 3s ease-in-out infinite;
-}
-
-.hero-logo span {
-    font-size: 28px;
-    color: white;
-}
-
-@keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-6px); }
-}
-
-.hero-title {
-    font-size: 2.5rem;
-    font-weight: 800;
-    margin: 0;
-    letter-spacing: 0;
-    background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
 }
 
 .hero-subtitle {
@@ -494,7 +465,8 @@
     border-radius: 16px;
     color: var(--amc-message-model-text);
     line-height: 1.5;
-    font-size: 15px;
+    /* Controlled by settings base_font_size via --js-base-font-size (default 16px). */
+    font-size: var(--js-base-font-size, 16px);
     letter-spacing: 0;
     word-break: break-word;
     overflow-wrap: anywhere;

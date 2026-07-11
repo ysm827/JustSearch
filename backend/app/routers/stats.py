@@ -1,17 +1,27 @@
 """
-Stats router – /api/stats/github and /api/health
+Stats router – /api/stats/github, /api/health, and extension download.
 """
 
+import io
 import logging
-import httpx
+import os
 import time
+import zipfile
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter
+import httpx
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from ..version import __version__
 
 logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_EXTENSION_DIR = _PROJECT_ROOT / "extension"
+_ZIP_SKIP_NAMES = {".DS_Store", "Thumbs.db"}
+_ZIP_SKIP_DIR_NAMES = {"__pycache__", "node_modules", ".git"}
 
 # Process start time for uptime tracking
 _START_TIME = time.monotonic()
@@ -93,9 +103,50 @@ async def get_engines():
     return {"engines": get_all_engines()}
 
 
+def _build_extension_zip_bytes() -> bytes:
+    """Zip the on-disk extension/ directory into justsearch-bridge/* entries."""
+    if not _EXTENSION_DIR.is_dir():
+        raise FileNotFoundError(f"extension directory not found: {_EXTENSION_DIR}")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(_EXTENSION_DIR.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.name in _ZIP_SKIP_NAMES:
+                continue
+            if any(part in _ZIP_SKIP_DIR_NAMES for part in path.parts):
+                continue
+            relative = path.relative_to(_EXTENSION_DIR)
+            archive.write(path, arcname=str(Path("justsearch-bridge") / relative))
+    return buffer.getvalue()
+
+
+@router.get("/api/extension/download")
+async def download_extension_package():
+    """Download a zip of the Chrome bridge extension for local install."""
+    try:
+        payload = _build_extension_zip_bytes()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="扩展目录不存在，无法打包下载") from exc
+    except OSError as exc:
+        logger.exception("[extension] failed to build zip")
+        raise HTTPException(status_code=500, detail="扩展打包失败") from exc
+
+    headers = {
+        "Content-Disposition": 'attachment; filename="justsearch-bridge.zip"',
+        "Cache-Control": "no-store",
+    }
+    return StreamingResponse(
+        io.BytesIO(payload),
+        media_type="application/zip",
+        headers=headers,
+    )
+
+
 @router.get("/api/health")
 async def health_check():
-    from ..extension_bridge import is_extension_connected
+    from ..extension_bridge import get_ws_endpoint, is_extension_connected
     from ..database import _engine
 
     # Memory usage info
@@ -103,7 +154,6 @@ async def health_check():
     db_size_mb = 0
     try:
         import psutil
-        import os
         process = psutil.Process(os.getpid())
         mem_info = process.memory_info()
         mem_mb = round(mem_info.rss / 1024 / 1024, 1)
@@ -115,9 +165,8 @@ async def health_check():
     # Database file size
     try:
         from ..database import _DB_PATH
-        import os as _os
-        if _os.path.exists(_DB_PATH):
-            db_size_mb = round(_os.path.getsize(_DB_PATH) / 1024 / 1024, 2)
+        if os.path.exists(_DB_PATH):
+            db_size_mb = round(os.path.getsize(_DB_PATH) / 1024 / 1024, 2)
     except Exception:
         pass
 
@@ -125,15 +174,29 @@ async def health_check():
     uptime_seconds = int(time.monotonic() - _START_TIME) if _START_TIME else 0
 
     extension_connected = is_extension_connected()
+    ws_url = get_ws_endpoint()
+    # For Docker/host mapping the extension always connects via loopback on the host.
+    extension_ws_url = ws_url
+    if "0.0.0.0" in extension_ws_url:
+        extension_ws_url = extension_ws_url.replace("0.0.0.0", "127.0.0.1")
 
     return {
         "status": "ok",
         "version": __version__,
         "browser": extension_connected,
-        "bridge": {"extension_connected": extension_connected},
+        "bridge": {
+            "extension_connected": extension_connected,
+            "ws_url": extension_ws_url,
+            "download_url": "/api/extension/download",
+            "install_hint": (
+                "Chrome → chrome://extensions → 开发者模式 → "
+                "加载已解压的扩展程序 → 选择 justsearch-bridge 目录"
+            ),
+        },
         "db_pool_size": _engine.pool.size() if _engine and hasattr(_engine, 'pool') else 0,
         "db_pool_checked_out": _engine.pool.checkedout() if _engine and hasattr(_engine, 'pool') else 0,
         "memory_mb": mem_mb,
+        "db_size_mb": db_size_mb,
         "uptime_seconds": uptime_seconds,
         "timestamp": datetime.now().isoformat(),
     }

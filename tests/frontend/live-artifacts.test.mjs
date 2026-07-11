@@ -9,13 +9,20 @@ import {
 } from '../../backend/static/js/modules/live-artifacts.js';
 
 const {
+    applyInlineArtifactFrameHeight,
     buildSrcdoc,
+    clampLiveArtifactFontSize,
     extractInlineLiveArtifact,
     extractLiveArtifactInteraction,
     extractLiveArtifacts,
     handleArtifactFrameMessage,
+    adaptArtifactHtmlForTheme,
+    injectPreviewBaseFontSize,
+    injectPreviewBaseStyles,
+    injectPreviewTheme,
     injectPreviewSecurityPolicy,
     linkArtifactCitationsInHtml,
+    measureArtifactContentHeight,
     normalizePreviewDiagnostic,
     parseLiveArtifactInteractionSpec,
 } = __liveArtifactsTestHooks;
@@ -164,6 +171,222 @@ test('Live Artifact srcdoc uses AMC-style CSP and preview diagnostics', () => {
     assert.match(srcdoc, /resource-error/);
     assert.match(srcdoc, /runtime-error/);
     assert.match(srcdoc, /csp-violation/);
+    assert.match(srcdoc, /data-amc-preview-base/);
+    assert.match(srcdoc, /data-amc-live-artifact-base-font-size/);
+    assert.match(srcdoc, /data-amc-live-artifact-theme/);
+    assert.match(srcdoc, /--amc-live-artifact-font-size:16px/);
+    assert.match(srcdoc, /--amc-live-artifact-text:/);
+    assert.match(srcdoc, /height:\s*auto\s*!important/);
+    assert.match(srcdoc, /body > section/);
+    assert.match(srcdoc, /notifyResize/);
+    assert.match(srcdoc, /scheduleResize/);
+    assert.match(srcdoc, /frameId: FRAME_ID/);
+});
+
+test('Live Artifact srcdoc injects configured base font size', () => {
+    const srcdoc = buildSrcdoc('<section><p>Hello</p></section>', 'html', [], {
+        frameId: 'font-test',
+        baseFontSize: 21,
+    });
+    assert.match(srcdoc, /--amc-live-artifact-font-size:21px/);
+    assert.match(srcdoc, /font-size:var\(--amc-live-artifact-font-size\)/);
+    assert.equal(clampLiveArtifactFontSize(99), 32);
+    assert.equal(clampLiveArtifactFontSize(3), 10);
+    assert.equal(clampLiveArtifactFontSize('nope'), 16);
+
+    const once = injectPreviewBaseFontSize(srcdoc, 18);
+    assert.equal(once, srcdoc, 'font-size style is only injected once');
+});
+
+test('Live Artifact srcdoc injects light and dark theme tokens', () => {
+    const light = buildSrcdoc('<section><p>Hello</p></section>', 'html', [], {
+        frameId: 'theme-light',
+        themeId: 'light',
+    });
+    assert.match(light, /data-amc-live-artifact-theme="true"/);
+    assert.match(light, /color-scheme:light/);
+    assert.match(light, /--amc-live-artifact-text:#111827/);
+    assert.match(light, /--amc-live-artifact-surface:#f3f4f6/);
+    assert.match(light, /--amc-live-artifact-accent:#2563eb/);
+    assert.match(light, /background:transparent!important/);
+    assert.match(light, /color:#111827!important/);
+
+    const dark = buildSrcdoc('<section><p>Hello</p></section>', 'html', [], {
+        frameId: 'theme-dark',
+        themeId: 'dark',
+    });
+    assert.match(dark, /color-scheme:dark/);
+    assert.match(dark, /--amc-live-artifact-text:#f4f4f5/);
+    assert.match(dark, /--amc-live-artifact-surface:#18181b/);
+    assert.match(dark, /--amc-live-artifact-border:#27272a/);
+    assert.match(dark, /--amc-live-artifact-accent:#38bdf8/);
+    assert.match(dark, /--amc-live-artifact-muted:#a1a1aa/);
+    assert.match(dark, /color:#f4f4f5!important/);
+
+    const once = injectPreviewTheme(dark, 'light');
+    assert.equal(once, dark, 'theme style is only injected once');
+});
+
+test('dark theme rewrites hardcoded light-mode inline colors', () => {
+    const html = `
+      <div style="display:block;width:100%">
+        <h2 style="margin:0;font-weight:600">Title</h2>
+        <div style="background:#f5f9ff;border-left:4px solid #2196f3;color:#0d47a1">callout</div>
+        <p style="color:#666">muted note</p>
+        <table><tr style="background:#f0f0f0"><th style="border-bottom-color:#ddd">H</th></tr></table>
+        <div style="background:#fff3e0">warn</div>
+      </div>
+    `;
+    const adapted = adaptArtifactHtmlForTheme(html, 'dark');
+    // Pale near-white surfaces → dark surface / accent-surface tokens.
+    assert.match(adapted, /background:\s*var\(--amc-live-artifact-(?:surface|accent-surface)\)/);
+    assert.match(adapted, /color:\s*var\(--amc-live-artifact-accent\)/);
+    assert.match(adapted, /color:\s*var\(--amc-live-artifact-muted\)/);
+    assert.match(adapted, /border-bottom-color:\s*var\(--amc-live-artifact-border\)/);
+    assert.match(adapted, /background:\s*var\(--amc-live-artifact-accent-surface\)/);
+
+    const light = adaptArtifactHtmlForTheme(html, 'light');
+    assert.match(light, /background:#f5f9ff/);
+    assert.doesNotMatch(light, /--amc-live-artifact-surface/);
+
+    const srcdoc = buildSrcdoc(html, 'html', [], { themeId: 'dark', frameId: 'adapt-1' });
+    // Theme text is baked as concrete hex + !important on html/body (AMC-compatible).
+    assert.match(srcdoc, /color:#f4f4f5!important/);
+    assert.match(srcdoc, /#18181b/);
+    assert.doesNotMatch(srcdoc, /background:#f5f9ff/);
+});
+
+test('dark theme materializes CSS variable tokens to concrete colors', () => {
+    const html = `<div style="background:var(--amc-live-artifact-surface);color:var(--amc-live-artifact-text);border:1px solid var(--amc-live-artifact-border)">card</div>`;
+    const dark = buildSrcdoc(html, 'html', [], { themeId: 'dark', frameId: 'mat-dark' });
+    assert.match(dark, /background:\s*#18181b/);
+    assert.match(dark, /color:\s*#f4f4f5/);
+    assert.match(dark, /border:\s*1px solid #27272a/);
+    // Unresolved light-looking surfaces must not remain.
+    assert.doesNotMatch(dark, /background:\s*var\(--amc-live-artifact-surface\)/);
+    assert.doesNotMatch(dark, /#f3f4f6/);
+
+    const light = buildSrcdoc(html, 'html', [], { themeId: 'light', frameId: 'mat-light' });
+    assert.match(light, /background:\s*#f3f4f6/);
+    assert.match(light, /color:\s*#111827/);
+});
+
+test('preview base styles neutralize full-viewport height constraints', () => {
+    const withHead = injectPreviewBaseStyles('<!doctype html><html><head><title>Demo</title></head><body><section>Tall</section></body></html>');
+    assert.match(withHead, /<head><style data-amc-preview-base="true">/);
+    assert.match(withHead, /max-height:\s*none\s*!important/);
+    assert.match(withHead, /body > section/);
+    assert.match(withHead, /<title>Demo<\/title>/);
+
+    const fragment = injectPreviewBaseStyles('<section>Ready</section>');
+    assert.match(fragment, /data-amc-preview-base="true"/);
+    assert.match(fragment, /<section>Ready<\/section>/);
+
+    const once = injectPreviewBaseStyles(withHead);
+    assert.equal(once, withHead);
+});
+
+test('inline artifact srcdoc embeds stable frame id for resize routing', () => {
+    const srcdoc = buildSrcdoc('<section>Tall content</section>', 'html', [], { frameId: 'msg-1-inline-0' });
+    assert.match(srcdoc, /const FRAME_ID = "msg-1-inline-0"/);
+    assert.match(srcdoc, /frameId: FRAME_ID/);
+});
+
+test('inline artifact resize applies height to both viewport and iframe', () => {
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div class="live-artifact-inline-viewport">
+                <iframe class="live-artifact-inline-iframe"></iframe>
+            </div>
+        </body>
+    `);
+
+    const viewport = document.querySelector('.live-artifact-inline-viewport');
+    const frame = document.querySelector('.live-artifact-inline-iframe');
+    const applied = applyInlineArtifactFrameHeight(viewport, frame, 980.4);
+
+    assert.equal(applied, 981);
+    assert.equal(viewport.style.height, '981px');
+    assert.equal(frame.style.height, '981px');
+    assert.equal(viewport.style.minHeight, '120px');
+
+    const floor = applyInlineArtifactFrameHeight(viewport, frame, 12);
+    assert.equal(floor, 120);
+    assert.equal(viewport.style.height, '120px');
+    assert.equal(frame.style.height, '120px');
+
+    applyInlineArtifactFrameHeight(viewport, frame, 800);
+    const noShrink = applyInlineArtifactFrameHeight(viewport, frame, 200, { allowShrink: false });
+    assert.equal(noShrink, 800);
+    assert.equal(viewport.style.height, '800px');
+});
+
+test('parent-side height probe expands past short iframe defaults', () => {
+    installBrowserGlobals();
+    const longHtml = `<section style="display:block;width:100%"><h2>Title</h2>${
+        Array.from({ length: 40 }, (_, i) => `<p>段落 ${i} ${'内容'.repeat(20)}</p>`).join('')
+    }</section>`;
+    const height = measureArtifactContentHeight(longHtml, 640);
+    assert.ok(height > 320, `expected probed height > 320, got ${height}`);
+});
+
+test('resize postMessage from inline frame grows the clipped viewport', () => {
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div class="live-artifact-inline-viewport" style="height:120px">
+                <iframe class="live-artifact-inline-iframe" style="height:120px" data-live-artifact-frame-id="stream-abc-inline-0"></iframe>
+            </div>
+        </body>
+    `);
+
+    const viewport = document.querySelector('.live-artifact-inline-viewport');
+    const frame = document.querySelector('.live-artifact-inline-iframe');
+    // Pretend this is the message source window for the trusted-frame lookup path.
+    Object.defineProperty(frame, 'contentWindow', {
+        configurable: true,
+        value: { id: 'mock-inline-frame-window' },
+    });
+
+    handleArtifactFrameMessage({
+        source: frame.contentWindow,
+        data: {
+            channel: 'justsearch-live-artifacts',
+            event: 'resize',
+            height: 1560,
+        },
+    });
+
+    assert.equal(viewport.style.height, '1560px');
+    assert.equal(frame.style.height, '1560px');
+});
+
+test('resize postMessage can route by frameId without contentWindow match', () => {
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div class="live-artifact-inline-viewport" style="height:120px">
+                <iframe class="live-artifact-inline-iframe" style="height:120px" data-live-artifact-frame-id="stream-xyz-inline-0"></iframe>
+            </div>
+        </body>
+    `);
+
+    const viewport = document.querySelector('.live-artifact-inline-viewport');
+    const frame = document.querySelector('.live-artifact-inline-iframe');
+
+    handleArtifactFrameMessage({
+        source: { id: 'unrelated-window' },
+        data: {
+            channel: 'justsearch-live-artifacts',
+            event: 'resize',
+            height: 2400,
+            frameId: 'stream-xyz-inline-0',
+        },
+    });
+
+    assert.equal(viewport.style.height, '2400px');
+    assert.equal(frame.style.height, '2400px');
 });
 
 test('Live Artifact CSP injection preserves existing document heads', () => {
@@ -225,7 +448,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'searxng', interactive_search: true };
@@ -303,7 +526,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -387,8 +610,8 @@ test('inline Live Artifact citations inside the iframe become safe clickable sou
 
     const frame = container.querySelector('.live-artifact-inline-iframe');
     assert.ok(frame);
-    assert.match(frame.getAttribute('sandbox'), /allow-popups/);
-    assert.match(frame.getAttribute('sandbox'), /allow-popups-to-escape-sandbox/);
+    // Align with ArtifactFrame sandbox (no allow-same-origin / no allow-popups).
+    assert.equal(frame.getAttribute('sandbox'), 'allow-scripts allow-forms');
     assert.match(frame.srcdoc, /data-live-artifact-source-url="https:\/\/two\.example\/report"/);
     assert.match(frame.srcdoc, /window\.open\(url, '_blank'\)/);
     assert.match(frame.srcdoc, /opened\.opener = null/);
@@ -411,7 +634,7 @@ test('saved HTML answers with sources render citation links instead of inline ar
 
     const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=22');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=25');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -448,7 +671,7 @@ test('saved rich HTML table answers link citation tags in place', async () => {
 
     const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=22');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=25');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -498,7 +721,7 @@ test('saved HTML answers with JSON-encoded sources still render citation links',
 
     const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=22');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=25');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -657,7 +880,7 @@ test('Live Artifact frame messages require a registered preview iframe source', 
 test('streamChat sends live_artifacts_mode without the old Canvas request field', async () => {
     installBrowserGlobals();
     const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=6');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
     let capturedBody = null;
     let doneCalled = false;
 
@@ -697,7 +920,7 @@ test('streamChat sends live_artifacts_mode without the old Canvas request field'
 test('streamChat processes trailing SSE event when stream closes without blank delimiter', async () => {
     installBrowserGlobals();
     const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=6');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
     let answer = null;
     let doneCalled = false;
 
@@ -739,7 +962,7 @@ test('streamChat processes trailing SSE event when stream closes without blank d
 test('streamChat treats SSE error events as terminal failures', async () => {
     installBrowserGlobals();
     const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=6');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
     const encoder = new TextEncoder();
     let errorMessage = '';
     let doneCalled = false;
@@ -783,7 +1006,7 @@ test('streamChat treats SSE error events as terminal failures', async () => {
 test('streamChat reports plain text error responses from gateways', async () => {
     installBrowserGlobals();
     const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=6');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
     let errorMessage = '';
 
     state.currentSessionId = 'session-text-error';
@@ -808,7 +1031,7 @@ test('streamChat reports plain text error responses from gateways', async () => 
 test('streamChat does not retry a non-idempotent chat request after response starts', async () => {
     installBrowserGlobals();
     const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=6');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
     const originalSetTimeout = globalThis.setTimeout;
     const originalConsoleError = console.error;
     let fetchCalls = 0;
@@ -977,8 +1200,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=22');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -1069,8 +1292,8 @@ test('streaming chat marks SSE error events as failed instead of completed', asy
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=22');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'error-status-session' },
@@ -1159,8 +1382,8 @@ test('streaming raw HTML answer exits inline artifact mode when sources arrive',
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=22');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1254,8 +1477,8 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=22');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=29');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [

@@ -1,7 +1,7 @@
 import { authFetch } from './auth.js?v=1';
 import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=2';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=22';
+import { elements, showConfirm } from './ui.js?v=25';
 import { renderHistory } from './history-view.js?v=23';
 import {
     getModelDisplayName,
@@ -9,7 +9,13 @@ import {
     isUnsupportedGemini25Model,
     splitModelItem,
 } from './provider-models.js?v=1';
-import * as API from './api.js?v=6';
+import * as API from './api.js?v=7';
+import {
+    clampBaseFontSize,
+    clampLiveArtifactsFontSize,
+    resolveBaseFontSize,
+    resolveLiveArtifactsFontSize,
+} from './utils.js?v=6';
 
 const WORKFLOW_STEPS = [
     { id: 'analysis', label: '问题分析' },
@@ -85,6 +91,8 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         });
     });
 
+    let _settingsPreviouslyFocused = null;
+
     const openSettings = async () => {
         const sidebar = document.getElementById('sidebar');
         const mobileOverlay = document.getElementById('mobile-overlay');
@@ -94,9 +102,17 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         if (mobileOverlay) {
             mobileOverlay.classList.remove('active');
         }
+        _settingsPreviouslyFocused = document.activeElement;
         const lastTab = safeGetLocalStorageItem(SETTINGS_LAST_TAB_STORAGE_KEY, 'general');
         switchTab(lastTab);
         elements.settingsModal.classList.add('active');
+        // 焦点移入模态，便于键盘用户操作
+        requestAnimationFrame(() => {
+            const firstFocusable = elements.settingsModal.querySelector(
+                '.settings-sidebar-close-btn, button, [tabindex]:not([tabindex="-1"])'
+            );
+            if (firstFocusable) firstFocusable.focus();
+        });
         await updateVersionDisplay();
         await API.fetchSettings();
         await populateSettingsForm(rememberCurrentSettingsPayload);
@@ -114,10 +130,32 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
             await flushSettingsAutoSave();
         } finally {
             elements.settingsModal.classList.remove('active');
+            // 焦点归还到打开者
+            if (_settingsPreviouslyFocused && typeof _settingsPreviouslyFocused.focus === 'function') {
+                _settingsPreviouslyFocused.focus();
+            }
         }
     };
 
     closeBtn.addEventListener('click', closeSettingsModal);
+
+    // 焦点陷阱：在设置模态内循环 Tab，防止跑到背景页面
+    const SETTINGS_FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+    elements.settingsModal.addEventListener('keydown', (event) => {
+        if (event.key !== 'Tab' || !elements.settingsModal.classList.contains('active')) return;
+        const focusable = Array.from(elements.settingsModal.querySelectorAll(SETTINGS_FOCUSABLE))
+            .filter(el => !el.disabled && el.offsetParent !== null);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    });
 
     window.addEventListener('click', (event) => {
         if (event.target === elements.settingsModal) {
@@ -283,7 +321,9 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         'engine-select',
         'max-results-input',
         'max-iterations-input',
-        'interactive-search-input'
+        'interactive-search-input',
+        'base-font-size-input',
+        'live-artifacts-font-size-input',
     ];
 
     autoSaveInputs.forEach(id => {
@@ -293,6 +333,30 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
             el.addEventListener(eventType, () => requestSettingsAutoSave());
         }
     });
+
+    const baseFontSizeInput = document.getElementById('base-font-size-input');
+    if (baseFontSizeInput) {
+        baseFontSizeInput.addEventListener('input', () => {
+            updateFontSizeValueLabel('base-font-size-input', 'base-font-size-value');
+        });
+    }
+    const liveArtifactsFontSizeInput = document.getElementById('live-artifacts-font-size-input');
+    if (liveArtifactsFontSizeInput) {
+        liveArtifactsFontSizeInput.addEventListener('input', () => {
+            updateFontSizeValueLabel('live-artifacts-font-size-input', 'live-artifacts-font-size-value');
+        });
+    }
+}
+
+function updateFontSizeValueLabel(inputId, labelId) {
+    const input = document.getElementById(inputId);
+    const label = document.getElementById(labelId);
+    if (!input || !label) return;
+    const value = inputId === 'live-artifacts-font-size-input'
+        ? clampLiveArtifactsFontSize(input.value)
+        : clampBaseFontSize(input.value);
+    label.textContent = `${value}px`;
+    input.setAttribute('aria-valuenow', String(value));
 }
 
 async function importHistoryFile(file, historyCallbacks, importHistoryBtn) {
@@ -390,9 +454,21 @@ function fillSettingsForm(settings) {
     isApplyingSettingsForm = true;
     try {
         document.getElementById('theme-select').value = settings.theme || 'light';
-        document.getElementById('engine-select').value = settings.search_engine || 'searxng';
+        document.getElementById('engine-select').value = settings.search_engine || 'google';
         document.getElementById('max-results-input').value = normalizeNumberSetting(settings.max_results, 50, 1, 50);
         document.getElementById('max-iterations-input').value = normalizeNumberSetting(settings.max_iterations, 5, 1, 10);
+        const baseFontSize = resolveBaseFontSize(settings);
+        const liveArtifactsFontSize = resolveLiveArtifactsFontSize(settings);
+        const baseFontSizeInput = document.getElementById('base-font-size-input');
+        if (baseFontSizeInput) {
+            baseFontSizeInput.value = String(baseFontSize);
+            updateFontSizeValueLabel('base-font-size-input', 'base-font-size-value');
+        }
+        const liveArtifactsFontSizeInput = document.getElementById('live-artifacts-font-size-input');
+        if (liveArtifactsFontSizeInput) {
+            liveArtifactsFontSizeInput.value = String(liveArtifactsFontSize);
+            updateFontSizeValueLabel('live-artifacts-font-size-input', 'live-artifacts-font-size-value');
+        }
         renderProviderList(settings.providers || [], settings.default_provider_id || '');
         renderWorkflowStepModels(
             settings.workflow_step_models || {},
@@ -411,11 +487,15 @@ function fillSettingsForm(settings) {
 function collectSettingsForm() {
     const providers = collectProvidersForm();
     const defaultProvider = document.querySelector('input[name="default-provider-radio"]:checked');
+    const baseFontSizeInput = document.getElementById('base-font-size-input');
+    const liveArtifactsFontSizeInput = document.getElementById('live-artifacts-font-size-input');
     return {
         theme: document.getElementById('theme-select').value,
         search_engine: document.getElementById('engine-select').value,
         max_results: normalizeNumberSetting(document.getElementById('max-results-input').value, 50, 1, 50),
         max_iterations: normalizeNumberSetting(document.getElementById('max-iterations-input').value, 5, 1, 10),
+        base_font_size: clampBaseFontSize(baseFontSizeInput?.value ?? 16),
+        live_artifacts_font_size: clampLiveArtifactsFontSize(liveArtifactsFontSizeInput?.value ?? 16),
         default_provider_id: defaultProvider?.value || providers[0]?.id || '',
         providers,
         workflow_step_models: collectWorkflowStepModels(),
@@ -672,11 +752,11 @@ function getEngineDisplayName(engine) {
     const names = {
         bing: 'Bing',
         sogou: '搜狗（中文备用）',
-        searxng: 'SearXNG（默认，自托管）',
+        searxng: 'SearXNG（自托管）',
         baidu: '百度（中文）',
         yandex: 'Yandex',
         duckduckgo: 'DuckDuckGo',
-        google: 'Google',
+        google: 'Google（默认）',
         brave: 'Brave Search',
     };
     return names[engine] || engine || 'Unknown';

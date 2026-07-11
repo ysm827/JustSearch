@@ -1,5 +1,5 @@
 import { state, setCurrentSessionId } from './state.js?v=2';
-import { elements } from './ui.js?v=22';
+import { elements } from './ui.js?v=25';
 import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=23';
 
 let popoverEl = null;
@@ -230,11 +230,11 @@ export function setupSidebar(loadChat) {
             const currentTheme = document.documentElement.getAttribute('data-theme');
             const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 
-            const { applyTheme } = await import('./utils.js');
+            const { applyTheme } = await import('./utils.js?v=6');
             applyTheme(newTheme);
             updateThemeIcon();
 
-            const { saveSettingsAPI } = await import('./api.js?v=6');
+            const { saveSettingsAPI } = await import('./api.js?v=7');
             const { state } = await import('./state.js?v=2');
             if (state.settings) {
                 const newSettings = { ...state.settings, theme: newTheme };
@@ -294,7 +294,7 @@ function resetToNewChat() {
     elements.chatContainer.appendChild(elements.heroSection);
     updateActiveHistoryItem(null);
     elements.userInput.value = '';
-    elements.userInput.style.height = '40px';
+    elements.userInput.style.height = '38px';
     elements.userInput.style.overflowY = 'hidden';
     elements.userInput.focus();
 

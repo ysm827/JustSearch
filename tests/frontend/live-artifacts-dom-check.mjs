@@ -5,7 +5,7 @@ import {
   __liveArtifactsTestHooks,
 } from '../../backend/static/js/modules/live-artifacts.js';
 
-const { handleArtifactFrameMessage } = __liveArtifactsTestHooks;
+const { handleArtifactFrameMessage, applyInlineArtifactFrameHeight, measureArtifactContentHeight } = __liveArtifactsTestHooks;
 
 const require = createRequire(import.meta.url);
 const { JSDOM } = require('jsdom');
@@ -17,9 +17,10 @@ const dom = new JSDOM('<!doctype html><body><div id="message"></div><textarea id
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.Event = dom.window.Event;
+globalThis.DOMParser = dom.window.DOMParser;
 
 const container = document.getElementById('message');
-const html = '<section style="display:block;width:100%;box-sizing:border-box"><h2>Inline Artifact</h2><p>Rendered inside iframe</p></section>';
+const html = '<section style="display:block;width:100%;box-sizing:border-box"><h2>Inline Artifact</h2><p>Rendered inside iframe</p><p>Second paragraph for height.</p></section>';
 const artifacts = renderLiveArtifactsForMessage(container, html, {
   messageId: 'dom-check-message',
   isStreaming: false,
@@ -29,7 +30,36 @@ assert.equal(artifacts.length, 1);
 assert.equal(container.querySelectorAll('[data-live-artifact-frame="true"]').length, 1);
 assert.equal(container.querySelectorAll('iframe[title="HTML Preview"]').length, 1);
 assert.equal(container.querySelectorAll('section').length, 0);
-assert.match(container.querySelector('iframe').getAttribute('srcdoc'), /Inline Artifact/);
+const inlineFrame = container.querySelector('iframe');
+const inlineViewport = container.querySelector('.live-artifact-inline-viewport');
+assert.match(inlineFrame.getAttribute('srcdoc'), /Inline Artifact/);
+assert.match(inlineFrame.getAttribute('srcdoc'), /data-amc-preview-base/);
+assert.match(inlineFrame.getAttribute('srcdoc'), /notifyResize/);
+assert.equal(inlineFrame.getAttribute('scrolling'), 'no');
+assert.equal(inlineFrame.getAttribute('sandbox'), 'allow-scripts allow-forms');
+assert.equal(inlineFrame.dataset.liveArtifactFrameId, 'dom-check-message-inline-0');
+assert.match(inlineFrame.getAttribute('srcdoc'), /const FRAME_ID = "dom-check-message-inline-0"/);
+// Parent-side probe should have already set a concrete height (not stuck at 0).
+assert.match(inlineViewport.style.height, /^\d+px$/);
+assert.ok(parseInt(inlineViewport.style.height, 10) >= 120);
+
+Object.defineProperty(inlineFrame, 'contentWindow', {
+  configurable: true,
+  value: { id: 'dom-check-inline-window' },
+});
+handleArtifactFrameMessage({
+  source: { id: 'unrelated' },
+  data: {
+    channel: 'justsearch-live-artifacts',
+    event: 'resize',
+    height: 2048,
+    frameId: 'dom-check-message-inline-0',
+  },
+});
+assert.equal(inlineViewport.style.height, '2048px');
+assert.equal(inlineFrame.style.height, '2048px');
+assert.equal(applyInlineArtifactFrameHeight(inlineViewport, inlineFrame, 40), 120);
+assert.ok(measureArtifactContentHeight(html, 640) >= 120);
 
 const interaction = {
   version: 1,

@@ -8,10 +8,10 @@ import {
     renameChatAPI,
     searchHistory,
     updateChatGroupAPI
-} from './api.js?v=6';
+} from './api.js?v=7';
 import { state } from './state.js?v=2';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=22';
+import { elements, showConfirm } from './ui.js?v=25';
 
 let _fullHistory = [];
 let _chatGroups = [];

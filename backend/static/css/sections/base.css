@@ -16,8 +16,30 @@ textarea:focus-visible {
     outline-offset: 1px;
 }
 
+/* --- Skip-to-content link (visually hidden until focused) --- */
+.skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 10001;
+    padding: 8px 14px;
+    background: var(--primary);
+    color: var(--text-inverse);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    transform: translateY(-150%);
+    transition: transform var(--transition-fast);
+}
+.skip-link:focus {
+    transform: translateY(0);
+}
+
 /* --- Design Tokens --- */
 :root {
+    color-scheme: light;
+
     /* Primary */
     --primary: #3b82f6;
     --primary-hover: #2563eb;
@@ -94,6 +116,8 @@ textarea:focus-visible {
 }
 
 [data-theme="dark"] {
+    color-scheme: dark;
+
     /* Primary */
     --primary: #60a5fa;
     --primary-hover: #3b82f6;

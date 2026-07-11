@@ -136,6 +136,18 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
+}
+
+.sidebar-brand-logo {
+    display: block;
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+    background: transparent;
+    border-radius: 0;
+    pointer-events: none;
+    user-select: none;
 }
 
 .sidebar-brand-name {

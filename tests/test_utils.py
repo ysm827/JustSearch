@@ -499,9 +499,65 @@ class TestLiveArtifactsAnswerFormatting:
 
         system_prompt = captured["messages"][0]["content"]
         assert "[Live Artifacts Inline Protocol - zh]" in system_prompt
+        assert "JustSearch 的 Live Artifacts Designer" in system_prompt
+        assert "100vh" in system_prompt
+        assert "AMC-WebUI" not in system_prompt
         assert "The actual answer content in Markdown" not in system_prompt
         assert result["answer"].startswith('<section style="display:block;width:100%;')
         assert "<h2>结论</h2>" in result["answer"]
+
+    def test_generate_answer_selects_english_live_artifacts_protocol(self):
+        import asyncio
+
+        captured = {}
+
+        class FakeStream:
+            def __init__(self, chunks):
+                self._chunks = chunks
+
+            def __aiter__(self):
+                self._iter = iter(self._chunks)
+                return self
+
+            async def __anext__(self):
+                try:
+                    content = next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content=content),
+                            finish_reason=None,
+                        )
+                    ]
+                )
+
+        class FakeCompletions:
+            async def create(self, model, messages, stream):
+                captured["messages"] = messages
+                return FakeStream(
+                    [
+                        "Status: sufficient\nMissing_Info: \nAnswer:\n",
+                        "<section><h2>Conclusion</h2><p>Done [1]</p></section>",
+                    ]
+                )
+
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        client.client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+
+        asyncio.run(
+            client.generate_answer(
+                "What is Live Artifacts?",
+                [{"id": 1, "title": "fixture", "content": "source", "url": "https://example.test"}],
+                live_artifacts_mode=True,
+            )
+        )
+
+        system_prompt = captured["messages"][0]["content"]
+        assert "[Live Artifacts Inline Protocol - en]" in system_prompt
+        assert "Live Artifacts Designer for JustSearch" in system_prompt
+        assert "100vh" in system_prompt
 
     def test_live_artifacts_markdown_fallback_is_not_streamed_as_markdown(self):
         import asyncio

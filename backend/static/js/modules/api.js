@@ -1,6 +1,6 @@
-import { state, setSettings } from './state.js?v=2';
+import { state, setSettings } from './state.js?v=3';
 import { authFetch } from './auth.js?v=1';
-import { applyTheme } from './utils.js';
+import { applyFontSizes, applyTheme } from './utils.js?v=6';
 
 function encodePathSegment(value) {
     return encodeURIComponent(String(value ?? ''));
@@ -27,6 +27,9 @@ function responseJsonDetail(data) {
     const detail = data.detail ?? data.error ?? data.message;
     if (typeof detail === 'string') return detail.trim();
     if (detail && typeof detail === 'object') {
+        if (typeof detail.message === 'string' && detail.message.trim()) {
+            return detail.message.trim();
+        }
         try {
             return JSON.stringify(detail);
         } catch {
@@ -34,6 +37,14 @@ function responseJsonDetail(data) {
         }
     }
     return '';
+}
+
+async function readResponseBridgeDetail(response) {
+    const data = await readResponseJson(response);
+    if (!data || typeof data !== 'object') return null;
+    const detail = data.detail;
+    if (detail && typeof detail === 'object') return detail;
+    return null;
 }
 
 async function getResponseErrorMessage(response, fallback) {
@@ -45,13 +56,31 @@ async function getResponseErrorMessage(response, fallback) {
     return fallback;
 }
 
+function applyAppearanceSettings(settings) {
+    if (!settings || typeof settings !== 'object') return;
+    applyTheme(settings.theme);
+    applyFontSizes(settings);
+    // Rebuild open Live Artifact previews when LA base size or theme changes.
+    import('./live-artifacts.js?v=18')
+        .then((mod) => {
+            if (typeof mod.refreshLiveArtifactPreviews === 'function') {
+                mod.refreshLiveArtifactPreviews(settings);
+            } else if (typeof mod.refreshLiveArtifactFontSizes === 'function') {
+                mod.refreshLiveArtifactFontSizes(settings);
+            }
+        })
+        .catch(() => {
+            // Live Artifacts module may be unavailable in some test harnesses.
+        });
+}
+
 export async function fetchSettings() {
     try {
         const res = await authFetch('/api/settings');
         if (res.ok) {
             const settings = await res.json();
             setSettings(settings);
-            applyTheme(settings.theme);
+            applyAppearanceSettings(settings);
             return settings;
         }
     } catch (e) {
@@ -72,10 +101,10 @@ export async function saveSettingsAPI(newSettings) {
             // Update state with server response (contains masked provider api keys)
             if (data.settings) {
                 setSettings(data.settings);
-                applyTheme(data.settings.theme);
+                applyAppearanceSettings(data.settings);
             } else {
                 setSettings(newSettings);
-                applyTheme(newSettings.theme);
+                applyAppearanceSettings(newSettings);
             }
             return true;
         }
@@ -435,9 +464,25 @@ export async function streamChat(query, callbacks) {
             });
             responseStarted = true;
 
-            // Handle non-200 responses (e.g. 400 missing API key)
+            // Handle non-200 responses (e.g. 400 missing API key, 503 bridge offline)
             if (!response.ok) {
-                const errMsg = await getResponseErrorMessage(response, `请求失败 (${response.status})`);
+                const bridgeDetail = await readResponseBridgeDetail(response);
+                if (
+                    bridgeDetail?.code === 'BRIDGE_REQUIRED'
+                    || response.status === 503
+                ) {
+                    try {
+                        const { isBridgeRequiredError, openBridgeInstallModal, fetchBridgeStatus } = await import('./bridge.js?v=1');
+                        if (isBridgeRequiredError(bridgeDetail) || response.status === 503) {
+                            await fetchBridgeStatus();
+                            openBridgeInstallModal();
+                        }
+                    } catch {
+                        // Bridge UI module may be unavailable in tests.
+                    }
+                }
+                const errMsg = bridgeDetail?.message
+                    || await getResponseErrorMessage(response, `请求失败 (${response.status})`);
                 if (onError) onError(errMsg);
                 return;
             }

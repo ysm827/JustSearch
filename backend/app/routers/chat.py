@@ -26,10 +26,31 @@ from ..providers import (
 from ..workflow import SearchWorkflow
 from ..logging_utils import set_request_id
 from ..search_engine import get_all_engines
+from ..extension_bridge import get_ws_endpoint, is_extension_connected
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+BRIDGE_REQUIRED_DETAIL = {
+    "code": "BRIDGE_REQUIRED",
+    "message": (
+        "JustSearch 浏览器桥接不可用：Chrome 扩展未连接。"
+        "请安装并启用 JustSearch Bridge 扩展后再试。"
+    ),
+    "download_url": "/api/extension/download",
+}
+
+
+def _require_extension_bridge() -> None:
+    """Fail fast before starting a search workflow when the Chrome bridge is offline."""
+    if is_extension_connected():
+        return
+    detail = {
+        **BRIDGE_REQUIRED_DETAIL,
+        "ws_url": get_ws_endpoint(),
+    }
+    raise HTTPException(status_code=503, detail=detail)
 
 
 async def _cancel_and_drain_tasks(tasks: list[asyncio.Task]) -> list[Any]:
@@ -179,7 +200,7 @@ def _resolve_search_engine(requested: str | None, saved: str | None) -> str:
     valid_engines = set(get_all_engines())
     requested_engine = _text_setting(requested)
     saved_engine = _text_setting(saved)
-    engine = requested_engine or saved_engine or "searxng"
+    engine = requested_engine or saved_engine or "google"
     if requested_engine and engine not in valid_engines:
         raise HTTPException(
             status_code=400,
@@ -187,7 +208,7 @@ def _resolve_search_engine(requested: str | None, saved: str | None) -> str:
         )
     if engine in valid_engines:
         return engine
-    return "searxng"
+    return "google"
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +252,7 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
         raise HTTPException(status_code=400, detail="Gemini 2.5 系列模型不再支持")
     workflow_step_models = await _resolve_workflow_step_models(defaults, provider_id, api_key, model)
 
-    search_engine = _resolve_search_engine(request.search_engine, defaults.get("search_engine", "searxng"))
+    search_engine = _resolve_search_engine(request.search_engine, defaults.get("search_engine", "google"))
     max_results = _bounded_int(
         request.max_results if request.max_results is not None else defaults.get("max_results", 50),
         default=50,
@@ -257,6 +278,9 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     )
     if request.canvas_mode:
         live_artifacts_mode = True
+
+    # All engines scrape via the real-Chrome extension bridge.
+    _require_extension_bridge()
 
     logger.info("[Chat] New request: session=%s, provider=%s, query='%s', engine=%s, model=%s",
                 session_id, provider_id, query_text[:80], search_engine, model)

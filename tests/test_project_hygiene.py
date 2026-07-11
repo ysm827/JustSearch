@@ -167,6 +167,37 @@ def test_frontend_opens_browser_modal_for_all_search_verification_actions():
     assert "openBrowserModal" not in chat_source
 
 
+def test_bridge_install_guidance_is_wired_in_frontend():
+    index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    main_source = (PROJECT_ROOT / "backend/static/js/main.js").read_text(
+        encoding="utf-8"
+    )
+    chat_source = (PROJECT_ROOT / "backend/static/js/modules/chat.js").read_text(
+        encoding="utf-8"
+    )
+    bridge_source = (PROJECT_ROOT / "backend/static/js/modules/bridge.js").read_text(
+        encoding="utf-8"
+    )
+    stats_source = (PROJECT_ROOT / "backend/app/routers/stats.py").read_text(
+        encoding="utf-8"
+    )
+    chat_router_source = (PROJECT_ROOT / "backend/app/routers/chat.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="bridge-status-btn"' in index_source
+    assert 'id="bridge-install-modal"' in index_source
+    assert 'id="bridge-download-btn"' in index_source
+    assert "startBridgeStatusPolling" in main_source
+    assert "ensureBridgeConnected" in chat_source
+    assert "BRIDGE_REQUIRED" in chat_router_source
+    assert "/api/extension/download" in stats_source
+    assert "fetchBridgeStatus" in bridge_source
+    assert "openBridgeInstallModal" in bridge_source
+
+
 def test_google_engine_uses_official_multicolor_icon():
     index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
         encoding="utf-8"
@@ -788,7 +819,7 @@ def test_runtime_security_defaults_are_not_wide_open():
     assert 'load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))' in main_source
 
 
-def test_default_search_engine_is_searxng_across_app():
+def test_default_search_engine_is_google_across_app():
     database_source = (PROJECT_ROOT / "backend/app/database.py").read_text(
         encoding="utf-8"
     )
@@ -802,10 +833,10 @@ def test_default_search_engine_is_searxng_across_app():
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
 
-    assert '"search_engine": "searxng"' in database_source
-    assert '"search_engine": "searxng"' in settings_example
-    assert "state.settings.search_engine || 'searxng'" in chat_source
-    assert "settings.search_engine || 'searxng'" in settings_source
+    assert '"search_engine": "google"' in database_source
+    assert '"search_engine": "google"' in settings_example
+    assert "state.settings.search_engine || 'google'" in chat_source
+    assert "settings.search_engine || 'google'" in settings_source
 
 
 def test_default_max_search_results_is_fifty_across_app():
@@ -988,13 +1019,13 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "hasCitationSources" in chat_source
     assert "from './source-renderer.js?v=8'" in ui_source
     assert "from './source-renderer.js?v=8'" in chat_source
-    assert "from './ui.js?v=22'" in (
+    assert "from './ui.js?v=25'" in (
         PROJECT_ROOT / "backend/static/js/modules/history-view.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=22'" in (
+    assert "from './ui.js?v=25'" in (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=22'" in (
+    assert "from './ui.js?v=25'" in (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
@@ -1022,9 +1053,11 @@ def test_css_is_split_into_named_sections():
 
     for filename in expected_sections:
         assert (sections_dir / filename).is_file()
-        assert f"./sections/{filename}" in style_source
+        # style.css 是各分片按序拼接的产物：每个分片以 inlined 标记开头
+        assert f"=== {filename} (inlined) ===" in style_source
 
-    assert len(style_source.splitlines()) < 40
+    # 拼接后应有实质内容
+    assert len(style_source.splitlines()) > 100
 
 
 def test_sidebar_stylesheet_changes_are_cache_busted():
@@ -1038,26 +1071,32 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
         PROJECT_ROOT / "backend/static/js/main.js"
     ).read_text(encoding="utf-8")
 
-    assert 'href="/static/css/style.css?v=26"' in index_source
-    assert 'src="/static/js/main.js?v=57"' in index_source
-    assert "@import url('./sections/base.css?v=4');" in style_source
-    assert "@import url('./sections/sidebar.css?v=11');" in style_source
-    assert "@import url('./sections/chat.css?v=11');" in style_source
-    assert "@import url('./sections/input-modal.css?v=17');" in style_source
-    assert "@import url('./sections/markdown.css?v=3');" in style_source
-    assert "@import url('./sections/live-artifacts.css?v=3');" in style_source
-    assert "@import url('./sections/responsive.css?v=5');" in style_source
-    assert "@import url('./sections/polish.css?v=6');" in style_source
+    # style.css 现为各分片拼接（不再用 @import）；index.html 引用带缓存版本号的单文件
+    assert 'href="/static/css/style.css?v=36"' in index_source
+    assert 'src="/static/js/main.js?v=61"' in index_source
+    assert "=== base.css (inlined) ===" in style_source
+    assert "=== sidebar.css (inlined) ===" in style_source
+    assert "=== chat.css (inlined) ===" in style_source
+    assert "=== input-modal.css (inlined) ===" in style_source
+    assert "=== markdown.css (inlined) ===" in style_source
+    assert "=== live-artifacts.css (inlined) ===" in style_source
+    assert "=== responsive.css (inlined) ===" in style_source
+    assert "=== polish.css (inlined) ===" in style_source
     assert "from './modules/auth.js?v=1'" in main_source
     assert "from './modules/state.js?v=2'" in main_source
-    assert "from './modules/ui.js?v=22'" in main_source
-    assert "from './modules/chat.js?v=29'" in main_source
+    assert "from './modules/ui.js?v=25'" in main_source
+    assert "from './modules/chat.js?v=32'" in main_source
     assert "from './modules/history-view.js?v=23'" in main_source
-    assert "from './modules/settings-modal.js?v=44'" in main_source
+    assert "from './modules/settings-modal.js?v=46'" in main_source
     assert "from './modules/sidebar.js?v=17'" in main_source
-    assert "from './modules/model-selector.js?v=14'" in main_source
-    assert "from './modules/api.js?v=6'" in main_source
-    assert "import('./modules/utils.js?v=3')" in main_source
+    assert "from './modules/model-selector.js?v=15'" in main_source
+    assert "from './modules/api.js?v=7'" in main_source
+    assert "import('./modules/utils.js?v=6')" in main_source
+    assert "search-intensity.js?v=1" in (PROJECT_ROOT / "backend/static/js/modules/chat.js").read_text(encoding="utf-8")
+    assert 'id="search-intensity-bar"' in index_source
+    assert "loadSelectedModelPreference" in main_source
+    assert "findOptionForModelPreference" in main_source
+    assert "SELECTED_MODEL_STORAGE_KEY" in (PROJECT_ROOT / "backend/static/js/modules/model-selector.js").read_text(encoding="utf-8")
 
 
 def test_auth_token_persists_with_data_volume_and_401_recovers():
@@ -1090,7 +1129,7 @@ def test_live_artifacts_are_integrated_with_chat_rendering():
         PROJECT_ROOT / "backend/static/js/modules/ui.js"
     ).read_text(encoding="utf-8")
 
-    assert "live-artifacts.css?v=3" in style_source
+    assert "=== live-artifacts.css (inlined) ===" in style_source
     assert "export function renderLiveArtifactsForMessage" in live_artifacts_js
     assert "function extractLiveArtifacts" in live_artifacts_js
     assert "function extractRawHtmlArtifacts" in live_artifacts_js
@@ -1108,6 +1147,15 @@ def test_live_artifacts_are_integrated_with_chat_rendering():
     assert "frame-src 'none'" in live_artifacts_js
     assert "form-action 'none'" in live_artifacts_js
     assert "function injectPreviewSecurityPolicy" in live_artifacts_js
+    assert "function injectPreviewBaseFontSize" in live_artifacts_js
+    assert "function injectPreviewTheme" in live_artifacts_js
+    assert "export function refreshLiveArtifactFontSizes" in live_artifacts_js
+    assert "export function refreshLiveArtifactPreviews" in live_artifacts_js
+    assert "--amc-live-artifact-font-size" in live_artifacts_js
+    assert "data-amc-live-artifact-theme" in live_artifacts_js
+    assert "--amc-live-artifact-text" in live_artifacts_js
+    assert "--amc-live-artifact-surface" in live_artifacts_js
+    assert "--amc-live-artifact-accent" in live_artifacts_js
     assert "event: 'diagnostic'" in live_artifacts_js
     assert "resource-error" in live_artifacts_js
     assert "runtime-error" in live_artifacts_js
@@ -1124,7 +1172,6 @@ def test_live_artifacts_are_integrated_with_chat_rendering():
     assert "live-artifacts-frame" in live_artifacts_js
     assert "data-artifact-view=\"code\"" in live_artifacts_js
     assert "sandbox=\"allow-scripts allow-forms allow-modals allow-popups\"" in live_artifacts_js
-    assert "allow-popups-to-escape-sandbox" in live_artifacts_js
     assert "sourceLink.tagName === 'A'" in live_artifacts_js
     assert "renderLiveArtifactsForMessage(contentWrapper" in chat_source
     assert "function renderCurrentAssistantAnswer(isStreaming)" in chat_source
@@ -1275,9 +1322,9 @@ def test_message_side_actions_follow_amc_interaction_pattern():
     assert "contentWrapper.className = 'message-answer-body'" in chat_source
     assert "sideColumn.appendChild(createMessageActionRail" in chat_source
     assert "stageMessageForInput" in chat_source
-    assert "from './utils.js?v=3'" in chat_source
-    assert "from './utils.js?v=3'" in ui_source
-    assert "from './utils.js?v=3'" in source_renderer
+    assert "from './utils.js?v=6'" in chat_source
+    assert "from './utils.js?v=6'" in ui_source
+    assert "from './utils.js?v=6'" in source_renderer
     assert ".message-row" in responsive_css
     assert ".message-side" in responsive_css
     assert ".message-avatar" in responsive_css
@@ -1674,10 +1721,24 @@ def test_live_artifacts_toggle_wires_amc_live_artifacts_mode():
     assert "live_artifacts_mode: bool = False" in workflow_source
     assert "live_artifacts_mode=self.live_artifacts_mode" in workflow_source
     assert "LIVE_ARTIFACTS_PROMPT" in prompts_source
+    assert "LIVE_ARTIFACTS_PROMPT_ZH" in prompts_source
+    assert "LIVE_ARTIFACTS_PROMPT_EN" in prompts_source
+    assert "select_live_artifacts_protocol" in prompts_source
     assert "ANSWER_GENERATION_LIVE_ARTIFACTS_PROMPT" in prompts_source
     assert "[Live Artifacts Inline Protocol - zh]" in prompts_source
+    assert "[Live Artifacts Inline Protocol - en]" in prompts_source
+    assert "JustSearch 的 Live Artifacts Designer" in prompts_source
+    assert "Live Artifacts Designer for JustSearch" in prompts_source
+    assert "AMC-WebUI" not in prompts_source
     assert "不要退回纯文本" in prompts_source
     assert "不要放进 css、text、markdown 或 html 代码块" in prompts_source
+    assert "100vh" in prompts_source
+    assert "height:100%" in prompts_source or "height:100%" in prompts_source.replace(" ", "")
+    assert "never ship only a hero title" in prompts_source
+    assert "var(--amc-live-artifact-font-size)" in prompts_source
+    assert "var(--amc-live-artifact-text)" in prompts_source
+    assert "var(--amc-live-artifact-surface)" in prompts_source
+    assert "var(--amc-live-artifact-accent)" in prompts_source
     assert "The actual answer content in Markdown" not in prompts_source.split("ANSWER_GENERATION_LIVE_ARTIFACTS_PROMPT", 1)[1]
     assert "complete document with <!doctype html>" not in prompts_source
 

@@ -73,7 +73,71 @@ document.addEventListener('click', async (e) => {
     } catch (err) { console.error('Copy failed:', err); }
 });
 
+const THEME_STORAGE_KEY = 'justsearch_theme';
+
+// Mirrors AMC baseFontSize / liveArtifactsCustomFontSize ranges.
+export const BASE_FONT_SIZE_MIN = 12;
+export const BASE_FONT_SIZE_MAX = 24;
+export const DEFAULT_BASE_FONT_SIZE = 16;
+export const LIVE_ARTIFACTS_FONT_SIZE_MIN = 10;
+export const LIVE_ARTIFACTS_FONT_SIZE_MAX = 32;
+export const DEFAULT_LIVE_ARTIFACTS_FONT_SIZE = 16;
+
+export function clampBaseFontSize(value) {
+    return clampFontSize(value, DEFAULT_BASE_FONT_SIZE, BASE_FONT_SIZE_MIN, BASE_FONT_SIZE_MAX);
+}
+
+export function clampLiveArtifactsFontSize(value) {
+    return clampFontSize(
+        value,
+        DEFAULT_LIVE_ARTIFACTS_FONT_SIZE,
+        LIVE_ARTIFACTS_FONT_SIZE_MIN,
+        LIVE_ARTIFACTS_FONT_SIZE_MAX,
+    );
+}
+
+export function resolveBaseFontSize(settings) {
+    return clampBaseFontSize(settings?.base_font_size ?? DEFAULT_BASE_FONT_SIZE);
+}
+
+export function resolveLiveArtifactsFontSize(settings) {
+    return clampLiveArtifactsFontSize(
+        settings?.live_artifacts_font_size ?? DEFAULT_LIVE_ARTIFACTS_FONT_SIZE,
+    );
+}
+
+function clampFontSize(value, fallback, minSize, maxSize) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(maxSize, Math.max(minSize, Math.round(parsed)));
+}
+
+/**
+ * Apply reading + Live Artifacts base font sizes via CSS variables on <html>.
+ * Message bubbles and interaction frames consume these vars; iframe srcdocs
+ * read the LA size when building preview documents.
+ */
+export function applyFontSizes(settings) {
+    if (typeof document === 'undefined') return {
+        baseFontSize: resolveBaseFontSize(settings),
+        liveArtifactsFontSize: resolveLiveArtifactsFontSize(settings),
+    };
+    const baseFontSize = resolveBaseFontSize(settings);
+    const liveArtifactsFontSize = resolveLiveArtifactsFontSize(settings);
+    const root = document.documentElement;
+    root.style.setProperty('--js-base-font-size', `${baseFontSize}px`);
+    root.style.setProperty('--js-live-artifacts-font-size', `${liveArtifactsFontSize}px`);
+    return { baseFontSize, liveArtifactsFontSize };
+}
+
 export function applyTheme(theme) {
+    // 持久化到 localStorage，供 <head> 内联脚本在下次加载时同步读取，避免 FOUC。
+    try {
+        if (theme) {
+            localStorage.setItem(THEME_STORAGE_KEY, theme);
+        }
+    } catch (e) { /* localStorage 不可用时静默降级 */ }
+
     if (!theme || theme === 'auto') {
         // Auto-detect system preference
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -83,6 +147,20 @@ export function applyTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
         _updateHljsTheme(theme === 'dark');
     }
+
+    // Rebuild open Live Artifact iframes so dark/light theme tokens stay readable.
+    // Mirrors AMC re-injecting --amc-live-artifact-* when themeId changes.
+    import('./live-artifacts.js?v=18')
+        .then((mod) => {
+            if (typeof mod.refreshLiveArtifactPreviews === 'function') {
+                mod.refreshLiveArtifactPreviews({ theme: document.documentElement.getAttribute('data-theme') });
+            } else if (typeof mod.refreshLiveArtifactFontSizes === 'function') {
+                mod.refreshLiveArtifactFontSizes();
+            }
+        })
+        .catch(() => {
+            // Live Artifacts module may be unavailable in some test harnesses.
+        });
 }
 
 function _updateHljsTheme(isDark) {

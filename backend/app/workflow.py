@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 _WORKFLOW_LLM_STEPS = ("analysis", "relevance", "interaction", "answer")
 
 class SearchWorkflow:
-    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "searxng", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, step_model_configs: Optional[dict] = None, live_artifacts_mode: bool = False, canvas_mode: Optional[bool] = None):
+    def __init__(self, api_key: str, base_url: str, model: str, search_engine: str = "google", max_results: int = 50, max_iterations: int = 5, interactive_search: bool = True, session_id: str = None, step_model_configs: Optional[dict] = None, live_artifacts_mode: bool = False, canvas_mode: Optional[bool] = None):
         self.llm = LLMClient(api_key, base_url, model)
         self._initial_default_llm = self.llm
         self.step_llms = self._build_step_llms(

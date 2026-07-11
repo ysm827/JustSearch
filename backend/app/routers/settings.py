@@ -58,11 +58,27 @@ class SettingsModel(BaseModel):
     default_provider_id: Optional[str] = None
     providers: Optional[list[ProviderModel]] = None
     workflow_step_models: Optional[dict[str, WorkflowStepModel]] = None
-    search_engine: Optional[str] = "searxng"
+    search_engine: Optional[str] = "google"
     max_results: Optional[int] = 50
     max_iterations: Optional[int] = 5
     interactive_search: Optional[bool] = True
     live_artifacts_mode: Optional[bool] = False
+    base_font_size: Optional[int] = 16
+    live_artifacts_font_size: Optional[int] = 16
+
+
+BASE_FONT_SIZE_MIN = 12
+BASE_FONT_SIZE_MAX = 24
+LIVE_ARTIFACTS_FONT_SIZE_MIN = 10
+LIVE_ARTIFACTS_FONT_SIZE_MAX = 32
+
+
+def _clamp_font_size(value, *, default: int, min_size: int, max_size: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(min_size, min(max_size, parsed))
 
 
 class EngineCheckRequest(BaseModel):
@@ -175,6 +191,20 @@ async def update_settings_endpoint(settings: SettingsModel):
         update["max_results"] = max(1, min(50, int(update["max_results"])))
     if "max_iterations" in update:
         update["max_iterations"] = max(1, min(10, int(update["max_iterations"])))
+    if "base_font_size" in update:
+        update["base_font_size"] = _clamp_font_size(
+            update["base_font_size"],
+            default=16,
+            min_size=BASE_FONT_SIZE_MIN,
+            max_size=BASE_FONT_SIZE_MAX,
+        )
+    if "live_artifacts_font_size" in update:
+        update["live_artifacts_font_size"] = _clamp_font_size(
+            update["live_artifacts_font_size"],
+            default=16,
+            min_size=LIVE_ARTIFACTS_FONT_SIZE_MIN,
+            max_size=LIVE_ARTIFACTS_FONT_SIZE_MAX,
+        )
 
     # Validate search engine
     valid_engines = set(get_all_engines())

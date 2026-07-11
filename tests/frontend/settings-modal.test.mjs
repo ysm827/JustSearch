@@ -11,6 +11,10 @@ function installBrowserGlobals() {
         <body>
             <select id="theme-select"><option value="light">Light</option></select>
             <select id="engine-select"><option value="searxng">SearXNG</option></select>
+            <input id="base-font-size-input" type="range" min="12" max="24" value="16">
+            <span id="base-font-size-value">16px</span>
+            <input id="live-artifacts-font-size-input" type="range" min="10" max="32" value="16">
+            <span id="live-artifacts-font-size-value">16px</span>
             <input id="max-results-input" type="number">
             <input id="max-iterations-input" type="number">
             <input id="interactive-search-input" type="checkbox" checked>
@@ -247,12 +251,15 @@ test('settings form clamps numeric fields before saving', async () => {
     document.getElementById('max-results-input').value = '500';
     document.getElementById('max-iterations-input').value = '-2';
     document.getElementById('max-concurrent-pages-input').value = '20.8';
+    document.getElementById('base-font-size-input').value = '99';
+    document.getElementById('live-artifacts-font-size-input').value = '2';
 
     const settings = __settingsModalTestHooks.collectSettingsForm();
 
     assert.equal(settings.max_results, 50);
     assert.equal(settings.max_iterations, 1);
-    assert.equal(settings.max_concurrent_pages, 20);
+    assert.equal(settings.base_font_size, 24);
+    assert.equal(settings.live_artifacts_font_size, 10);
     assert.equal(__settingsModalTestHooks.normalizeNumberSetting('not-a-number', 5, 1, 10), 5);
 });
 

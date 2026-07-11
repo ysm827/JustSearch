@@ -4,9 +4,9 @@ import {
     createEditMessageButton,
     createMessageActionRail,
     createRegenerateButton
-} from './utils.js?v=3';
+} from './utils.js?v=6';
 import { extractSources, hasCitationSources, linkCitationsInElement, normalizeCitationSources, renderWithCitations } from './source-renderer.js?v=8';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=11';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=18';
 import { state } from './state.js?v=2';
 
 const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;
@@ -28,17 +28,31 @@ export function showConfirm(message, title = '确认') {
         const cancelBtn = document.getElementById('confirm-cancel-btn');
         const closeBtn = document.getElementById('confirm-close-btn');
 
+        // 焦点恢复：记住打开前焦点所在元素，关闭后归还
+        const previouslyFocused = document.activeElement;
+
         titleEl.textContent = title;
         messageEl.textContent = message;
         modal.classList.add('active');
+
+        // 把焦点移入模态：默认聚焦「取消」(安全默认)，键盘用户可立即 Tab/Enter
+        requestAnimationFrame(() => cancelBtn.focus());
+
+        // 焦点陷阱：Tab/Shift+Tab 在模态内可聚焦元素间循环
+        const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
         function cleanup(result) {
             modal.classList.remove('active');
             okBtn.removeEventListener('click', onOk);
             cancelBtn.removeEventListener('click', onCancel);
             closeBtn.removeEventListener('click', onCancel);
+            closeBtn.removeEventListener('keydown', onCloseKey);
             document.removeEventListener('keydown', onKeyDown);
             modal.removeEventListener('click', onBackdropClick);
+            // 焦点归还
+            if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+                previouslyFocused.focus();
+            }
             resolve(result);
         }
 
@@ -47,6 +61,26 @@ export function showConfirm(message, title = '确认') {
         function onKeyDown(event) {
             if (event.key === 'Escape') {
                 cleanup(false);
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusable = Array.from(modal.querySelectorAll(FOCUSABLE))
+                .filter(el => !el.disabled && el.offsetParent !== null);
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        }
+        function onCloseKey(event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onCancel();
             }
         }
         function onBackdropClick(event) {
@@ -58,6 +92,7 @@ export function showConfirm(message, title = '确认') {
         okBtn.addEventListener('click', onOk);
         cancelBtn.addEventListener('click', onCancel);
         closeBtn.addEventListener('click', onCancel);
+        closeBtn.addEventListener('keydown', onCloseKey);
         document.addEventListener('keydown', onKeyDown);
         modal.addEventListener('click', onBackdropClick);
     });
@@ -164,7 +199,8 @@ function createMessageAvatar(role) {
 
     if (role === 'assistant') {
         const img = document.createElement('img');
-        img.src = '/static/assets/justsearch-favicon.png';
+        // Use transparent icon (same as sidebar), not the white-background favicon.
+        img.src = '/static/assets/justsearch-icon.png?v=10';
         img.alt = '';
         avatar.appendChild(img);
     } else if (role === 'error') {
@@ -302,7 +338,7 @@ function createMessageActions({ role, content, msgDiv, messageIndex, actionCallb
     if (messageIndex !== null) {
         buttons.push(createDeleteMessageButton(async () => {
             if (!await showConfirm('确定要删除这条消息吗？', '删除消息')) return;
-                const { deleteMessageAPI } = await import('./api.js?v=6');
+                const { deleteMessageAPI } = await import('./api.js?v=7');
             const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
             if (ok) {
                 msgDiv.remove();
@@ -362,9 +398,11 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
 }
 
 export function scrollToBottom() {
+    // 尊重 prefers-reduced-motion；流式期间用 instant 避免每帧 smooth 抖动
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     elements.chatContainer.scrollTo({
         top: elements.chatContainer.scrollHeight,
-        behavior: 'smooth'
+        behavior: reducedMotion ? 'auto' : 'smooth'
     });
 }
 

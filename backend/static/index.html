@@ -2,17 +2,28 @@
 <html lang="zh-CN" data-theme="light">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>JustSearch</title>
-    <link rel="icon" type="image/png" href="/static/assets/justsearch-favicon.png?v=7">
+    <link rel="icon" type="image/png" href="/static/assets/justsearch-favicon.png?v=10">
     <link rel="manifest" href="/static/manifest.json">
-    <meta name="theme-color" content="#3b82f6">
+    <meta name="theme-color" content="#3b82f6" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="description" content="JustSearch - 基于 AI 和深度搜索的智能研究助手">
     <meta name="keywords" content="AI搜索,深度搜索,智能助手,LLM,搜索增强">
-    <!-- Preconnect to external resources for faster loading -->
-    <link rel="preconnect" href="https://www.google.com">
-    <link rel="stylesheet" href="/static/css/style.css?v=26">
+    <!-- 在 CSS 加载前同步设置主题，避免暗色用户刷新时闪白(FOUC) -->
+    <script>
+        (function () {
+            try {
+                var k = 'justsearch_theme';
+                var t = localStorage.getItem(k) || 'auto';
+                var dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+            } catch (e) {}
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/css/style.css?v=38">
     <link rel="stylesheet" href="/static/fonts/fonts.css?v=1">
     <!-- 三方库本地托管(markdown-it / dompurify / highlight.js),避免 jsdelivr CDN 在国内超时 -->
     <script src="/static/vendor/markdown-it.min.js?v=14.0.0"></script>
@@ -22,6 +33,7 @@
     <script src="/static/vendor/highlight.min.js?v=11.9.0"></script>
 </head>
 <body>
+    <a href="#user-input" class="skip-link">跳到输入框</a>
     <div id="mobile-overlay" class="mobile-overlay"></div>
 
     <div id="sidebar">
@@ -29,9 +41,7 @@
         <div class="sidebar-expanded-pane">
             <div class="sidebar-header">
                 <div class="sidebar-brand">
-                    <span id="sidebar-brand-toggle" class="sidebar-brand-name" role="button" tabindex="0" aria-label="收起侧栏" title="收起侧栏">
-                        <span class="brand-text-blue">Just</span><span class="brand-text-cyan">Search</span>
-                    </span>
+                    <img class="sidebar-brand-logo" src="/static/assets/justsearch-icon.png?v=10" alt="" width="28" height="28" decoding="async">
                 </div>
                 <div class="sidebar-header-buttons">
                     <button id="quick-theme-btn" class="icon-btn" aria-label="切换主题" title="切换主题">
@@ -128,8 +138,8 @@
             <!-- Messages will be injected here -->
             <div id="hero-section" class="hero-container">
                 <div class="hero-header">
-                    <img class="hero-brand-logo hero-brand-logo-light" src="/static/assets/justsearch-logo.png" alt="JustSearch">
-                    <img class="hero-brand-logo hero-brand-logo-dark" src="/static/assets/justsearch-logo-dark.png" alt="JustSearch">
+                    <img class="hero-brand-logo hero-brand-logo-light" src="/static/assets/justsearch-logo.png?v=8" alt="JustSearch">
+                    <img class="hero-brand-logo hero-brand-logo-dark" src="/static/assets/justsearch-logo-dark.png?v=8" alt="JustSearch">
                 </div>
                 <div class="hero-subtitle">
                     提出复杂问题，获取基于实时搜索的全面答案。
@@ -149,10 +159,33 @@
         </button>
 
         <div id="input-area" role="form" aria-label="消息输入区域">
+            <div id="search-intensity-bar" class="search-intensity-bar" role="group" aria-label="搜索强度">
+                <div class="search-intensity-label">
+                    <span class="material-symbols-rounded" aria-hidden="true">tune</span>
+                    <span>搜索强度</span>
+                </div>
+                <div class="search-intensity-presets" role="radiogroup" aria-label="搜索强度档位">
+                    <button type="button" class="intensity-chip" data-intensity="quick" role="radio" aria-checked="false" title="快速：约 4 源 · 1 轮">快速</button>
+                    <button type="button" class="intensity-chip" data-intensity="balanced" role="radio" aria-checked="true" title="均衡：约 8 源 · 最多 3 轮">均衡</button>
+                    <button type="button" class="intensity-chip" data-intensity="deep" role="radio" aria-checked="false" title="深入：约 12 源 · 最多 5 轮">深入</button>
+                    <button type="button" class="intensity-chip" data-intensity="research" role="radio" aria-checked="false" title="研究：约 20 源 · 最多 8 轮">研究</button>
+                    <button type="button" class="intensity-chip intensity-chip-custom" data-intensity="custom" role="radio" aria-checked="false" title="来自设置的自定义广度/深度" hidden>自定义</button>
+                </div>
+                <div id="search-intensity-hint" class="search-intensity-hint" aria-live="polite">约 8 源 · 最多 3 轮</div>
+            </div>
+            <div id="bridge-status-banner" class="bridge-status-banner" hidden aria-hidden="true">
+                <span class="bridge-status-banner-dot" aria-hidden="true"></span>
+                <span class="bridge-status-banner-text">浏览器扩展未连接，Google / Bing 等搜索均不可用。</span>
+                <button type="button" id="bridge-banner-action" class="bridge-status-banner-action">安装 / 连接扩展</button>
+            </div>
             <div class="input-box">
                 <textarea id="user-input" placeholder="提出问题..." rows="1" aria-label="消息输入" enterkeyhint="send" autofocus></textarea>
                 <div class="input-toolbar">
                     <div class="input-toolbar-left">
+                        <button type="button" id="bridge-status-btn" class="toolbar-btn bridge-status-btn" data-state="unknown" aria-label="浏览器桥接状态" title="浏览器桥接状态">
+                            <span class="bridge-status-dot" aria-hidden="true"></span>
+                            <span id="bridge-status-label">桥接检测中</span>
+                        </button>
                         <div class="quick-engine-wrapper">
                             <button id="quick-engine-btn" class="toolbar-btn" aria-label="切换搜索引擎" title="搜索引擎">
                                 <span id="quick-engine-icon-container">
@@ -163,7 +196,7 @@
                                         <path d="M5.43 14.14a5.67 5.67 0 0 1 0-4.28L3.16 8.16A8.8 8.8 0 0 0 3.6 15.1l1.83-1.4Z" fill="#FBBC05" stroke="none"></path>
                                     </svg>
                                 </span>
-                                <span id="quick-engine-name">DuckDuckGo</span>
+                                <span id="quick-engine-name">Google</span>
                                 <svg class="chevron-svg" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <polyline points="6 9 12 15 18 9"></polyline>
                                 </svg>
@@ -197,6 +230,14 @@
                                 <div class="quick-dropdown-item" data-value="searxng">
                                     <svg class="engine-icon logo-searxng" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m13.716 17.261 6.873 6.582L24 20.282l-6.824-6.536a9.11 9.11 0 0 0 1.143-4.43c0-5.055-4.105-9.159-9.16-9.159S0 4.261 0 9.316c0 5.055 4.104 9.159 9.159 9.159a9.11 9.11 0 0 0 4.557-1.214ZM9.159 2.773a6.546 6.546 0 0 1 6.543 6.543 6.545 6.545 0 0 1-6.543 6.542 6.545 6.545 0 0 1-6.542-6.542 6.545 6.545 0 0 1 6.542-6.543ZM7.26 5.713a4.065 4.065 0 0 1 4.744.747 4.064 4.064 0 0 1 .707 4.749l1.157.611a5.376 5.376 0 0 0-.935-6.282 5.377 5.377 0 0 0-6.274-.987l.601 1.162Z"/></svg>
                                     <span>SearXNG</span>
+                                </div>
+                                <div class="quick-dropdown-item" data-value="baidu">
+                                    <svg class="engine-icon logo-baidu" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M9.154 0C7.71 0 6.54 1.658 6.54 3.707c0 2.051 1.171 3.71 2.615 3.71 1.446 0 2.614-1.659 2.614-3.71C11.768 1.658 10.6 0 9.154 0zm7.025.594C14.86.58 13.347 2.589 13.2 3.927c-.187 1.745.25 3.487 2.179 3.735 1.933.25 3.175-1.806 3.422-3.364.252-1.555-.995-3.364-2.362-3.674a1.218 1.218 0 0 0-.261-.03zM3.582 5.535a2.811 2.811 0 0 0-.156.008c-2.118.19-2.428 3.24-2.428 3.24-.287 1.41.686 4.425 3.297 3.864 2.617-.561 2.262-3.68 2.183-4.362-.125-1.018-1.292-2.773-2.896-2.75zm16.534 1.753c-2.308 0-2.617 2.119-2.617 3.616 0 1.43.121 3.425 2.988 3.362 2.867-.063 2.553-3.238 2.553-3.988 0-.745-.62-2.99-2.924-2.99zm-8.264 2.478c-1.424.014-2.708.925-3.323 1.947-1.118 1.868-2.863 3.05-3.112 3.363-.25.309-3.61 2.116-2.864 5.42.746 3.301 3.365 3.237 3.365 3.237s1.93.19 4.171-.31c2.24-.495 4.17.123 4.17.123s5.233 1.748 6.665-1.616c1.43-3.364-.808-5.109-.808-5.109s-2.99-2.306-4.736-4.798c-1.072-1.665-2.348-2.268-3.528-2.257zm-2.234 3.84l1.542.024v8.197H7.758c-1.47-.291-2.055-1.292-2.13-1.462-.072-.173-.488-.976-.268-2.343.635-2.049 2.447-2.196 2.447-2.196h1.81zm3.964 2.39v3.881c.096.413.612.488.612.488h1.614v-4.343h1.689v5.782h-3.915c-1.517-.39-1.59-1.465-1.59-1.465v-4.317zm-5.458 1.147c-.66.197-.978.708-1.05.928-.076.22-.247.78-.1 1.269.294 1.095 1.248 1.144 1.248 1.144h1.37v-3.34z"/></svg>
+                                    <span>百度 (Baidu)</span>
+                                </div>
+                                <div class="quick-dropdown-item" data-value="yandex">
+                                    <svg class="engine-icon logo-yandex" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path transform="translate(5.125 1) scale(0.042969)" d="M129.5 512V345.9L18.5 48h55.8l81.8 229.7L250.2 0h51.3L180.8 347.8V512z"/></svg>
+                                    <span>Yandex</span>
                                 </div>
                             </div>
                         </div>
@@ -232,7 +273,7 @@
     </div>
 
     <!-- Settings Modal -->
-    <div id="settings-modal" class="modal">
+    <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-mobile-title">
         <div class="modal-content settings-modal-content amc-settings-modal">
             <div class="settings-modal-layout">
                 <!-- Settings Sidebar -->
@@ -288,19 +329,67 @@
                                         <option value="auto">跟随系统</option>
                                     </select>
                                 </div>
+                                <div class="form-group settings-font-size-group">
+                                    <div class="settings-font-size-header">
+                                        <label for="base-font-size-input">阅读字号</label>
+                                        <span id="base-font-size-value" class="settings-font-size-value">16px</span>
+                                    </div>
+                                    <input
+                                        id="base-font-size-input"
+                                        type="range"
+                                        min="12"
+                                        max="24"
+                                        step="1"
+                                        value="16"
+                                        aria-valuemin="12"
+                                        aria-valuemax="24"
+                                        aria-valuenow="16"
+                                        aria-label="阅读字号"
+                                    >
+                                    <div class="settings-font-size-ticks" aria-hidden="true">
+                                        <span>12px</span>
+                                        <span>18px</span>
+                                        <span>24px</span>
+                                    </div>
+                                    <span class="field-desc">调整聊天消息正文字号（标题等会按比例缩放）。</span>
+                                </div>
+                                <div class="form-group settings-font-size-group">
+                                    <div class="settings-font-size-header">
+                                        <label for="live-artifacts-font-size-input">Live Artifacts 基础字号</label>
+                                        <span id="live-artifacts-font-size-value" class="settings-font-size-value">16px</span>
+                                    </div>
+                                    <input
+                                        id="live-artifacts-font-size-input"
+                                        type="range"
+                                        min="10"
+                                        max="32"
+                                        step="1"
+                                        value="16"
+                                        aria-valuemin="10"
+                                        aria-valuemax="32"
+                                        aria-valuenow="16"
+                                        aria-label="Live Artifacts 基础字号"
+                                    >
+                                    <div class="settings-font-size-ticks" aria-hidden="true">
+                                        <span>10px</span>
+                                        <span>16px</span>
+                                        <span>32px</span>
+                                    </div>
+                                    <span class="field-desc">设置内嵌 Live Artifacts 的默认字号。产物内容自带的 font-size 仍可能覆盖它。</span>
+                                </div>
                                 <div class="form-group settings-field-row">
                                     <div class="settings-field-copy">
                                         <label for="engine-select">搜索引擎</label>
-                                        <span class="field-desc">默认使用自托管 SearXNG，必要时可切换其它引擎。</span>
+                                        <span class="field-desc">默认使用 Google，必要时可切换其它引擎。</span>
                                     </div>
                                     <select id="engine-select">
-                                        <option value="searxng">SearXNG（默认，自托管）</option>
+                                        <option value="google">Google（默认）</option>
+                                        <option value="searxng">SearXNG（自托管）</option>
                                         <option value="bing">Bing</option>
                                         <option value="sogou">搜狗（中文备用）</option>
                                         <option value="baidu">百度（中文）</option>
                                         <option value="yandex">Yandex</option>
                                         <option value="duckduckgo">DuckDuckGo</option>
-                                        <option value="google">Google</option>
                                         <option value="brave">Brave Search</option>
                                     </select>
                                 </div>
@@ -320,8 +409,8 @@
                                         <label for="interactive-search-input" class="toggle-label">交互式深度搜索 (Beta)</label>
                                         <span class="toggle-desc">启用后，AI 将根据需要进行多轮搜索与迭代分析。</span>
                                     </div>
-                                    <label class="ios-switch" aria-label="交互式深度搜索">
-                                        <input type="checkbox" id="interactive-search-input" checked>
+                                    <label class="ios-switch">
+                                        <input type="checkbox" id="interactive-search-input" checked role="switch" aria-label="交互式深度搜索">
                                         <span class="ios-slider"></span>
                                     </label>
                                 </div>
@@ -333,12 +422,12 @@
                             <div class="settings-card">
                                 <div class="form-grid">
                                     <div class="form-group">
-                                        <label for="max-results-input">最大搜索结果数</label>
-                                        <input type="number" id="max-results-input" placeholder="50" min="1" max="50">
+                                        <label for="max-results-input">广度 · 每轮结果数</label>
+                                        <input type="number" id="max-results-input" placeholder="50" min="1" max="50" title="对应输入框上方「搜索强度」的广度">
                                     </div>
                                     <div class="form-group">
-                                        <label for="max-iterations-input">最大迭代次数</label>
-                                        <input type="number" id="max-iterations-input" placeholder="5" min="1" max="10">
+                                        <label for="max-iterations-input">深度 · 最大轮次</label>
+                                        <input type="number" id="max-iterations-input" placeholder="5" min="1" max="10" title="对应输入框上方「搜索强度」的深度">
                                     </div>
                                 </div>
                             </div>
@@ -442,8 +531,8 @@
                         <div id="tab-about" class="settings-panel" role="tabpanel">
                             <div class="about-hero">
                                 <div class="about-logo">
-                                    <img class="about-logo-img about-logo-light" src="/static/assets/justsearch-logo.png" alt="JustSearch">
-                                    <img class="about-logo-img about-logo-dark" src="/static/assets/justsearch-logo-dark.png" alt="JustSearch">
+                                    <img class="about-logo-img about-logo-light" src="/static/assets/justsearch-logo.png?v=8" alt="JustSearch">
+                                    <img class="about-logo-img about-logo-dark" src="/static/assets/justsearch-logo-dark.png?v=8" alt="JustSearch">
                                 </div>
                                 <a class="about-version-pill" href="https://github.com/yeahhe365/JustSearch/releases" target="_blank" rel="noopener noreferrer">
                                     <span id="about-version">v?.?.?</span>
@@ -492,11 +581,11 @@
     </div>
 
     <!-- Confirm Modal -->
-    <div id="confirm-modal" class="modal">
+    <div id="confirm-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <div class="modal-content" style="width: 360px;">
             <div class="modal-header">
                 <h2 id="confirm-title">确认</h2>
-                <span class="close-btn" id="confirm-close-btn">&times;</span>
+                <span class="close-btn" id="confirm-close-btn" role="button" tabindex="0" aria-label="关闭">&times;</span>
             </div>
             <div class="modal-body">
                 <p id="confirm-message" style="margin: 0; color: var(--text-secondary); line-height: 1.6;"></p>
@@ -508,6 +597,50 @@
         </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=57"></script>
+    <!-- Bridge / Extension Install Modal -->
+    <div id="bridge-install-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="bridge-install-title">
+        <div class="modal-content bridge-install-modal-content">
+            <div class="modal-header">
+                <h2 id="bridge-install-title">需要安装浏览器桥接扩展</h2>
+                <span class="close-btn" data-bridge-close role="button" tabindex="0" aria-label="关闭">&times;</span>
+            </div>
+            <div class="modal-body bridge-install-body">
+                <p class="bridge-install-lead">
+                    Google、Bing 等搜索与网页阅读均通过本机 <strong>JustSearch Bridge</strong> Chrome 扩展驱动真实浏览器。
+                    未连接扩展时无法抓取搜索结果。
+                </p>
+                <div id="bridge-modal-status" class="bridge-modal-status" data-state="disconnected">状态：未连接</div>
+                <ol class="bridge-install-steps">
+                    <li>
+                        打开 Chrome，地址栏输入
+                        <code>chrome://extensions</code>
+                        <button type="button" id="bridge-copy-extensions-url-btn" class="bridge-inline-btn">复制</button>
+                    </li>
+                    <li>开启右上角「开发者模式」</li>
+                    <li>
+                        下载扩展包并解压，或直接使用仓库中的
+                        <code>extension/</code> 目录
+                    </li>
+                    <li>点击「加载已解压的扩展程序」，选择解压后的 <code>justsearch-bridge</code> 文件夹</li>
+                    <li>点击扩展图标，确认状态为绿色「已连接」</li>
+                </ol>
+                <div class="bridge-ws-row">
+                    <label for="bridge-ws-url">默认 WebSocket 地址</label>
+                    <div class="bridge-ws-controls">
+                        <input id="bridge-ws-url" type="text" readonly value="ws://127.0.0.1:38975/justsearch" aria-label="桥接 WebSocket 地址">
+                        <button type="button" id="bridge-copy-ws-btn" class="secondary-btn">复制</button>
+                    </div>
+                    <span class="field-desc">若后端端口变更，可在扩展弹出页修改后自动重连。</span>
+                </div>
+            </div>
+            <div class="modal-actions bridge-install-actions">
+                <button type="button" class="secondary-btn" data-bridge-close>关闭</button>
+                <button type="button" id="bridge-recheck-btn" class="secondary-btn">重新检测</button>
+                <a id="bridge-download-btn" class="save-btn bridge-download-link" href="/api/extension/download" download="justsearch-bridge.zip">下载扩展包</a>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/static/js/main.js?v=62"></script>
 </body>
 </html>

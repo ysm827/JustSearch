@@ -841,11 +841,15 @@ DEFAULT_SETTINGS = {
         "interaction": {"provider_id": "", "model_id": ""},
         "answer": {"provider_id": "", "model_id": ""},
     },
-    "search_engine": "searxng",
+    "search_engine": "google",
     "max_results": "50",
     "max_iterations": "5",
     "interactive_search": "true",
     "live_artifacts_mode": False,
+    # Reading size for chat messages (mirrors AMC baseFontSize: 12–24, default 16).
+    "base_font_size": 16,
+    # Base size for Live Artifacts previews (mirrors AMC liveArtifactsCustomFontSize: 10–32, default 16).
+    "live_artifacts_font_size": 16,
 }
 
 _REMOVED_SETTINGS_KEYS = {"max_context_turns"}

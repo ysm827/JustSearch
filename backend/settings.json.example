@@ -16,9 +16,11 @@
         "interaction": {"provider_id": "", "model_id": ""},
         "answer": {"provider_id": "", "model_id": ""}
     },
-    "search_engine": "searxng",
+    "search_engine": "google",
     "max_results": 50,
     "max_iterations": 5,
     "interactive_search": true,
-    "live_artifacts_mode": false
+    "live_artifacts_mode": false,
+    "base_font_size": 16,
+    "live_artifacts_font_size": 16
 }

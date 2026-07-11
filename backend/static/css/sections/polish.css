@@ -390,7 +390,7 @@
 
 /* User inputs better wrapping */
 #user-input {
-    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 /* Main Header Polishing */

@@ -6,6 +6,10 @@ export const state = {
     liveArtifactsMode: false,
     openBrowserModal: null,
     connectionStatus: 'connected', // connected | disconnected | reconnecting
+    /** null = unknown, true/false after health poll */
+    bridgeConnected: null,
+    bridgeWsUrl: 'ws://127.0.0.1:38975/justsearch',
+    bridgeDownloadUrl: '/api/extension/download',
     lastActivityTime: Date.now(),
 };
 
@@ -62,4 +66,12 @@ export function setAbortController(controller) {
 
 export function setLiveArtifactsMode(flag) {
     state.liveArtifactsMode = coerceBooleanSetting(flag);
+}
+
+export function setBridgeConnected(flag) {
+    if (flag === null || flag === undefined) {
+        state.bridgeConnected = null;
+        return;
+    }
+    state.bridgeConnected = Boolean(flag);
 }

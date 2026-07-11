@@ -1,4 +1,5 @@
 import { showToast } from './toast.js';
+import { state } from './state.js?v=2';
 
 const ARTIFACT_LANGUAGES = new Set(['html', 'svg']);
 const SUPPORTING_LANGUAGES = new Set(['css', 'javascript', 'js']);
@@ -22,6 +23,70 @@ const PREVIEW_CONTENT_SECURITY_POLICY = [
     "form-action 'none'",
 ].join('; ');
 const PREVIEW_CONTENT_SECURITY_POLICY_META = `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_CONTENT_SECURITY_POLICY}">`;
+// Mirror AMC-WebUI preview base styles: transparent body, natural height (no 100vh lock).
+// Color comes from injectPreviewTheme tokens so dark mode stays readable.
+const PREVIEW_BASE_STYLES = `<style data-amc-preview-base="true">
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  color: var(--amc-live-artifact-text, inherit);
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-x: auto;
+  overflow-y: visible !important;
+}
+body > section, body > main, body > article, body > div,
+body > [data-amc-stream-preview-root] {
+  height: auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+}
+</style>`;
+const PREVIEW_BASE_FONT_SIZE_ATTRIBUTE = 'data-amc-live-artifact-base-font-size';
+const PREVIEW_THEME_ATTRIBUTE = 'data-amc-live-artifact-theme';
+// Theme tokens aligned with JustSearch :root / [data-theme="dark"] and AMC onyx/pearl.
+const LIVE_ARTIFACT_THEME_PALETTES = {
+    light: {
+        colorScheme: 'light',
+        text: '#111827',
+        muted: '#6b7280',
+        subtle: '#9ca3af',
+        surface: '#f3f4f6',
+        surfaceMuted: '#ffffff',
+        border: '#e5e7eb',
+        accent: '#2563eb',
+        accentSurface: 'rgba(37, 99, 235, 0.12)',
+        success: '#10b981',
+        danger: '#ef4444',
+        warning: '#f59e0b',
+    },
+    dark: {
+        colorScheme: 'dark',
+        text: '#f4f4f5',
+        muted: '#a1a1aa',
+        subtle: '#71717a',
+        surface: '#18181b',
+        surfaceMuted: '#1c1c1f',
+        border: '#27272a',
+        accent: '#38bdf8',
+        accentSurface: 'rgba(56, 189, 248, 0.14)',
+        success: '#34d399',
+        danger: '#f87171',
+        warning: '#fbbf24',
+    },
+};
+const DEFAULT_LIVE_ARTIFACT_FONT_SIZE = 16;
+const LIVE_ARTIFACT_FONT_SIZE_MIN = 10;
+const LIVE_ARTIFACT_FONT_SIZE_MAX = 32;
+// Align with AMC-WebUI ArtifactFrame height constants.
+const INLINE_ARTIFACT_MIN_HEIGHT = 120;
+const INLINE_ARTIFACT_DEFAULT_HEIGHT = 320;
+const INLINE_ARTIFACT_MAX_HEIGHT = 50000;
+const FRAME_HEIGHT_CACHE_MAX = 200;
+const frameHeightCache = new Map();
 const registry = new Map();
 
 let artifactCounter = 0;
@@ -92,6 +157,88 @@ export function getInlineLiveArtifact(markdownText, messageId = 'message', isStr
 
 export function getLiveArtifactInteraction(markdownText, isStreaming = false) {
     return extractLiveArtifactInteraction(markdownText, isStreaming);
+}
+
+/**
+ * Rebuild open Live Artifact iframe srcdocs when base font size or app theme changes.
+ * Mirrors AMC injecting --amc-live-artifact-font-size and transparent theme tokens.
+ */
+export function refreshLiveArtifactFontSizes(settings) {
+    refreshLiveArtifactPreviews(settings);
+}
+
+/**
+ * Rebuild all open Live Artifact previews with current font size + theme tokens.
+ * Call after theme switch so dark mode text/surface tokens stay readable.
+ */
+export function refreshLiveArtifactPreviews(settings) {
+    const fontSize = resolveLiveArtifactFontSizePx(settings);
+    const themeId = resolveLiveArtifactThemeId(settings);
+    registry.forEach((artifact) => {
+        if (!artifact?.renderable) return;
+        const sources = Array.isArray(artifact.sources) ? artifact.sources : [];
+        const previewCode = artifact.isStreaming ? STREAM_PREVIEW_ROOT : artifact.code;
+        artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, sources, {
+            frameId: artifact.id,
+            baseFontSize: fontSize,
+            themeId,
+        });
+        if (artifact.isStreaming && artifact.streamHtml) {
+            // Keep stream payload; theme/font live in srcdoc base styles.
+        }
+    });
+
+    document.querySelectorAll('.live-artifact-inline-iframe').forEach((frame) => {
+        const frameId = frame.dataset.liveArtifactFrameId || '';
+        const artifact = frameId ? registry.get(frameId) : null;
+        if (artifact?.srcdoc && frame.srcdoc !== artifact.srcdoc) {
+            frame.srcdoc = artifact.srcdoc;
+            if (artifact.isStreaming && artifact.streamHtml) {
+                postInlineArtifactStream(frame, artifact.streamHtml);
+            }
+        }
+    });
+
+    if (panelState?.frame && activeArtifactId) {
+        const active = registry.get(activeArtifactId);
+        if (active?.renderable && active.srcdoc) {
+            panelState.frame.srcdoc = active.srcdoc;
+            if (active.isStreaming && active.streamHtml) {
+                postInlineArtifactStream(panelState.frame, active.streamHtml);
+            }
+        }
+    }
+}
+
+function resolveLiveArtifactFontSizePx(settings) {
+    const candidate = settings?.live_artifacts_font_size
+        ?? state?.settings?.live_artifacts_font_size;
+    if (candidate !== undefined && candidate !== null && candidate !== '') {
+        return clampLiveArtifactFontSize(candidate);
+    }
+    if (typeof document !== 'undefined' && document.documentElement) {
+        try {
+            const cssValue = getComputedStyle(document.documentElement)
+                .getPropertyValue('--js-live-artifacts-font-size')
+                .trim();
+            const cssMatch = cssValue.match(/^(\d+(?:\.\d+)?)px$/i);
+            if (cssMatch) {
+                return clampLiveArtifactFontSize(cssMatch[1]);
+            }
+        } catch {
+            // getComputedStyle can fail outside a browser document.
+        }
+    }
+    return DEFAULT_LIVE_ARTIFACT_FONT_SIZE;
+}
+
+function clampLiveArtifactFontSize(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return DEFAULT_LIVE_ARTIFACT_FONT_SIZE;
+    return Math.min(
+        LIVE_ARTIFACT_FONT_SIZE_MAX,
+        Math.max(LIVE_ARTIFACT_FONT_SIZE_MIN, Math.round(parsed)),
+    );
 }
 
 function resolveMessageId(container, requestedId = '') {
@@ -212,8 +359,9 @@ function extractLiveArtifactInteraction(markdownText, isStreaming) {
 function createInlineArtifact(code, messageId, { isStreaming = false, language = 'html' } = {}) {
     const previewCode = isStreaming ? STREAM_PREVIEW_ROOT : code;
     const title = getArtifactTitle({ info: '', language, code }, language, 0);
+    const id = `${messageId}-inline-0`;
     return {
-        id: `${messageId}-inline-0`,
+        id,
         key: `${messageId}:inline-0`,
         index: 0,
         blockIndex: -1,
@@ -224,7 +372,7 @@ function createInlineArtifact(code, messageId, { isStreaming = false, language =
         code,
         renderable: true,
         supportBlockIndices: [],
-        srcdoc: buildSrcdoc(previewCode, language),
+        srcdoc: buildSrcdoc(previewCode, language, [], { frameId: id }),
         inline: true,
         isStreaming,
         streamHtml: isStreaming ? code : '',
@@ -267,9 +415,10 @@ function extractRawHtmlArtifacts(markdownText, messageId) {
         const code = String(match[0] || '').trim();
         if (!code) continue;
         const index = artifacts.length;
+        const id = `${messageId}-raw-${index}`;
         const title = getArtifactTitle({ info: '', language: 'html', code }, 'html', index);
         artifacts.push({
-            id: `${messageId}-raw-${index}`,
+            id,
             key: `${messageId}:raw-${index}`,
             index,
             blockIndex: -1,
@@ -280,7 +429,7 @@ function extractRawHtmlArtifacts(markdownText, messageId) {
             code,
             renderable: true,
             supportBlockIndices: [],
-            srcdoc: buildSrcdoc(code, 'html'),
+            srcdoc: buildSrcdoc(code, 'html', [], { frameId: id }),
         });
     }
 
@@ -419,6 +568,7 @@ function createArtifactFromBlock(block, { messageId, cssBlocks, jsBlocks, ordina
     }
 
     const index = ordinal;
+    const id = `${messageId}-${index}`;
     const key = `${messageId}:${index}`;
     const code = buildArtifactCode(block, language, cssBlocks, jsBlocks);
     const title = getArtifactTitle(block, language, index);
@@ -426,7 +576,7 @@ function createArtifactFromBlock(block, { messageId, cssBlocks, jsBlocks, ordina
     const shouldMergeSupport = shouldMergeSupportingBlocks(block, language);
 
     return {
-        id: `${messageId}-${index}`,
+        id,
         key,
         index,
         blockIndex: block.blockIndex,
@@ -439,7 +589,7 @@ function createArtifactFromBlock(block, { messageId, cssBlocks, jsBlocks, ordina
         supportBlockIndices: shouldMergeSupport
             ? [...cssBlocks, ...jsBlocks].map(supportBlock => supportBlock.blockIndex)
             : [],
-        srcdoc: renderable ? buildSrcdoc(code, language) : '',
+        srcdoc: renderable ? buildSrcdoc(code, language, [], { frameId: id }) : '',
     };
 }
 
@@ -554,7 +704,14 @@ function shouldMergeSupportingBlocks(block, language) {
     return language === 'html' && !isFullHtmlDocument(block.code);
 }
 
-function buildSrcdoc(code, language, sources = []) {
+function buildSrcdoc(code, language, sources = [], options = {}) {
+    const frameId = String(options.frameId || '');
+    const baseFontSize = options.baseFontSize !== undefined
+        ? clampLiveArtifactFontSize(options.baseFontSize)
+        : resolveLiveArtifactFontSizePx();
+    const themeId = options.themeId !== undefined
+        ? options.themeId
+        : resolveLiveArtifactThemeId();
     let srcdoc;
     if (language === 'svg') {
         srcdoc = `<!doctype html>
@@ -563,9 +720,9 @@ function buildSrcdoc(code, language, sources = []) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    html, body { margin: 0; min-height: 100%; background: #fff; }
+    html, body { margin: 0; background: transparent; color: var(--amc-live-artifact-text, inherit); }
     body { display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
-    svg { max-width: 100%; max-height: calc(100vh - 48px); }
+    svg { max-width: 100%; height: auto; }
   </style>
 </head>
 <body>
@@ -573,19 +730,63 @@ ${code}
 </body>
 </html>`;
     } else {
-        srcdoc = linkArtifactCitationsInHtml(code, sources);
+        // 1) rewrite light-only hardcodes  2) materialize theme tokens to concrete colors
+        // (AMC injects the same tokens; baking values makes dark mode reliable even if :root is missed)
+        srcdoc = materializeLiveArtifactThemeVars(
+            adaptArtifactHtmlForTheme(linkArtifactCitationsInHtml(code, sources), themeId),
+            themeId,
+        );
     }
-    return injectPreviewSecurityPolicy(injectPreviewBridge(srcdoc));
+    // Order mirrors AMC prepareHtmlPreviewSrcDoc: security → theme → font → bridge.
+    return injectPreviewSecurityPolicy(
+        injectPreviewBridge(
+            injectPreviewBaseFontSize(
+                injectPreviewTheme(injectPreviewBaseStyles(srcdoc), themeId),
+                baseFontSize,
+            ),
+            frameId,
+        ),
+    );
+}
+
+/**
+ * Rebuild artifact.srcdoc from source code with the live app theme.
+ * Call at iframe mount so history reloads always match current data-theme.
+ */
+function ensureArtifactSrcdocTheme(artifact, sources = null) {
+    if (!artifact?.renderable) return artifact;
+    const themeId = resolveLiveArtifactThemeId();
+    const fontSize = resolveLiveArtifactFontSizePx();
+    const normalizedSources = sources !== null && sources !== undefined
+        ? normalizeArtifactSources(sources)
+        : (Array.isArray(artifact.sources) ? artifact.sources : []);
+    const previewCode = artifact.isStreaming ? STREAM_PREVIEW_ROOT : artifact.code;
+    artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, normalizedSources, {
+        frameId: artifact.id,
+        baseFontSize: fontSize,
+        themeId,
+    });
+    if (artifact.isStreaming && artifact.streamHtml) {
+        artifact.streamHtml = materializeLiveArtifactThemeVars(
+            adaptArtifactHtmlForTheme(artifact.streamHtml, themeId),
+            themeId,
+        );
+    }
+    return artifact;
 }
 
 function hydrateArtifactCitations(artifact, sources) {
-    if (!artifact?.renderable || artifact.language !== 'html' || !Array.isArray(sources) || sources.length === 0) {
+    const normalizedSources = normalizeArtifactSources(sources);
+    if (artifact) {
+        artifact.sources = normalizedSources;
+    }
+    if (!artifact?.renderable || artifact.language !== 'html' || normalizedSources.length === 0) {
         return artifact;
     }
     const previewCode = artifact.isStreaming ? STREAM_PREVIEW_ROOT : artifact.code;
-    artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, sources);
+    artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, normalizedSources, { frameId: artifact.id });
     if (artifact.isStreaming && artifact.streamHtml) {
-        artifact.streamHtml = linkArtifactCitationsInHtml(artifact.streamHtml, sources);
+        artifact.streamHtml = linkArtifactCitationsInHtml(artifact.streamHtml, normalizedSources);
     }
     return artifact;
 }
@@ -700,21 +901,346 @@ function createArtifactCitationLink(id, source, safeUrl) {
     anchor.dataset.liveArtifactSourceId = id;
     anchor.title = source.title || source.url || `Source ${id}`;
     anchor.setAttribute('aria-label', `打开来源 ${id}`);
-    anchor.setAttribute('style', 'color:#2563eb;text-decoration:none;cursor:pointer;margin:0 1px;font-weight:700;font-size:11px;padding:0 4px;border-radius:6px;background:rgba(37,99,235,.12);display:inline-flex;align-items:center;justify-content:center;vertical-align:super;line-height:16px;min-height:16px;white-space:nowrap;');
+    // Use injected theme tokens so citation chips stay readable in dark mode.
+    anchor.setAttribute('style', 'color:var(--amc-live-artifact-accent,#2563eb);text-decoration:none;cursor:pointer;margin:0 1px;font-weight:700;font-size:11px;padding:0 4px;border-radius:6px;background:var(--amc-live-artifact-accent-surface,rgba(37,99,235,.12));display:inline-flex;align-items:center;justify-content:center;vertical-align:super;line-height:16px;min-height:16px;white-space:nowrap;');
     anchor.textContent = id;
     return anchor;
 }
 
-function injectPreviewBridge(code) {
+function injectPreviewHeadStyle(srcdoc, style) {
+    const code = String(srcdoc || '');
+    if (!style) return code;
+    if (code.includes(PREVIEW_CONTENT_SECURITY_POLICY_META)) {
+        return code.replace(PREVIEW_CONTENT_SECURITY_POLICY_META, `${PREVIEW_CONTENT_SECURITY_POLICY_META}${style}`);
+    }
+    if (/<head\b[^>]*>/i.test(code)) {
+        return code.replace(/<head\b[^>]*>/i, headTag => `${headTag}${style}`);
+    }
+    if (/<html\b[^>]*>/i.test(code)) {
+        return code.replace(/<html\b[^>]*>/i, htmlTag => `${htmlTag}<head>${style}</head>`);
+    }
+    return `<!doctype html><html><head>${style}</head><body>${code}</body></html>`;
+}
+
+function injectPreviewBaseStyles(srcdoc) {
+    const code = String(srcdoc || '');
+    if (code.includes('data-amc-preview-base')) {
+        return code;
+    }
+    return injectPreviewHeadStyle(code, PREVIEW_BASE_STYLES);
+}
+
+function resolveLiveArtifactThemeId(settings) {
+    // Prefer the live DOM theme — matches what the user actually sees after quick toggle.
+    if (typeof document !== 'undefined' && document.documentElement) {
+        const attr = document.documentElement.getAttribute('data-theme');
+        if (attr === 'dark' || attr === 'light') {
+            return attr;
+        }
+    }
+    const explicit = settings?.theme;
+    if (explicit === 'dark' || explicit === 'light') {
+        return explicit;
+    }
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+        try {
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        } catch {
+            // ignore
+        }
+    }
+    return 'light';
+}
+
+function resolveLiveArtifactThemePalette(themeId) {
+    const id = themeId === 'dark' ? 'dark' : 'light';
+    return LIVE_ARTIFACT_THEME_PALETTES[id] || LIVE_ARTIFACT_THEME_PALETTES.light;
+}
+
+/**
+ * Rewrite model-hardcoded light-theme colors so dark mode stays readable.
+ * Models often emit color:#111 / background:#f5f5f5 while the root stays transparent;
+ * theme CSS variables alone cannot override inline style attributes.
+ */
+function adaptArtifactHtmlForTheme(html, themeId) {
+    const raw = String(html || '');
+    if (!raw || themeId !== 'dark') return raw;
+    if (typeof DOMParser === 'undefined') {
+        return adaptArtifactStyleStringForDark(raw);
+    }
+
+    try {
+        const fullDocument = /(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)/i.test(raw);
+        const parsed = new DOMParser().parseFromString(
+            fullDocument ? raw : `<div data-amc-theme-adapt-root="true">${raw}</div>`,
+            'text/html',
+        );
+        const scope = fullDocument
+            ? parsed.documentElement
+            : parsed.body.querySelector('[data-amc-theme-adapt-root="true"]') || parsed.body;
+
+        scope.querySelectorAll('[style]').forEach((node) => {
+            const next = adaptArtifactStyleStringForDark(node.getAttribute('style') || '');
+            if (next) node.setAttribute('style', next);
+            else node.removeAttribute('style');
+        });
+        scope.querySelectorAll('style').forEach((node) => {
+            node.textContent = adaptArtifactStyleStringForDark(node.textContent || '');
+        });
+
+        if (fullDocument) {
+            const doctype = /^\s*<!doctype\s+html\b/i.test(raw) ? '<!doctype html>\n' : '';
+            return `${doctype}${parsed.documentElement.outerHTML}`;
+        }
+        const root = parsed.body.querySelector('[data-amc-theme-adapt-root="true"]');
+        return root ? root.innerHTML : parsed.body.innerHTML;
+    } catch {
+        return adaptArtifactStyleStringForDark(raw);
+    }
+}
+
+/**
+ * Expand AMC theme tokens in artifact HTML to concrete colors for the active theme.
+ * Guarantees dark mode surfaces are zinc-900 (#18181b), never unresolved light fallbacks.
+ */
+function materializeLiveArtifactThemeVars(html, themeId) {
+    const raw = String(html || '');
+    if (!raw || !raw.includes('--amc-live-artifact-')) return raw;
+    const colors = resolveLiveArtifactThemePalette(themeId);
+    const tokenMap = {
+        '--amc-live-artifact-text': colors.text,
+        '--amc-live-artifact-muted': colors.muted,
+        '--amc-live-artifact-subtle': colors.subtle,
+        '--amc-live-artifact-surface': colors.surface,
+        '--amc-live-artifact-surface-muted': colors.surfaceMuted,
+        '--amc-live-artifact-border': colors.border,
+        '--amc-live-artifact-accent': colors.accent,
+        '--amc-live-artifact-accent-surface': colors.accentSurface,
+        '--amc-live-artifact-success': colors.success,
+        '--amc-live-artifact-danger': colors.danger,
+        '--amc-live-artifact-warning': colors.warning,
+    };
+    return raw.replace(
+        /var\(\s*(--amc-live-artifact-[\w-]+)\s*(?:,[^)]+)?\)/gi,
+        (match, tokenName) => {
+            const key = String(tokenName || '').toLowerCase();
+            return tokenMap[key] || match;
+        },
+    );
+}
+
+function adaptArtifactStyleStringForDark(styleText) {
+    const input = String(styleText || '');
+    if (!input || !/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\b(white|black|gray|grey)\b/i.test(input)) {
+        return input;
+    }
+
+    // Match property:value in bare style attrs and full HTML/CSS snippets.
+    // Includes border shorthands like "border-bottom:1px solid #ddd".
+    return input.replace(
+        /(^|;\s*|[\s{"'])((?:background-color|background|border-color|border-top-color|border-right-color|border-bottom-color|border-left-color|border-top|border-right|border-bottom|border-left|border|outline-color|outline|color|fill|stroke))\s*:\s*([^;{}"']+)/gi,
+        (match, prefix, prop, value) => {
+            const trimmed = value.trim();
+            const propName = prop.trim().toLowerCase();
+            const colorToken = trimmed.match(/(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|\b(?:white|black|gray|grey)\b)/i);
+
+            // border / border-left / outline shorthands: rewrite only the light gray color token.
+            if (/^border(?:-top|-right|-bottom|-left)?$/.test(propName) || propName === 'outline') {
+                if (!colorToken) return match;
+                const mappedBorder = mapHardcodedColorForDarkTheme('border-color', colorToken[1]);
+                if (!mappedBorder) return match;
+                return `${prefix}${prop}: ${trimmed.replace(colorToken[1], mappedBorder)}`;
+            }
+
+            // Skip multi-value backgrounds like "url(...) #fff".
+            if (/\burl\s*\(/i.test(trimmed) || (/\s/.test(trimmed) && !/^(rgba?|hsla?)\(/i.test(trimmed))) {
+                if (!colorToken || propName !== 'background') return match;
+                const mappedBg = mapHardcodedColorForDarkTheme('background-color', colorToken[1]);
+                if (!mappedBg) return match;
+                return `${prefix}${prop}: ${mappedBg}`;
+            }
+
+            const mapped = mapHardcodedColorForDarkTheme(propName, trimmed);
+            if (!mapped) return match;
+            return `${prefix}${prop}: ${mapped}`;
+        },
+    );
+}
+
+function mapHardcodedColorForDarkTheme(property, value) {
+    const parsed = parseCssColorValue(value);
+    if (!parsed) return null;
+
+    const { r, g, b, a } = parsed;
+    if (a < 0.08) return null;
+
+    const lum = relativeLuminance(r, g, b);
+    const isBg = property === 'background' || property === 'background-color';
+    const isBorder = property.startsWith('border') || property === 'outline-color';
+    const isText = property === 'color' || property === 'fill' || property === 'stroke';
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+
+    if (isBg) {
+        // Near-white / pale tinted surfaces → dark surfaces (keep a hint of hue when chromatic).
+        if (lum >= 0.72) {
+            if (chroma < 25) return 'var(--amc-live-artifact-surface)';
+            // Pale blue/amber callouts → accent-tinted surface.
+            return 'var(--amc-live-artifact-accent-surface)';
+        }
+        if (lum >= 0.55 && chroma < 20) return 'var(--amc-live-artifact-surface-muted)';
+        return null;
+    }
+
+    if (isBorder) {
+        if (lum >= 0.55) return 'var(--amc-live-artifact-border)';
+        return null;
+    }
+
+    if (isText) {
+        // Dark saturated brand blues/greens used as emphasis on light cards.
+        if (chroma >= 40 && lum <= 0.55) return 'var(--amc-live-artifact-accent)';
+        // Near-black body text (#000/#111/#333) → primary text token.
+        if (lum <= 0.12 && chroma < 40) return 'var(--amc-live-artifact-text)';
+        // Mid gray muted labels (#666/#888/#999).
+        if (lum > 0.12 && lum < 0.65 && chroma < 30) return 'var(--amc-live-artifact-muted)';
+        return null;
+    }
+
+    return null;
+}
+
+function parseCssColorValue(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw || raw.startsWith('var(') || raw === 'transparent' || raw === 'inherit' || raw === 'currentcolor') {
+        return null;
+    }
+    if (raw === 'white') return { r: 255, g: 255, b: 255, a: 1 };
+    if (raw === 'black') return { r: 0, g: 0, b: 0, a: 1 };
+    if (raw === 'gray' || raw === 'grey') return { r: 128, g: 128, b: 128, a: 1 };
+
+    const hex = raw.match(/^#([0-9a-f]{3,8})$/i);
+    if (hex) {
+        let h = hex[1];
+        if (h.length === 3 || h.length === 4) {
+            h = h.split('').map((ch) => ch + ch).join('');
+        }
+        if (h.length === 6 || h.length === 8) {
+            const r = parseInt(h.slice(0, 2), 16);
+            const g = parseInt(h.slice(2, 4), 16);
+            const b = parseInt(h.slice(4, 6), 16);
+            const a = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+            if ([r, g, b].every(Number.isFinite)) return { r, g, b, a: Number.isFinite(a) ? a : 1 };
+        }
+        return null;
+    }
+
+    const rgb = raw.match(/^rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)$/);
+    if (rgb) {
+        return {
+            r: Math.min(255, Math.max(0, Number(rgb[1]))),
+            g: Math.min(255, Math.max(0, Number(rgb[2]))),
+            b: Math.min(255, Math.max(0, Number(rgb[3]))),
+            a: rgb[4] === undefined ? 1 : Math.min(1, Math.max(0, Number(rgb[4]))),
+        };
+    }
+    return null;
+}
+
+function relativeLuminance(r, g, b) {
+    const toLinear = (c) => {
+        const s = c / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+/**
+ * Build injected theme CSS for Live Artifact iframes (AMC-compatible token names).
+ * Transparent root + themed text, matching AMC previewDocument.buildPreviewThemeStyle.
+ */
+function buildPreviewThemeStyle(themeId) {
+    const colors = resolveLiveArtifactThemePalette(themeId);
+    // Mirror AMC: transparent html/body, tokenized text. Concrete hex also set so
+    // unresolved var() never falls back to the browser's default white canvas look.
+    return `<style ${PREVIEW_THEME_ATTRIBUTE}="true">:root,html{color-scheme:${colors.colorScheme};--amc-live-artifact-text:${colors.text};--amc-live-artifact-muted:${colors.muted};--amc-live-artifact-subtle:${colors.subtle};--amc-live-artifact-surface:${colors.surface};--amc-live-artifact-surface-muted:${colors.surfaceMuted};--amc-live-artifact-border:${colors.border};--amc-live-artifact-accent:${colors.accent};--amc-live-artifact-accent-surface:${colors.accentSurface};--amc-live-artifact-success:${colors.success};--amc-live-artifact-danger:${colors.danger};--amc-live-artifact-warning:${colors.warning};}html,body{margin:0;padding:0;background:transparent!important;color:${colors.text}!important;}body{overflow-x:auto;color:${colors.text};}h1,h2,h3,h4,h5,h6,p,li,td,th,summary,label,span,a,strong,em,small,div,section,article,aside,header,footer,main,ul,ol,table{color:inherit;}</style>`;
+}
+
+function injectPreviewTheme(srcdoc, themeId) {
+    const code = String(srcdoc || '');
+    if (code.includes(PREVIEW_THEME_ATTRIBUTE)) {
+        return code;
+    }
+    return injectPreviewHeadStyle(code, buildPreviewThemeStyle(themeId));
+}
+
+function buildPreviewBaseFontSizeStyle(baseFontSize) {
+    const fontSize = clampLiveArtifactFontSize(baseFontSize);
+    return `<style ${PREVIEW_BASE_FONT_SIZE_ATTRIBUTE}="true">:root{--amc-live-artifact-font-size:${fontSize}px;font-size:var(--amc-live-artifact-font-size);}body{font-size:var(--amc-live-artifact-font-size);}</style>`;
+}
+
+function injectPreviewBaseFontSize(srcdoc, baseFontSize) {
+    const code = String(srcdoc || '');
+    if (code.includes(PREVIEW_BASE_FONT_SIZE_ATTRIBUTE)) {
+        return code;
+    }
+    return injectPreviewHeadStyle(code, buildPreviewBaseFontSizeStyle(baseFontSize));
+}
+
+function injectPreviewBridge(code, frameId = '') {
+    const safeFrameId = JSON.stringify(String(frameId || ''));
+    // Bridge resize logic aligned with AMC-WebUI previewBridgeScript.ts:
+    // simple scrollHeight measurement + rAF-debounced scheduleResize.
     const bridge = `<script>
 (() => {
-  const resize = () => {
+  const MIN_HEIGHT = ${INLINE_ARTIFACT_MIN_HEIGHT};
+  const FRAME_ID = ${safeFrameId};
+  const notifyResize = () => {
     try {
       const body = document.body;
       const root = document.documentElement;
-      const height = Math.max(body ? body.scrollHeight : 0, body ? body.offsetHeight : 0, root ? root.scrollHeight : 0, root ? root.offsetHeight : 0);
-      parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'resize', height }, '*');
+      // Neutralize common full-viewport locks before measuring (AMC-compatible + 100vh fix).
+      if (root) {
+        root.style.setProperty('height', 'auto', 'important');
+        root.style.setProperty('max-height', 'none', 'important');
+      }
+      if (body) {
+        body.style.setProperty('height', 'auto', 'important');
+        body.style.setProperty('max-height', 'none', 'important');
+        body.style.setProperty('overflow-y', 'visible', 'important');
+        Array.from(body.children).forEach((el) => {
+          if (!(el instanceof Element)) return;
+          if (['SCRIPT','STYLE','LINK','META','NOSCRIPT','TEMPLATE'].includes(el.tagName)) return;
+          el.style.setProperty('height', 'auto', 'important');
+          el.style.setProperty('max-height', 'none', 'important');
+          el.style.setProperty('overflow', 'visible', 'important');
+        });
+      }
+      const height = Math.max(
+        MIN_HEIGHT,
+        body ? body.scrollHeight : 0,
+        body ? body.offsetHeight : 0,
+        root ? root.scrollHeight : 0,
+        root ? root.offsetHeight : 0
+      );
+      parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'resize', height, frameId: FRAME_ID }, '*');
     } catch {}
+  };
+  let resizeFrame = 0;
+  const scheduleResize = () => {
+    if (resizeFrame) return;
+    if (typeof requestAnimationFrame !== 'function') {
+      notifyResize();
+      return;
+    }
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      notifyResize();
+    });
+  };
+  const notifyReady = () => {
+    scheduleResize();
+    setTimeout(notifyResize, 50);
+    setTimeout(notifyResize, 250);
   };
   const notifyDiagnostic = (payload) => {
     try {
@@ -764,15 +1290,19 @@ function injectPreviewBridge(code) {
       effectiveDirective: event.effectiveDirective,
     });
   });
-  window.addEventListener('load', resize, { once: true });
-  window.addEventListener('resize', resize);
+  if (document.readyState === 'complete') {
+    Promise.resolve().then(notifyReady);
+  } else {
+    window.addEventListener('load', notifyReady, { once: true });
+  }
+  window.addEventListener('resize', scheduleResize);
   if ('ResizeObserver' in window) {
-    const observer = new ResizeObserver(resize);
+    const observer = new ResizeObserver(scheduleResize);
     if (document.documentElement) observer.observe(document.documentElement);
     if (document.body) observer.observe(document.body);
   }
   if ('MutationObserver' in window) {
-    const observer = new MutationObserver(resize);
+    const observer = new MutationObserver(scheduleResize);
     observer.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true });
   }
   const sanitizeStreamDocument = (parsedDocument) => {
@@ -797,7 +1327,7 @@ function injectPreviewBridge(code) {
       fragment.appendChild(document.importNode(node, true));
     });
     root.replaceChildren(fragment);
-    resize();
+    scheduleResize();
   };
   window.addEventListener('message', (event) => {
     if (!event.data || event.data.channel !== 'justsearch-live-artifacts' || event.data.event !== 'stream-render') return;
@@ -920,7 +1450,7 @@ function injectPreviewBridge(code) {
     event.preventDefault();
     parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'followup', payload: mergeState(payload, collectState(trigger)) }, '*');
   });
-  Promise.resolve().then(resize);
+  Promise.resolve().then(scheduleResize);
 })();
 </script>`;
 
@@ -1140,7 +1670,148 @@ function renderArtifactStrip(container, artifacts, isStreaming) {
     container.prepend(strip);
 }
 
+function hashArtifactContent(value) {
+    const text = String(value || '');
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+        hash = (hash * 31 + text.charCodeAt(i)) | 0;
+    }
+    return `${text.length}:${(hash >>> 0).toString(36)}`;
+}
+
+function getArtifactHeightCacheKey(artifact) {
+    const html = artifact?.isStreaming ? (artifact.streamHtml || artifact.code || '') : (artifact?.code || '');
+    const contentHash = hashArtifactContent(html);
+    if (artifact?.isStreaming) {
+        return `stream:${artifact.id || 'inline'}`;
+    }
+    return artifact?.id ? `${artifact.id}:${contentHash}` : `html:${contentHash}`;
+}
+
+function readCachedFrameHeight(cacheKey, fallbackKey = '') {
+    return (
+        frameHeightCache.get(cacheKey)
+        ?? (fallbackKey ? frameHeightCache.get(fallbackKey) : undefined)
+        ?? INLINE_ARTIFACT_DEFAULT_HEIGHT
+    );
+}
+
+function cacheFrameHeight(cacheKey, height) {
+    if (!cacheKey) return;
+    if (frameHeightCache.has(cacheKey)) {
+        frameHeightCache.delete(cacheKey);
+    }
+    frameHeightCache.set(cacheKey, height);
+    if (frameHeightCache.size > FRAME_HEIGHT_CACHE_MAX) {
+        const oldestKey = frameHeightCache.keys().next().value;
+        if (oldestKey) frameHeightCache.delete(oldestKey);
+    }
+}
+
+/**
+ * Parent-side height probe (AMC-WebUI createStaticPreviewSnapshotContainer pattern).
+ * Does not depend on sandboxed iframe postMessage, so short-box failures recover reliably.
+ */
+function measureArtifactContentHeight(html, widthPx) {
+    if (typeof document === 'undefined') return INLINE_ARTIFACT_DEFAULT_HEIGHT;
+    const width = Math.max(280, Math.floor(Number(widthPx) || 680));
+    const probe = document.createElement('div');
+    probe.setAttribute('data-amc-height-probe', 'true');
+    probe.setAttribute('aria-hidden', 'true');
+    probe.style.cssText = [
+        'position:absolute',
+        'left:-100000px',
+        'top:0',
+        `width:${width}px`,
+        'visibility:hidden',
+        'pointer-events:none',
+        'box-sizing:border-box',
+        'overflow:visible',
+        'background:transparent',
+    ].join(';');
+
+    try {
+        const raw = String(html || '').trim();
+        if (!raw) return INLINE_ARTIFACT_DEFAULT_HEIGHT;
+
+        if (typeof DOMParser !== 'undefined') {
+            const parsed = new DOMParser().parseFromString(raw, 'text/html');
+            parsed.querySelectorAll('script, iframe, object, embed').forEach(node => node.remove());
+            parsed.querySelectorAll('*').forEach((node) => {
+                Array.from(node.attributes).forEach((attribute) => {
+                    if (/^on/i.test(attribute.name) || attribute.name === 'srcdoc') {
+                        node.removeAttribute(attribute.name);
+                    }
+                });
+                // Unclip model-generated full-viewport shells for accurate measurement.
+                const style = node.getAttribute('style') || '';
+                if (/max-height|height\s*:\s*\d+vh|height\s*:\s*100%|overflow\s*:\s*(auto|scroll|hidden)/i.test(style)) {
+                    node.style.setProperty('max-height', 'none', 'important');
+                    node.style.setProperty('height', 'auto', 'important');
+                    node.style.setProperty('overflow', 'visible', 'important');
+                }
+            });
+            parsed.head.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+                probe.appendChild(document.importNode(node, true));
+            });
+            Array.from(parsed.body.childNodes).forEach((node) => {
+                probe.appendChild(document.importNode(node, true));
+            });
+        } else {
+            probe.innerHTML = raw;
+        }
+
+        document.body.appendChild(probe);
+        let height = Math.ceil(Math.max(probe.scrollHeight || 0, probe.offsetHeight || 0));
+        // jsdom / pre-layout environments often report 0; estimate from structure as a floor.
+        if (height <= INLINE_ARTIFACT_MIN_HEIGHT) {
+            const textLength = (probe.textContent || '').replace(/\s+/g, ' ').trim().length;
+            const blockCount = probe.querySelectorAll('p,h1,h2,h3,h4,h5,h6,li,tr,pre,blockquote,section,article,div').length;
+            const estimated = Math.ceil(textLength / 42) * 22 + blockCount * 28 + 64;
+            height = Math.max(height, estimated);
+        }
+        probe.remove();
+        return Math.min(
+            INLINE_ARTIFACT_MAX_HEIGHT,
+            Math.max(INLINE_ARTIFACT_MIN_HEIGHT, height || INLINE_ARTIFACT_DEFAULT_HEIGHT),
+        );
+    } catch {
+        try { probe.remove(); } catch { /* ignore */ }
+        return INLINE_ARTIFACT_DEFAULT_HEIGHT;
+    }
+}
+
+function resolveInlineFrameWidth(viewport, container) {
+    const width = viewport?.clientWidth
+        || viewport?.getBoundingClientRect?.().width
+        || container?.clientWidth
+        || container?.getBoundingClientRect?.().width
+        || 680;
+    return Math.max(280, Math.floor(width));
+}
+
+function syncInlineArtifactFrameHeight(viewport, frame, artifact, container) {
+    const cacheKey = getArtifactHeightCacheKey(artifact);
+    const contentHtml = artifact.isStreaming ? (artifact.streamHtml || artifact.code || '') : (artifact.code || '');
+    const width = resolveInlineFrameWidth(viewport, container);
+    const probed = measureArtifactContentHeight(contentHtml, width);
+    const cached = readCachedFrameHeight(cacheKey);
+    // Prefer the larger of probe vs cache so streaming growth and remounts stay tall.
+    const nextHeight = Math.max(probed, cached, INLINE_ARTIFACT_MIN_HEIGHT);
+    cacheFrameHeight(cacheKey, nextHeight);
+    if (artifact.id) {
+        cacheFrameHeight(`stream:${artifact.id}`, nextHeight);
+    }
+    applyInlineArtifactFrameHeight(viewport, frame, nextHeight, {
+        allowShrink: !artifact.isStreaming,
+    });
+    return nextHeight;
+}
+
 function renderInlineArtifactFrame(container, artifact) {
+    // Always re-bake srcdoc against the live data-theme (AMC rebuilds when themeId changes).
+    ensureArtifactSrcdocTheme(artifact);
+
     let frameShell = container.querySelector(':scope > .live-artifact-inline-frame');
     let viewport = frameShell?.querySelector('.live-artifact-inline-viewport');
     let frame = frameShell?.querySelector('.live-artifact-inline-iframe');
@@ -1158,14 +1829,38 @@ function renderInlineArtifactFrame(container, artifact) {
         frame = document.createElement('iframe');
         frame.className = 'live-artifact-inline-iframe';
         frame.title = 'HTML Preview';
-        frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox');
+        // Match AMC-WebUI ArtifactFrame sandbox (no allow-same-origin).
+        frame.setAttribute('sandbox', 'allow-scripts allow-forms');
         frame.setAttribute('scrolling', 'no');
-        frame.addEventListener('load', () => resizeInlineArtifactFrame(frame, viewport));
+        // Hint the browser's built-in form/scroll styling for the active scheme.
+        frame.style.colorScheme = resolveLiveArtifactThemeId();
+        frame.addEventListener('load', () => {
+            scheduleInlineArtifactFrameResize(frame, viewport);
+            // Re-probe after layout settles (fonts / async styles).
+            const html = frame.dataset.liveArtifactProbeHtml || '';
+            if (html) {
+                const height = measureArtifactContentHeight(html, resolveInlineFrameWidth(viewport, container));
+                applyInlineArtifactFrameHeight(viewport, frame, height, {
+                    allowShrink: frame.dataset.liveArtifactStreaming !== 'true',
+                });
+                cacheFrameHeight(frame.dataset.liveArtifactHeightKey || '', height);
+            }
+        });
 
         viewport.appendChild(frame);
         frameShell.appendChild(viewport);
         container.appendChild(frameShell);
     }
+
+    const heightKey = getArtifactHeightCacheKey(artifact);
+    const contentHtml = artifact.isStreaming ? (artifact.streamHtml || artifact.code || '') : (artifact.code || '');
+    frame.dataset.liveArtifactFrameId = artifact.id || '';
+    frame.dataset.liveArtifactStreaming = artifact.isStreaming ? 'true' : 'false';
+    frame.dataset.liveArtifactHeightKey = heightKey;
+    frame.dataset.liveArtifactProbeHtml = contentHtml;
+
+    // Parent-side height first (reliable), then iframe postMessage can only grow further.
+    syncInlineArtifactFrameHeight(viewport, frame, artifact, container);
 
     if (frame.srcdoc !== artifact.srcdoc) {
         frame.srcdoc = artifact.srcdoc;
@@ -1173,15 +1868,21 @@ function renderInlineArtifactFrame(container, artifact) {
     if (artifact.isStreaming && artifact.streamHtml) {
         postInlineArtifactStream(frame, artifact.streamHtml);
     }
+    scheduleInlineArtifactFrameResize(frame, viewport);
 }
 
 function postInlineArtifactStream(frame, html) {
+    const themeId = resolveLiveArtifactThemeId();
+    const adaptedHtml = materializeLiveArtifactThemeVars(
+        adaptArtifactHtmlForTheme(html, themeId),
+        themeId,
+    );
     const send = () => {
         try {
             frame.contentWindow?.postMessage({
                 channel: 'justsearch-live-artifacts',
                 event: STREAM_RENDER_EVENT,
-                html,
+                html: adaptedHtml,
             }, '*');
         } catch {
             // Ignore frame messaging failures while the iframe is mounting.
@@ -1530,22 +2231,102 @@ function formatInteractionFollowupPrompt(payload) {
     return lines.join('\n');
 }
 
+function applyInlineArtifactFrameHeight(viewport, frame, height, { allowShrink = true } = {}) {
+    const requested = Math.max(INLINE_ARTIFACT_MIN_HEIGHT, Math.ceil(Number(height) || 0));
+    const capped = Math.min(INLINE_ARTIFACT_MAX_HEIGHT, requested);
+    const current = Math.max(
+        parseInt(frame?.style?.height, 10) || 0,
+        parseInt(viewport?.style?.height, 10) || 0,
+        0,
+    );
+    // Match AMC-WebUI: while streaming / recovering, never collapse below current height.
+    const nextHeight = allowShrink ? capped : Math.max(current || INLINE_ARTIFACT_DEFAULT_HEIGHT, capped);
+    const next = `${nextHeight}px`;
+    if (viewport) {
+        viewport.style.height = next;
+        viewport.style.minHeight = `${INLINE_ARTIFACT_MIN_HEIGHT}px`;
+        viewport.style.overflow = 'hidden';
+    }
+    if (frame) {
+        // AMC uses h-full of the viewport; set explicit px so sandbox iframe always fills.
+        frame.style.height = next;
+        frame.style.minHeight = `${INLINE_ARTIFACT_MIN_HEIGHT}px`;
+    }
+    if (frame?.dataset?.liveArtifactHeightKey) {
+        cacheFrameHeight(frame.dataset.liveArtifactHeightKey, nextHeight);
+    }
+    return nextHeight;
+}
+
+function measureInlineArtifactDocumentHeight(doc) {
+    if (!doc) return INLINE_ARTIFACT_MIN_HEIGHT;
+    const body = doc.body;
+    const root = doc.documentElement;
+    if (!body || !root) return INLINE_ARTIFACT_MIN_HEIGHT;
+
+    try {
+        [root, body].forEach((el) => {
+            el.style.setProperty('height', 'auto', 'important');
+            el.style.setProperty('min-height', '0', 'important');
+            el.style.setProperty('max-height', 'none', 'important');
+            el.style.setProperty('overflow-y', 'visible', 'important');
+        });
+    } catch {
+        // Ignore style writes if the frame document is unavailable mid-navigation.
+    }
+
+    let contentBottom = 0;
+    const skip = new Set(['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE']);
+    const visit = (el) => {
+        if (!(el instanceof Element) || skip.has(el.tagName)) return;
+        const rect = el.getBoundingClientRect();
+        if (!rect || (rect.width === 0 && rect.height === 0 && el.childElementCount === 0)) return;
+        let marginBottom = 0;
+        try {
+            marginBottom = parseFloat(doc.defaultView?.getComputedStyle(el)?.marginBottom) || 0;
+        } catch {
+            marginBottom = 0;
+        }
+        contentBottom = Math.max(contentBottom, rect.bottom + marginBottom);
+    };
+    Array.from(body.children).forEach(visit);
+
+    const scrollY = doc.defaultView?.pageYOffset || root.scrollTop || body.scrollTop || 0;
+    return Math.max(
+        Math.ceil(contentBottom + scrollY),
+        body.scrollHeight || 0,
+        body.offsetHeight || 0,
+        root.scrollHeight || 0,
+        root.offsetHeight || 0,
+        INLINE_ARTIFACT_MIN_HEIGHT,
+    );
+}
+
 function resizeInlineArtifactFrame(frame, viewport) {
+    if (!frame || !viewport) return;
     try {
         const doc = frame.contentDocument;
-        const body = doc?.body;
-        const root = doc?.documentElement;
-        const height = Math.max(
-            body?.scrollHeight || 0,
-            body?.offsetHeight || 0,
-            root?.scrollHeight || 0,
-            root?.offsetHeight || 0,
-            120,
-        );
-        viewport.style.height = `${Math.ceil(height)}px`;
+        // Sandboxed frames without allow-same-origin cannot be read; bridge postMessage handles those.
+        if (!doc) return;
+        applyInlineArtifactFrameHeight(viewport, frame, measureInlineArtifactDocumentHeight(doc));
     } catch {
-        viewport.style.height = viewport.style.height || '320px';
+        // Keep last good height; bridge resize events remain the primary path.
     }
+}
+
+function scheduleInlineArtifactFrameResize(frame, viewport) {
+    if (!frame || !viewport) return;
+    const run = () => resizeInlineArtifactFrame(frame, viewport);
+    run();
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+            run();
+            requestAnimationFrame(run);
+        });
+    }
+    setTimeout(run, 50);
+    setTimeout(run, 250);
+    setTimeout(run, 1000);
 }
 
 function decorateCodeBlocks(codeBlocks, artifacts) {
@@ -1667,15 +2448,17 @@ function wirePanelEvents() {
 function handleArtifactFrameMessage(event) {
     const data = event.data || {};
     if (data.channel !== 'justsearch-live-artifacts') return;
-    const sourceFrame = findArtifactFrameByMessageSource(event.source);
+    const sourceFrame = findArtifactFrameByMessage(event);
     if (!sourceFrame) return;
 
-    if (data.event === 'resize' && typeof data.height === 'number') {
-        const viewport = sourceFrame.kind === 'inline'
-            ? sourceFrame.frame.closest('.live-artifact-inline-viewport')
-            : null;
-        if (viewport) {
-            viewport.style.height = `${Math.max(120, Math.ceil(data.height))}px`;
+    if (data.event === 'resize' && typeof data.height === 'number' && Number.isFinite(data.height)) {
+        if (sourceFrame.kind === 'inline') {
+            const viewport = sourceFrame.frame.closest('.live-artifact-inline-viewport');
+            const streaming = sourceFrame.frame.dataset.liveArtifactStreaming === 'true';
+            // AMC-WebUI only grows from bridge measurements when streaming; final answers may shrink.
+            applyInlineArtifactFrameHeight(viewport, sourceFrame.frame, data.height, {
+                allowShrink: !streaming,
+            });
         }
         return;
     }
@@ -1701,6 +2484,19 @@ function handleArtifactFrameMessage(event) {
     if (data.event === 'diagnostic') {
         handlePreviewDiagnostic(data.payload);
     }
+}
+
+function findArtifactFrameByMessage(event) {
+    const data = event?.data || {};
+    const frameId = typeof data.frameId === 'string' ? data.frameId.trim() : '';
+    if (frameId) {
+        const byId = Array.from(document.querySelectorAll('.live-artifact-inline-iframe'))
+            .find(frame => frame.dataset.liveArtifactFrameId === frameId);
+        if (byId) {
+            return { frame: byId, kind: 'inline' };
+        }
+    }
+    return findArtifactFrameByMessageSource(event?.source);
 }
 
 function findArtifactFrameByMessageSource(source) {
@@ -1835,6 +2631,7 @@ function closeLiveArtifactsPanel() {
 function renderPanel(artifact) {
     if (!panelState) return;
 
+    ensureArtifactSrcdocTheme(artifact);
     panelState.title.textContent = artifact.title;
     panelState.meta.textContent = `${artifact.language.toUpperCase()} · ${artifact.fileName}`;
     panelState.code.textContent = artifact.code;
@@ -1843,6 +2640,7 @@ function renderPanel(artifact) {
     panelState.frame.hidden = !canPreview;
     panelState.empty.hidden = canPreview;
     if (canPreview) {
+        panelState.frame.style.colorScheme = resolveLiveArtifactThemeId();
         panelState.frame.srcdoc = artifact.srcdoc;
     } else {
         panelState.frame.removeAttribute('srcdoc');
@@ -1909,19 +2707,35 @@ function openArtifactInNewWindow(artifact) {
 }
 
 export const __liveArtifactsTestHooks = {
+    adaptArtifactHtmlForTheme,
+    applyInlineArtifactFrameHeight,
     buildArtifactCode,
+    buildPreviewBaseFontSizeStyle,
+    buildPreviewThemeStyle,
     buildSrcdoc,
+    clampLiveArtifactFontSize,
+    ensureArtifactSrcdocTheme,
     extractCodeBlocks,
     extractInlineLiveArtifact,
     extractLiveArtifactInteraction,
     extractLiveArtifacts,
+    findArtifactFrameByMessage,
     findArtifactFrameByMessageSource,
     handleArtifactFrameMessage,
+    injectPreviewBaseFontSize,
+    injectPreviewBaseStyles,
+    injectPreviewTheme,
     injectPreviewSecurityPolicy,
     inferRenderableLanguage,
     linkArtifactCitationsInHtml,
+    mapHardcodedColorForDarkTheme,
+    materializeLiveArtifactThemeVars,
+    measureArtifactContentHeight,
+    measureInlineArtifactDocumentHeight,
     normalizePreviewDiagnostic,
     parseLiveArtifactInteractionSpec,
     parseInfoAttributes,
+    resolveLiveArtifactFontSizePx,
+    resolveLiveArtifactThemeId,
     shouldMergeSupportingBlocks,
 };

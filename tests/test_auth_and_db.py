@@ -192,7 +192,7 @@ def test_html_bootstrap_omits_token_for_remote_page_host(monkeypatch):
     asyncio.run(run())
 
 
-def test_spa_index_clears_stale_static_cache_and_scripts_revalidate():
+def test_spa_index_does_not_cache_html_and_allows_static_cache():
     from backend.app.main import app
 
     async def run():
@@ -203,9 +203,10 @@ def test_spa_index_clears_stale_static_cache_and_scripts_revalidate():
 
         assert index_response.status_code == 200
         assert index_response.headers["cache-control"] == "no-store"
-        assert index_response.headers["clear-site-data"] == '"cache"'
+        # HTML must not wipe origin cache on every load (makes Chrome refresh very slow).
+        assert "clear-site-data" not in index_response.headers
         assert script_response.status_code == 200
-        assert script_response.headers["cache-control"] == "no-cache"
+        assert "max-age" in script_response.headers.get("cache-control", "")
         assert "clear-site-data" not in script_response.headers
 
     asyncio.run(run())
@@ -228,8 +229,10 @@ def test_default_model_settings_use_deepseek_defaults():
         "interaction",
         "answer",
     }
-    assert DEFAULT_SETTINGS["search_engine"] == "searxng"
+    assert DEFAULT_SETTINGS["search_engine"] == "google"
     assert DEFAULT_SETTINGS["live_artifacts_mode"] is False
+    assert DEFAULT_SETTINGS["base_font_size"] == 16
+    assert DEFAULT_SETTINGS["live_artifacts_font_size"] == 16
     assert example_settings["default_provider_id"] == "deepseek"
     assert example_settings["providers"][0]["id"] == "deepseek"
     assert example_settings["providers"][0]["base_url"] == "https://api.deepseek.com/v1"
@@ -240,8 +243,10 @@ def test_default_model_settings_use_deepseek_defaults():
         "interaction",
         "answer",
     }
-    assert example_settings["search_engine"] == "searxng"
+    assert example_settings["search_engine"] == "google"
     assert example_settings["live_artifacts_mode"] is False
+    assert example_settings["base_font_size"] == 16
+    assert example_settings["live_artifacts_font_size"] == 16
 
 
 def test_chat_router_coerces_string_booleans_for_live_artifacts():
@@ -3100,7 +3105,7 @@ def test_chat_endpoint_clamps_request_search_limits(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
-def test_chat_endpoint_defaults_to_searxng_when_no_engine_is_saved(tmp_path, monkeypatch):
+def test_chat_endpoint_defaults_to_google_when_no_engine_is_saved(tmp_path, monkeypatch):
     from backend.app import database
     from backend.app.routers.chat import router
 
@@ -3179,7 +3184,7 @@ def test_chat_endpoint_defaults_to_searxng_when_no_engine_is_saved(tmp_path, mon
             )
 
         assert response.status_code == 200
-        assert captured["search_engine"] == "searxng"
+        assert captured["search_engine"] == "google"
 
         if database._engine is not None:
             await database._engine.dispose()
@@ -3331,7 +3336,7 @@ def test_chat_endpoint_falls_back_when_saved_search_engine_is_unknown(tmp_path, 
             )
 
         assert response.status_code == 200
-        assert captured["search_engine"] == "searxng"
+        assert captured["search_engine"] == "google"
 
         if database._engine is not None:
             await database._engine.dispose()
@@ -3420,7 +3425,7 @@ def test_chat_endpoint_falls_back_when_saved_search_engine_is_not_string(tmp_pat
             )
 
         assert response.status_code == 200
-        assert captured["search_engine"] == "searxng"
+        assert captured["search_engine"] == "google"
 
         if database._engine is not None:
             await database._engine.dispose()
@@ -3675,6 +3680,140 @@ def test_chat_endpoint_rejects_gemini_25_model_request(tmp_path):
             await database._engine.dispose()
             database._engine = None
             database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_chat_endpoint_rejects_when_extension_bridge_disconnected(tmp_path, monkeypatch):
+    from backend.app import database
+    from backend.app.routers.chat import router
+
+    class UnexpectedWorkflow:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("workflow should not start without bridge")
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_settings(
+            {
+                "default_provider_id": "deepseek",
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "api_key": "deepseek-secret",
+                        "base_url": "https://api.deepseek.com/v1",
+                        "model_id": "deepseek-chat",
+                    },
+                ],
+            }
+        )
+
+        monkeypatch.setattr(
+            "backend.app.routers.chat.is_extension_connected",
+            lambda: False,
+        )
+        monkeypatch.setattr(
+            "backend.app.routers.chat.get_ws_endpoint",
+            lambda: "ws://127.0.0.1:38975/justsearch",
+        )
+        monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
+
+        app = FastAPI()
+        app.include_router(router)
+
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "query": "hello",
+                    "session_id": "bridge-offline-test",
+                    "provider_id": "deepseek",
+                },
+            )
+
+        assert response.status_code == 503
+        detail = response.json()["detail"]
+        assert detail["code"] == "BRIDGE_REQUIRED"
+        assert "扩展" in detail["message"]
+        assert detail["download_url"] == "/api/extension/download"
+        assert "38975" in detail["ws_url"]
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
+def test_extension_download_returns_zip_with_manifest():
+    import io
+    import zipfile
+
+    from backend.app.routers.stats import router
+
+    app = FastAPI()
+    app.include_router(router)
+
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+
+    async def run():
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/extension/download")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/zip")
+        assert "justsearch-bridge.zip" in response.headers.get("content-disposition", "")
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "justsearch-bridge/manifest.json" in names
+            assert any(name.startswith("justsearch-bridge/") for name in names)
+            manifest = archive.read("justsearch-bridge/manifest.json").decode("utf-8")
+            assert "JustSearch Bridge" in manifest
+
+    asyncio.run(run())
+
+
+def test_health_endpoint_includes_bridge_install_metadata(monkeypatch):
+    from backend.app.routers.stats import router
+
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.is_extension_connected",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.get_ws_endpoint",
+        lambda: "ws://127.0.0.1:38975/justsearch",
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/health")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["browser"] is False
+        assert payload["bridge"]["extension_connected"] is False
+        assert payload["bridge"]["download_url"] == "/api/extension/download"
+        assert "38975" in payload["bridge"]["ws_url"]
+        assert "chrome://extensions" in payload["bridge"]["install_hint"]
 
     asyncio.run(run())
 

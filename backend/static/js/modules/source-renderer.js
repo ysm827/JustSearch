@@ -1,4 +1,4 @@
-import { md } from './utils.js?v=3';
+import { md } from './utils.js?v=6';
 
 const _faviconCache = new Map();
 

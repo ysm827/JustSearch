@@ -12,7 +12,7 @@ from .openai_client import create_openai_client
 from .prompts import (
     ANSWER_GENERATION_PROMPT,
     ANSWER_GENERATION_LIVE_ARTIFACTS_PROMPT,
-    LIVE_ARTIFACTS_PROMPT,
+    select_live_artifacts_protocol,
     CLICK_DECISION_PROMPT,
     RELEVANCE_ASSESSMENT_PROMPT,
     TASK_ANALYSIS_PROMPT,
@@ -624,7 +624,7 @@ class LLMClient:
         )
         system_prompt = prompt_template.format(current_time=current_time)
         if live_artifacts_requested:
-            system_prompt = f"{system_prompt}\n\n{LIVE_ARTIFACTS_PROMPT}"
+            system_prompt = f"{system_prompt}\n\n{select_live_artifacts_protocol(query)}"
 
         messages = [{"role": "system", "content": system_prompt}]
 

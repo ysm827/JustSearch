@@ -122,7 +122,7 @@ def _apply_env_overrides(config: dict) -> dict:
     return result
 
 
-def load_selectors(engine: str = "searxng") -> dict:
+def load_selectors(engine: str = "google") -> dict:
     """Load search engine CSS selectors from config file.
     
     Supports hot-reload: if the config file has been modified since last load,
@@ -154,10 +154,10 @@ def load_selectors(engine: str = "searxng") -> dict:
     if engine in config:
         return config[engine]
     # Engine not in config — return the stable default engine.
-    return config.get("searxng", {})
+    return config.get("google", {})
 
 
 def get_all_engines() -> list:
     """Return a list of all available search engine names."""
     config = load_selectors(None)
-    return list(config.keys()) if config else ["searxng"]
+    return list(config.keys()) if config else ["google"]

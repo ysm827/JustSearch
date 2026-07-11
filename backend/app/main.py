@@ -214,11 +214,14 @@ def _render_index_html(request: Request) -> HTMLResponse:
     with open(html_path, "r", encoding="utf-8") as f:
         html = f.read()
     html = inject_html_bootstrap(html, build_html_bootstrap_payload(request))
+    # HTML injects a local auth bootstrap payload, so never cache the document.
+    # Do NOT send Clear-Site-Data here: wiping the origin cache on every navigation
+    # forces Chrome to re-download all static assets and makes refresh feel very slow
+    # on long-lived profiles (incognito stays fast because the cache is empty).
     return HTMLResponse(
         content=html,
         headers={
             "Cache-Control": "no-store",
-            "Clear-Site-Data": '"cache"',
         },
     )
 

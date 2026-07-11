@@ -12,11 +12,16 @@ export function showToast(message, type = 'info', duration = 3000) {
     if (!container) {
         container = document.createElement('div');
         container.id = 'toast-container';
+        // 容器作为 polite live region，屏幕阅读器会播报动态出现的 toast
+        container.setAttribute('role', 'status');
+        container.setAttribute('aria-live', 'polite');
+        container.setAttribute('aria-atomic', 'false');
         document.body.appendChild(container);
     }
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', 'status');
     
     // 根据 type 选图标
     let icon = 'info';

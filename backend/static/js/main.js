@@ -1,18 +1,25 @@
 import { initializeAuth, normalizeSettings } from './modules/auth.js?v=1';
-import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/state.js?v=2';
-import { initUI, elements } from './modules/ui.js?v=22';
-import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=29';
+import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/state.js?v=3';
+import { initUI, elements } from './modules/ui.js?v=25';
+import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=33';
 import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=23';
-import { setupSettingsModal } from './modules/settings-modal.js?v=44';
+import { setupSettingsModal } from './modules/settings-modal.js?v=46';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=17';
-import { initCustomModelSelect, syncCustomModelSelect } from './modules/model-selector.js?v=14';
+import {
+    findOptionForModelPreference,
+    initCustomModelSelect,
+    loadSelectedModelPreference,
+    syncCustomModelSelect,
+} from './modules/model-selector.js?v=15';
 import { getSupportedModelItems, splitModelItem } from './modules/provider-models.js?v=1';
-import * as API from './modules/api.js?v=6';
+import * as API from './modules/api.js?v=8';
+import { startBridgeStatusPolling } from './modules/bridge.js?v=1';
 
 document.addEventListener('DOMContentLoaded', async () => {
     initUI();
     initializeAuth();
     initCustomModelSelect();
+    startBridgeStatusPolling();
 
     // 三个 API 并行拉取(原来是 settings 先 await 完才拉 history/groups,白白串行一次 RTT)。
     const [settingsRes, chatHistory, chatGroups] = await Promise.all([
@@ -93,9 +100,13 @@ function updateModelSelector(settings) {
     });
 
     const preferredProviderId = settings?.default_provider_id || providers[0]?.id || '';
+    // 优先：当前已选（设置保存重建列表时）→ 上次用户选择（localStorage）→ 默认 Provider 下第一个 → 列表第一项
     let selected = Array.from(select.options).find(
         option => `${option.dataset.providerId || ''}:${option.value}` === currentKey
     );
+    if (!selected) {
+        selected = findOptionForModelPreference(select.options, loadSelectedModelPreference());
+    }
     if (!selected) {
         selected = Array.from(select.options).find(
             option => option.dataset.providerId === preferredProviderId
@@ -103,6 +114,8 @@ function updateModelSelector(settings) {
     }
     if (selected) {
         selected.selected = true;
+    } else if (select.options.length > 0) {
+        select.options[0].selected = true;
     }
     syncCustomModelSelect();
 }
@@ -138,7 +151,7 @@ function showHomeState() {
 function setupSystemThemeListener() {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if ((state.settings.theme || 'light') === 'auto') {
-            import('./modules/utils.js?v=3').then(m => m.applyTheme('auto'));
+            import('./modules/utils.js?v=6').then(m => m.applyTheme('auto'));
         }
     });
 }

@@ -1,11 +1,17 @@
-import { coerceBooleanSetting, state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=2';
-import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=3';
+import { coerceBooleanSetting, state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=3';
+import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=6';
 import { updateActiveHistoryItem } from './history-view.js?v=23';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=22';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=25';
 import { extractSources, hasCitationSources, linkCitationsInElement, renderWithCitations } from './source-renderer.js?v=8';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=11';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=18';
+import {
+    applyIntensityPresetToSettings,
+    getIntensityPreset,
+    updateIntensityUI,
+} from './search-intensity.js?v=1';
 import { showToast } from './toast.js';
-import * as API from './api.js?v=6';
+import * as API from './api.js?v=8';
+import { ensureBridgeConnected, warnIfBridgeDisconnected } from './bridge.js?v=1';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
@@ -97,6 +103,13 @@ export function setupChatHandler(elements, renderHistory) {
         const text = overrideText || elements.userInput.value.trim();
         if (!text) return;
 
+        // Fail fast before clearing the input: all engines need the Chrome bridge.
+        const bridgeReady = await ensureBridgeConnected({ forceRefresh: true });
+        if (!bridgeReady) {
+            showToast('请先连接 JustSearch Bridge 扩展后再搜索', 'warning', 4000);
+            return;
+        }
+
         lastUserMessage = text;
 
         const modelSelect = document.getElementById('model-select');
@@ -107,6 +120,7 @@ export function setupChatHandler(elements, renderHistory) {
         elements.userInput.value = '';
         resetInputHeight();
         setIsProcessing(true);
+        syncQuickSettingsFromState();
         updateSendButtonState();
         elements.heroSection.style.display = 'none';
 
@@ -114,7 +128,6 @@ export function setupChatHandler(elements, renderHistory) {
         if (sendBtnIcon) {
             sendBtnIcon.textContent = 'stop_circle';
         }
-        elements.sendBtn.classList.remove('inactive', 'active');
         elements.sendBtn.classList.add('processing');
 
         appendMessage('user', text, null, null, null, null, null, {
@@ -157,6 +170,23 @@ export function setupChatHandler(elements, renderHistory) {
         let searchStats = null;
         let searchStartTime = Date.now();
         let streamOutcome = 'completed';
+        // 流式渲染节流：避免每个 chunk 都全量 md.render+DOMPurify（O(n²)）。
+        // 用 rAF 合并到下一帧；完成时强制立即渲染保证最终态正确。
+        let pendingRender = false;
+        let pendingRenderIsStreaming = false;
+        let reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        function scheduleStreamRender(isStreaming) {
+            pendingRenderIsStreaming = isStreaming;
+            if (pendingRender) return;
+            pendingRender = true;
+            // rAF 批处理；reduced-motion 下仍需渲染但不做 smooth 滚动
+            requestAnimationFrame(() => {
+                pendingRender = false;
+                renderCurrentAssistantAnswer(pendingRenderIsStreaming);
+                if (!userScrolled) scrollToBottom();
+            });
+        }
 
         function renderCurrentAssistantAnswer(isStreaming) {
             const resolvedSources = hasCitationSources(currentSources)
@@ -237,14 +267,16 @@ export function setupChatHandler(elements, renderHistory) {
                         contentWrapper.innerHTML = '';
                     }
                     currentAnswerBuffer += chunk;
-                    renderCurrentAssistantAnswer(true);
-                    if (!userScrolled) scrollToBottom();
+                    // 节流到下一帧，避免逐 token 全量重渲染
+                    scheduleStreamRender(true);
                 },
                 onAnswer: (finalAnswer, sessionId, finalSources) => {
                     if (hasCitationSources(finalSources)) {
                         currentSources = finalSources;
                     }
                     currentAnswerBuffer = finalAnswer;
+                    // 取消任何挂起的节流渲染，立即用最终态渲染一次
+                    pendingRender = false;
                     renderCurrentAssistantAnswer(false);
                     setCurrentSessionId(sessionId);
                     refreshHistory();
@@ -299,6 +331,7 @@ export function setupChatHandler(elements, renderHistory) {
             const totalElapsed = ((Date.now() - searchStartTime) / 1000).toFixed(1);
             setIsProcessing(false);
             setAbortController(null);
+            syncQuickSettingsFromState();
             if (sendBtnIcon) {
                 sendBtnIcon.textContent = 'send';
             }
@@ -343,26 +376,23 @@ export function setupChatHandler(elements, renderHistory) {
     function updateSendButtonState() {
         const hasText = elements.userInput.value.trim().length > 0;
         const isActive = hasText || state.isProcessing;
+        // 统一用 disabled 属性表达「不可用」，class 仅承载视觉态(processing)。
         elements.sendBtn.disabled = !isActive;
-        elements.sendBtn.classList.remove('inactive', 'active', 'processing');
-        if (state.isProcessing) {
-            elements.sendBtn.classList.add('processing');
-        } else if (hasText) {
-            elements.sendBtn.classList.add('active');
-        } else {
-            elements.sendBtn.classList.add('inactive');
-        }
+        elements.sendBtn.classList.toggle('processing', state.isProcessing);
+        elements.sendBtn.setAttribute('aria-disabled', state.isProcessing ? 'false' : (!hasText ? 'true' : 'false'));
     }
 
     function resetInputHeight() {
-        elements.userInput.style.height = '40px';
+        elements.userInput.style.height = '38px';
         elements.userInput.style.overflowY = 'hidden';
     }
 
     function autoResizeInput() {
-        const scrollHeight = elements.userInput.scrollHeight;
         const maxHeight = 200;
-        elements.userInput.style.height = '40px';
+        // 先重置再读取 scrollHeight：否则空内容时 scrollHeight 会塌缩为当前
+        // clientHeight（上一次撑开的高度），导致清空后高度卡在旧值无法恢复。
+        elements.userInput.style.height = '38px';
+        const scrollHeight = elements.userInput.scrollHeight;
         if (scrollHeight > maxHeight) {
             elements.userInput.style.height = maxHeight + 'px';
             elements.userInput.style.overflowY = 'auto';
@@ -425,22 +455,79 @@ export function setupChatHandler(elements, renderHistory) {
     const quickEngineDropdown = document.getElementById('quick-engine-dropdown');
     
     if (quickEngineBtn && quickEngineDropdown) {
+        // 让下拉项可被键盘聚焦与选择（保留 <div> 结构以匹配现有测试）
+        const dropdownItems = Array.from(quickEngineDropdown.querySelectorAll('.quick-dropdown-item'));
+        dropdownItems.forEach((item, idx) => {
+            item.setAttribute('role', 'option');
+            item.setAttribute('tabindex', '-1');
+            if (!item.id) item.id = `quick-engine-opt-${idx}`;
+        });
+        quickEngineDropdown.setAttribute('role', 'listbox');
+        quickEngineDropdown.setAttribute('aria-label', '搜索引擎列表');
+
         quickEngineBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            const willOpen = !quickEngineDropdown.classList.contains('active');
             quickEngineDropdown.classList.toggle('active');
+            quickEngineBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+            if (willOpen) {
+                // 打开后将焦点移到当前选中项
+                const active = quickEngineDropdown.querySelector('.quick-dropdown-item.active') || dropdownItems[0];
+                if (active) active.focus();
+            }
         });
-        
+        quickEngineBtn.setAttribute('aria-haspopup', 'listbox');
+        quickEngineBtn.setAttribute('aria-expanded', 'false');
+
         document.addEventListener('click', (e) => {
             if (!quickEngineBtn.contains(e.target) && !quickEngineDropdown.contains(e.target)) {
                 quickEngineDropdown.classList.remove('active');
+                quickEngineBtn.setAttribute('aria-expanded', 'false');
             }
         });
-        
-        const dropdownItems = quickEngineDropdown.querySelectorAll('.quick-dropdown-item');
+
+        // 键盘导航：在按钮与选项间用方向键移动焦点
+        function moveHighlight(current, dir) {
+            const idx = dropdownItems.indexOf(current);
+            let next = idx;
+            if (dir === 'down') next = (idx + 1) % dropdownItems.length;
+            else if (dir === 'up') next = (idx - 1 + dropdownItems.length) % dropdownItems.length;
+            else if (dir === 'home') next = 0;
+            else if (dir === 'end') next = dropdownItems.length - 1;
+            dropdownItems[next]?.focus();
+        }
+
+        quickEngineBtn.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                quickEngineDropdown.classList.add('active');
+                quickEngineBtn.setAttribute('aria-expanded', 'true');
+                const active = quickEngineDropdown.querySelector('.quick-dropdown-item.active') || dropdownItems[0];
+                if (active) active.focus();
+            }
+        });
+
+        dropdownItems.forEach(item => {
+            item.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowDown') { e.preventDefault(); moveHighlight(item, 'down'); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); moveHighlight(item, 'up'); }
+                else if (e.key === 'Home') { e.preventDefault(); moveHighlight(item, 'home'); }
+                else if (e.key === 'End') { e.preventDefault(); moveHighlight(item, 'end'); }
+                else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); item.click(); }
+                else if (e.key === 'Escape') {
+                    quickEngineDropdown.classList.remove('active');
+                    quickEngineBtn.setAttribute('aria-expanded', 'false');
+                    quickEngineBtn.focus();
+                }
+            });
+        });
+
         dropdownItems.forEach(item => {
             item.addEventListener('click', async () => {
                 const newEngine = item.getAttribute('data-value');
                 quickEngineDropdown.classList.remove('active');
+                quickEngineBtn.setAttribute('aria-expanded', 'false');
+                quickEngineBtn.focus();
                 
                 if (state.settings) {
                     state.settings.search_engine = newEngine;
@@ -453,6 +540,7 @@ export function setupChatHandler(elements, renderHistory) {
                     await API.saveSettingsAPI(state.settings);
                     syncQuickSettingsFromState();
                     showToast(`搜索引擎已切换为 ${item.textContent}`, 'success');
+                    warnIfBridgeDisconnected(item.textContent?.trim() || newEngine);
                 }
             });
         });
@@ -514,9 +602,67 @@ export function setupChatHandler(elements, renderHistory) {
         });
     }
 
+    setupSearchIntensityControls();
+
     syncQuickSettingsFromState();
 
     return { loadChat, deleteChat };
+}
+
+function syncSettingsFormSearchLimits(maxResults, maxIterations) {
+    const maxResultsInput = document.getElementById('max-results-input');
+    const maxIterationsInput = document.getElementById('max-iterations-input');
+    if (maxResultsInput) maxResultsInput.value = String(maxResults);
+    if (maxIterationsInput) maxIterationsInput.value = String(maxIterations);
+}
+
+function setupSearchIntensityControls() {
+    const bar = document.getElementById('search-intensity-bar');
+    if (!bar) return;
+
+    const chips = Array.from(bar.querySelectorAll('.intensity-chip[data-intensity]'));
+    chips.forEach((chip) => {
+        chip.addEventListener('click', async () => {
+            if (state.isProcessing) return;
+            const presetId = chip.getAttribute('data-intensity');
+            if (!presetId || presetId === 'custom') return;
+            const preset = getIntensityPreset(presetId);
+            if (!preset || !state.settings) return;
+
+            const previousResults = state.settings.max_results;
+            const previousIterations = state.settings.max_iterations;
+            state.settings = applyIntensityPresetToSettings(state.settings, presetId);
+            syncSettingsFormSearchLimits(preset.max_results, preset.max_iterations);
+            syncQuickSettingsFromState();
+
+            const saved = await API.saveSettingsAPI(state.settings);
+            if (!saved) {
+                state.settings.max_results = previousResults;
+                state.settings.max_iterations = previousIterations;
+                syncSettingsFormSearchLimits(previousResults, previousIterations);
+                syncQuickSettingsFromState();
+                showToast('搜索强度保存失败，已恢复原状态', 'warning');
+                return;
+            }
+            showToast(`搜索强度：${preset.label}（${preset.hint}）`, 'success');
+        });
+
+        chip.addEventListener('keydown', (e) => {
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') {
+                return;
+            }
+            const visible = chips.filter((c) => !c.hidden && c.getAttribute('data-intensity') !== 'custom');
+            const currentIndex = visible.indexOf(chip);
+            if (currentIndex < 0) return;
+            e.preventDefault();
+            let nextIndex = currentIndex;
+            if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % visible.length;
+            else if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + visible.length) % visible.length;
+            else if (e.key === 'Home') nextIndex = 0;
+            else if (e.key === 'End') nextIndex = visible.length - 1;
+            visible[nextIndex]?.focus();
+        });
+    });
 }
 
 export function syncQuickSettingsFromState() {
@@ -527,14 +673,16 @@ export function syncQuickSettingsFromState() {
     
     if (!state.settings) return;
     
-    const engine = state.settings.search_engine || 'searxng';
+    const engine = state.settings.search_engine || 'google';
     const engineNames = {
         'duckduckgo': 'DuckDuckGo',
         'google': 'Google',
         'bing': 'Bing',
         'sogou': '搜狗 (Sogou)',
         'brave': 'Brave Search',
-        'searxng': 'SearXNG'
+        'searxng': 'SearXNG',
+        'baidu': '百度 (Baidu)',
+        'yandex': 'Yandex',
     };
     if (quickEngineName) {
         quickEngineName.textContent = engineNames[engine] || engine;
@@ -578,4 +726,10 @@ export function syncQuickSettingsFromState() {
             ? 'Live Artifacts 提示已激活。点击移除。'
             : '加载 Live Artifacts 提示并保存';
     }
+
+    updateIntensityUI({
+        maxResults: state.settings.max_results,
+        maxIterations: state.settings.max_iterations,
+        disabled: Boolean(state.isProcessing),
+    });
 }

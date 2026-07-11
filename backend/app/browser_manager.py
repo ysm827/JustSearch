@@ -37,7 +37,7 @@ def json_selector_arg(selector: str) -> str:
 
 
 class BrowserManager:
-    def __init__(self, engine: str = "searxng", max_results: int = 50):
+    def __init__(self, engine: str = "google", max_results: int = 50):
         self.engine = engine
         self.max_results = max_results
         # Load full engine config for fallback support, and single-engine config for direct use

@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 
 # Copy application code
 COPY backend/ /app/backend/
+COPY extension/ /app/extension/
 COPY run.sh /app/run.sh
 
 # Create directories for persistent data
