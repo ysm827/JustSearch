@@ -3,12 +3,15 @@ Stats router – /api/stats/github, /api/health, and extension download.
 """
 
 import io
+import json
 import logging
 import os
+import re
 import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -22,6 +25,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _EXTENSION_DIR = _PROJECT_ROOT / "extension"
 _ZIP_SKIP_NAMES = {".DS_Store", "Thumbs.db"}
 _ZIP_SKIP_DIR_NAMES = {"__pycache__", "node_modules", ".git"}
+
+_bundled_extension_version_cache: tuple[float, Optional[str]] | None = None
 
 # Process start time for uptime tracking
 _START_TIME = time.monotonic()
@@ -103,6 +108,121 @@ async def get_engines():
     return {"engines": get_all_engines()}
 
 
+def _parse_semver_tuple(value: str | None) -> tuple[int, ...]:
+    """Parse a loose semver string into comparable integer parts."""
+    if not value:
+        return (0,)
+    cleaned = str(value).strip().lstrip("vV")
+    # Drop pre-release / build metadata: 1.2.3-beta+meta -> 1.2.3
+    cleaned = re.split(r"[+\-]", cleaned, maxsplit=1)[0]
+    parts: list[int] = []
+    for chunk in cleaned.split("."):
+        if chunk.isdigit():
+            parts.append(int(chunk))
+        else:
+            match = re.match(r"^(\d+)", chunk)
+            if match:
+                parts.append(int(match.group(1)))
+            else:
+                break
+    return tuple(parts) if parts else (0,)
+
+
+def compare_extension_versions(left: str | None, right: str | None) -> int:
+    """Return -1/0/1 when left is older/equal/newer than right."""
+    left_parts = _parse_semver_tuple(left)
+    right_parts = _parse_semver_tuple(right)
+    width = max(len(left_parts), len(right_parts))
+    left_parts = left_parts + (0,) * (width - len(left_parts))
+    right_parts = right_parts + (0,) * (width - len(right_parts))
+    if left_parts < right_parts:
+        return -1
+    if left_parts > right_parts:
+        return 1
+    return 0
+
+
+def get_bundled_extension_version() -> Optional[str]:
+    """Read the server-shipped extension version from extension/manifest.json."""
+    global _bundled_extension_version_cache
+    manifest_path = _EXTENSION_DIR / "manifest.json"
+    try:
+        mtime = manifest_path.stat().st_mtime
+    except OSError:
+        return None
+
+    if (
+        _bundled_extension_version_cache is not None
+        and _bundled_extension_version_cache[0] == mtime
+    ):
+        return _bundled_extension_version_cache[1]
+
+    version: Optional[str] = None
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        raw = payload.get("version") if isinstance(payload, dict) else None
+        if raw is not None and str(raw).strip():
+            version = str(raw).strip()
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("[extension] failed to read bundled version: %s", exc)
+        version = None
+
+    _bundled_extension_version_cache = (mtime, version)
+    return version
+
+
+def classify_extension_version(
+    installed: str | None,
+    latest: str | None,
+    *,
+    connected: bool,
+) -> dict:
+    """Compare installed extension version against the server-bundled latest."""
+    if not latest:
+        return {
+            "latest_extension_version": None,
+            "extension_version_status": "unknown",
+            "update_available": False,
+            "is_latest": None,
+        }
+    if not connected:
+        return {
+            "latest_extension_version": latest,
+            "extension_version_status": "disconnected",
+            "update_available": False,
+            "is_latest": None,
+        }
+    if not installed:
+        return {
+            "latest_extension_version": latest,
+            "extension_version_status": "unknown",
+            "update_available": False,
+            "is_latest": None,
+        }
+
+    cmp = compare_extension_versions(installed, latest)
+    if cmp < 0:
+        status = "outdated"
+        update_available = True
+        is_latest = False
+    elif cmp > 0:
+        status = "newer"
+        update_available = False
+        is_latest = True  # newer than server package still "fine"
+    else:
+        status = "latest"
+        update_available = False
+        is_latest = True
+
+    return {
+        "latest_extension_version": latest,
+        "extension_version_status": status,
+        "update_available": update_available,
+        "is_latest": is_latest,
+    }
+
+
 def _build_extension_zip_bytes() -> bytes:
     """Zip the on-disk extension/ directory into justsearch-bridge/* entries."""
     if not _EXTENSION_DIR.is_dir():
@@ -146,7 +266,7 @@ async def download_extension_package():
 
 @router.get("/api/health")
 async def health_check():
-    from ..extension_bridge import get_ws_endpoint, is_extension_connected
+    from ..extension_bridge import get_bridge_client, get_extension_info, get_ws_endpoint, is_extension_connected
     from ..database import _engine
 
     # Memory usage info
@@ -174,11 +294,26 @@ async def health_check():
     uptime_seconds = int(time.monotonic() - _START_TIME) if _START_TIME else 0
 
     extension_connected = is_extension_connected()
+    extension_info = get_extension_info()
+    # If the extension is online but hasn't sent hello/version yet, probe once.
+    if extension_connected and not extension_info.get("version"):
+        try:
+            await get_bridge_client().health_check()
+            extension_info = get_extension_info()
+        except Exception:
+            pass
     ws_url = get_ws_endpoint()
     # For Docker/host mapping the extension always connects via loopback on the host.
     extension_ws_url = ws_url
     if "0.0.0.0" in extension_ws_url:
         extension_ws_url = extension_ws_url.replace("0.0.0.0", "127.0.0.1")
+
+    latest_extension_version = get_bundled_extension_version()
+    version_meta = classify_extension_version(
+        extension_info.get("version"),
+        latest_extension_version,
+        connected=extension_connected,
+    )
 
     return {
         "status": "ok",
@@ -186,6 +321,11 @@ async def health_check():
         "browser": extension_connected,
         "bridge": {
             "extension_connected": extension_connected,
+            "extension_name": extension_info.get("name"),
+            "extension_version": extension_info.get("version"),
+            "extension_instance_id": extension_info.get("instance_id"),
+            "conn_id": extension_info.get("conn_id"),
+            **version_meta,
             "ws_url": extension_ws_url,
             "download_url": "/api/extension/download",
             "install_hint": (

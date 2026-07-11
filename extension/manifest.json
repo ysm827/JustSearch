@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JustSearch Bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "把用户真实 Chrome 的标签页控制权交给本地 JustSearch 后端,用于搜索与爬取。",
   "permissions": [
     "debugger",

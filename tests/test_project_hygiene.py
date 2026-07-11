@@ -180,6 +180,12 @@ def test_bridge_install_guidance_is_wired_in_frontend():
     bridge_source = (PROJECT_ROOT / "backend/static/js/modules/bridge.js").read_text(
         encoding="utf-8"
     )
+    settings_source = (
+        PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
+    ).read_text(encoding="utf-8")
+    database_source = (PROJECT_ROOT / "backend/app/database.py").read_text(
+        encoding="utf-8"
+    )
     stats_source = (PROJECT_ROOT / "backend/app/routers/stats.py").read_text(
         encoding="utf-8"
     )
@@ -190,12 +196,24 @@ def test_bridge_install_guidance_is_wired_in_frontend():
     assert 'id="bridge-status-btn"' in index_source
     assert 'id="bridge-install-modal"' in index_source
     assert 'id="bridge-download-btn"' in index_source
+    assert 'id="tab-bridge"' in index_source
+    assert 'data-tab="bridge"' in index_source
+    assert 'id="bridge-require-before-send-input"' in index_source
+    assert 'id="settings-bridge-recheck-btn"' in index_source
+    assert 'id="settings-bridge-hero"' in index_source
+    assert 'bridge-actions-row' in index_source
+    assert 'bridge-help-steps' in index_source
+    assert 'settings-field-row' in index_source
     assert "startBridgeStatusPolling" in main_source
+    assert "applyBridgePreferencesFromSettings" in main_source
     assert "ensureBridgeConnected" in chat_source
+    assert "wireBridgeSettingsPanel" in settings_source
+    assert "bridge_require_before_send" in database_source
     assert "BRIDGE_REQUIRED" in chat_router_source
     assert "/api/extension/download" in stats_source
     assert "fetchBridgeStatus" in bridge_source
     assert "openBridgeInstallModal" in bridge_source
+    assert "getBridgePreferences" in bridge_source
 
 
 def test_google_engine_uses_official_multicolor_icon():

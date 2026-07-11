@@ -3,7 +3,7 @@ import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/stat
 import { initUI, elements } from './modules/ui.js?v=25';
 import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=33';
 import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=23';
-import { setupSettingsModal } from './modules/settings-modal.js?v=46';
+import { setupSettingsModal } from './modules/settings-modal.js?v=48';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=17';
 import {
     findOptionForModelPreference,
@@ -13,7 +13,7 @@ import {
 } from './modules/model-selector.js?v=15';
 import { getSupportedModelItems, splitModelItem } from './modules/provider-models.js?v=1';
 import * as API from './modules/api.js?v=8';
-import { startBridgeStatusPolling } from './modules/bridge.js?v=1';
+import { applyBridgePreferencesFromSettings, startBridgeStatusPolling } from './modules/bridge.js?v=6';
 
 document.addEventListener('DOMContentLoaded', async () => {
     initUI();
@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     ]);
     const settings = normalizeSettings(settingsRes);
     setLiveArtifactsMode(settings.live_artifacts_mode);
+    applyBridgePreferencesFromSettings();
     updateModelSelector(settings);
     const { loadChat, deleteChat } = setupChatHandler(elements, renderHistory);
     const historyCallbacks = { onSelect: loadChat, onDelete: deleteChat };
@@ -48,7 +49,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupSettingsModal({
         updateModelSelector,
         historyCallbacks,
-        onSettingsSaved: syncQuickSettingsFromState
+        onSettingsSaved: () => {
+            syncQuickSettingsFromState();
+            applyBridgePreferencesFromSettings();
+        },
     });
     setupHistoryGroups(historyCallbacks);
     setupHistorySearch(historyCallbacks);

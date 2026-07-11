@@ -52,7 +52,23 @@ function serializeGroupOp(fn) {
 export function registerHandlers(bridge) {
   const tabGroups = TabGroupStore.getInstance();
 
-  bridge.registerRequestHandler("ping", async () => ({ ok: true, ts: Date.now() }));
+  bridge.registerRequestHandler("ping", async () => {
+    const manifest = chrome.runtime.getManifest?.() || {};
+    let instanceId = null;
+    try {
+      const stored = await chrome.storage.local.get("extensionInstanceId");
+      instanceId = stored.extensionInstanceId || null;
+    } catch {
+      // ignore
+    }
+    return {
+      ok: true,
+      ts: Date.now(),
+      name: typeof manifest.name === "string" ? manifest.name : "JustSearch Bridge",
+      version: typeof manifest.version === "string" ? manifest.version : "0.0.0",
+      instance_id: instanceId,
+    };
+  });
 
   bridge.registerRequestHandler("createTab", async ({ url, session_id } = {}) => {
     const sessionId = typeof session_id === "string" && session_id ? session_id : "default";

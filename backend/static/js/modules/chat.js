@@ -11,7 +11,7 @@ import {
 } from './search-intensity.js?v=1';
 import { showToast } from './toast.js';
 import * as API from './api.js?v=8';
-import { ensureBridgeConnected, warnIfBridgeDisconnected } from './bridge.js?v=1';
+import { ensureBridgeConnected, warnIfBridgeDisconnected } from './bridge.js?v=6';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;

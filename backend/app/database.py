@@ -846,6 +846,11 @@ DEFAULT_SETTINGS = {
     "max_iterations": "5",
     "interactive_search": "true",
     "live_artifacts_mode": False,
+    # Bridge UX preferences (web UI only; extension WS address is configured in the Chrome popup).
+    "bridge_require_before_send": True,
+    "bridge_show_banner": True,
+    "bridge_toast_on_change": True,
+    "bridge_poll_interval_sec": 5,
     # Reading size for chat messages (mirrors AMC baseFontSize: 12–24, default 16).
     "base_font_size": 16,
     # Base size for Live Artifacts previews (mirrors AMC liveArtifactsCustomFontSize: 10–32, default 16).

@@ -472,7 +472,7 @@ export async function streamChat(query, callbacks) {
                     || response.status === 503
                 ) {
                     try {
-                        const { isBridgeRequiredError, openBridgeInstallModal, fetchBridgeStatus } = await import('./bridge.js?v=1');
+                        const { isBridgeRequiredError, openBridgeInstallModal, fetchBridgeStatus } = await import('./bridge.js?v=6');
                         if (isBridgeRequiredError(bridgeDetail) || response.status === 503) {
                             await fetchBridgeStatus();
                             openBridgeInstallModal();

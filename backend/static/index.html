@@ -23,7 +23,7 @@
             } catch (e) {}
         })();
     </script>
-    <link rel="stylesheet" href="/static/css/style.css?v=38">
+    <link rel="stylesheet" href="/static/css/style.css?v=43">
     <link rel="stylesheet" href="/static/fonts/fonts.css?v=1">
     <!-- 三方库本地托管(markdown-it / dompurify / highlight.js),避免 jsdelivr CDN 在国内超时 -->
     <script src="/static/vendor/markdown-it.min.js?v=14.0.0"></script>
@@ -138,8 +138,8 @@
             <!-- Messages will be injected here -->
             <div id="hero-section" class="hero-container">
                 <div class="hero-header">
-                    <img class="hero-brand-logo hero-brand-logo-light" src="/static/assets/justsearch-logo.png?v=8" alt="JustSearch">
-                    <img class="hero-brand-logo hero-brand-logo-dark" src="/static/assets/justsearch-logo-dark.png?v=8" alt="JustSearch">
+                    <img class="hero-brand-logo hero-brand-logo-light" src="/static/assets/justsearch-logo.png?v=9" alt="JustSearch">
+                    <img class="hero-brand-logo hero-brand-logo-dark" src="/static/assets/justsearch-logo-dark.png?v=9" alt="JustSearch">
                 </div>
                 <div class="hero-subtitle">
                     提出复杂问题，获取基于实时搜索的全面答案。
@@ -294,6 +294,11 @@
                             <button class="settings-tab-btn" data-tab="api" role="tab" aria-selected="false" aria-controls="tab-api">
                                 <span class="material-symbols-rounded">key</span>
                                 <span>API 设置</span>
+                            </button>
+                            <button class="settings-tab-btn" data-tab="bridge" role="tab" aria-selected="false" aria-controls="tab-bridge">
+                                <span class="material-symbols-rounded">extension</span>
+                                <span>浏览器桥接</span>
+                                <span id="settings-bridge-tab-dot" class="settings-tab-status-dot" data-state="unknown" aria-hidden="true"></span>
                             </button>
                             <button class="settings-tab-btn" data-tab="system" role="tab" aria-selected="false" aria-controls="tab-system">
                                 <span class="material-symbols-rounded">database</span>
@@ -469,6 +474,203 @@
                             </div>
                         </div>
 
+                        <!-- Tab: Browser Bridge -->
+                        <div id="tab-bridge" class="settings-panel" role="tabpanel">
+                            <div class="settings-section-heading">
+                                <div class="settings-section-kicker">Chrome Bridge</div>
+                                <div class="panel-header-title">浏览器桥接</div>
+                            </div>
+
+                            <div class="settings-card" id="settings-bridge-hero" data-state="unknown">
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <div class="bridge-status-label-row">
+                                            <span id="settings-bridge-status-dot" class="settings-tab-status-dot bridge-inline-dot" data-state="unknown" aria-hidden="true"></span>
+                                            <label id="settings-bridge-status-title">检测中…</label>
+                                            <span id="settings-bridge-status-badge" class="settings-save-status" data-state="unknown">检测中</span>
+                                        </div>
+                                        <span id="settings-bridge-status-subtitle" class="field-desc">正在查询桥接状态</span>
+                                    </div>
+                                    <div class="bridge-actions-row">
+                                        <button type="button" id="settings-bridge-recheck-btn" class="secondary-btn bridge-settings-btn">
+                                            <span class="material-symbols-rounded">refresh</span>
+                                            <span>重新检测</span>
+                                        </button>
+                                        <button type="button" id="settings-bridge-download-btn" class="secondary-btn bridge-settings-btn">
+                                            <span class="material-symbols-rounded">download</span>
+                                            <span>下载扩展</span>
+                                        </button>
+                                        <button type="button" id="settings-bridge-install-btn" class="secondary-btn bridge-settings-btn">
+                                            <span class="material-symbols-rounded">menu_book</span>
+                                            <span>安装说明</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div id="settings-bridge-update-callout" class="bridge-inline-notice is-warning" hidden aria-hidden="true">
+                                    <div class="bridge-inline-notice-copy">
+                                        <div class="bridge-inline-notice-title">扩展不是最新版本</div>
+                                        <p id="settings-bridge-update-text" class="field-desc">请下载最新扩展包并在 Chrome 中重新加载。</p>
+                                    </div>
+                                    <button type="button" id="settings-bridge-update-download-btn" class="secondary-btn bridge-settings-btn">
+                                        <span class="material-symbols-rounded">download</span>
+                                        <span>下载最新</span>
+                                    </button>
+                                </div>
+
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <label>扩展名称</label>
+                                        <span class="field-desc">当前连接的 Chrome 扩展名称。</span>
+                                    </div>
+                                    <span id="settings-bridge-extension-name" class="bridge-field-value">—</span>
+                                </div>
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <label>当前版本</label>
+                                        <span class="field-desc">已连接扩展上报的版本号。</span>
+                                    </div>
+                                    <span id="settings-bridge-extension-version" class="bridge-field-value">—</span>
+                                </div>
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <label>服务端最新</label>
+                                        <span class="field-desc">当前 JustSearch 自带的扩展包版本。</span>
+                                    </div>
+                                    <span id="settings-bridge-latest-version" class="bridge-field-value">—</span>
+                                </div>
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <label>版本状态</label>
+                                        <span class="field-desc">与服务端扩展包比较后的结果。</span>
+                                    </div>
+                                    <span id="settings-bridge-version-status" class="settings-save-status" data-state="unknown">—</span>
+                                </div>
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <label>期望 WS 地址</label>
+                                        <span class="field-desc">扩展弹窗中的地址应与此一致。</span>
+                                    </div>
+                                    <div class="bridge-value-with-action">
+                                        <code id="settings-bridge-ws-url" class="bridge-field-code">ws://127.0.0.1:38975/justsearch</code>
+                                        <button type="button" id="settings-bridge-copy-ws-btn" class="secondary-btn bridge-settings-btn compact">
+                                            <span class="material-symbols-rounded">content_copy</span>
+                                            <span>复制</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <label>最近检测</label>
+                                        <span class="field-desc">上次从 /api/health 刷新状态的时间。</span>
+                                    </div>
+                                    <span id="settings-bridge-last-checked" class="bridge-field-value">—</span>
+                                </div>
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <label>扩展实例 ID</label>
+                                        <span class="field-desc">用于区分本机已连接的扩展实例。</span>
+                                    </div>
+                                    <code id="settings-bridge-instance-id" class="bridge-field-code">—</code>
+                                </div>
+                                <div class="form-group settings-field-row bridge-field-stack">
+                                    <div class="settings-field-copy">
+                                        <label>安装提示</label>
+                                        <span id="settings-bridge-install-hint" class="field-desc">Chrome → chrome://extensions → 开发者模式 → 加载已解压扩展</span>
+                                    </div>
+                                </div>
+                                <div class="form-group settings-field-row bridge-field-stack">
+                                    <div class="settings-field-copy">
+                                        <label>端口 / Docker 说明</label>
+                                        <span id="settings-bridge-host-tip" class="field-desc">扩展弹窗中的地址须与上方「期望 WS 地址」一致。Docker 部署时注意宿主端口映射。</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="settings-section-heading" style="margin-top: 18px;">
+                                <div class="settings-section-kicker">Preferences</div>
+                                <div class="panel-header-title">体验选项</div>
+                            </div>
+                            <div class="settings-card">
+                                <div class="form-group toggle-group settings-field-row">
+                                    <div class="toggle-info settings-field-copy">
+                                        <label for="bridge-require-before-send-input" class="toggle-label">发送前强制检查桥接</label>
+                                        <span class="toggle-desc">开启后，未连接扩展时会拦截发送并弹出安装引导（推荐）。</span>
+                                    </div>
+                                    <label class="ios-switch">
+                                        <input type="checkbox" id="bridge-require-before-send-input" checked role="switch" aria-label="发送前强制检查桥接">
+                                        <span class="ios-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="form-group toggle-group settings-field-row">
+                                    <div class="toggle-info settings-field-copy">
+                                        <label for="bridge-show-banner-input" class="toggle-label">未连接时显示输入区横幅</label>
+                                        <span class="toggle-desc">在输入框上方显示橙色提醒条。</span>
+                                    </div>
+                                    <label class="ios-switch">
+                                        <input type="checkbox" id="bridge-show-banner-input" checked role="switch" aria-label="未连接时显示输入区横幅">
+                                        <span class="ios-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="form-group toggle-group settings-field-row">
+                                    <div class="toggle-info settings-field-copy">
+                                        <label for="bridge-toast-on-change-input" class="toggle-label">连接状态变化时 Toast</label>
+                                        <span class="toggle-desc">扩展连上或断开时弹出简短提示。</span>
+                                    </div>
+                                    <label class="ios-switch">
+                                        <input type="checkbox" id="bridge-toast-on-change-input" checked role="switch" aria-label="连接状态变化时 Toast">
+                                        <span class="ios-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="form-group settings-field-row">
+                                    <div class="settings-field-copy">
+                                        <label for="bridge-poll-interval-select">状态轮询间隔</label>
+                                        <span class="field-desc">仅在页面可见时轮询。选择「手动」后只在打开本页或点击检测时刷新。</span>
+                                    </div>
+                                    <select id="bridge-poll-interval-select" aria-label="桥接状态轮询间隔">
+                                        <option value="3">3 秒</option>
+                                        <option value="5" selected>5 秒</option>
+                                        <option value="15">15 秒</option>
+                                        <option value="0">手动</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="settings-section-heading" style="margin-top: 18px;">
+                                <div class="settings-section-kicker">Help</div>
+                                <div class="panel-header-title">安装与排障</div>
+                            </div>
+                            <div class="settings-card">
+                                <div class="form-group settings-field-row bridge-field-stack">
+                                    <div class="settings-field-copy">
+                                        <label>安装步骤</label>
+                                        <span class="field-desc">扩展需在本机 Chrome 中加载；Web 设置只展示状态，不能修改扩展连接地址。</span>
+                                    </div>
+                                </div>
+                                <ol class="bridge-help-steps">
+                                    <li>
+                                        打开 <code>chrome://extensions</code>
+                                        <button type="button" id="settings-bridge-copy-extensions-btn" class="secondary-btn bridge-settings-btn compact">
+                                            <span class="material-symbols-rounded">content_copy</span>
+                                            <span>复制</span>
+                                        </button>
+                                    </li>
+                                    <li>开启右上角「开发者模式」</li>
+                                    <li>下载扩展包并解压，或使用仓库中的 <code>extension/</code> 目录</li>
+                                    <li>点击「加载已解压的扩展程序」，选择 <code>justsearch-bridge</code>（或 <code>extension</code>）文件夹</li>
+                                    <li>在扩展弹窗确认绿色「已连接」，地址与上方期望 WS 一致</li>
+                                </ol>
+                                <div class="form-group settings-field-row bridge-field-stack">
+                                    <div class="settings-field-copy">
+                                        <label>常见问题</label>
+                                        <span class="field-desc"><strong>已安装仍未连接：</strong>检查扩展 popup 地址；Docker 下宿主端口可能是 <code>38978</code> 而非 <code>38975</code>。</span>
+                                        <span class="field-desc"><strong>标签页顶部黄条：</strong>扩展通过 debugger 控制标签时的正常提示，任务结束后会消失。</span>
+                                        <span class="field-desc"><strong>只能连一个扩展：</strong>后连接的实例会顶替先前连接。</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Tab 4: System Maintenance -->
                         <div id="tab-system" class="settings-panel" role="tabpanel">
                             <div class="settings-section-heading">
@@ -531,8 +733,8 @@
                         <div id="tab-about" class="settings-panel" role="tabpanel">
                             <div class="about-hero">
                                 <div class="about-logo">
-                                    <img class="about-logo-img about-logo-light" src="/static/assets/justsearch-logo.png?v=8" alt="JustSearch">
-                                    <img class="about-logo-img about-logo-dark" src="/static/assets/justsearch-logo-dark.png?v=8" alt="JustSearch">
+                                    <img class="about-logo-img about-logo-light" src="/static/assets/justsearch-logo.png?v=9" alt="JustSearch">
+                                    <img class="about-logo-img about-logo-dark" src="/static/assets/justsearch-logo-dark.png?v=9" alt="JustSearch">
                                 </div>
                                 <a class="about-version-pill" href="https://github.com/yeahhe365/JustSearch/releases" target="_blank" rel="noopener noreferrer">
                                     <span id="about-version">v?.?.?</span>
@@ -641,6 +843,6 @@
         </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=62"></script>
+    <script type="module" src="/static/js/main.js?v=67"></script>
 </body>
 </html>

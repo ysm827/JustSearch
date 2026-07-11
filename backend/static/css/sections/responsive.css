@@ -92,13 +92,8 @@
     }
 
     .hero-brand-logo {
-        width: min(360px, 90vw);
-        height: auto;
+        max-width: min(340px, 88vw);
         max-height: 72px;
-    }
-
-    .hero-header {
-        gap: 10px;
     }
 
     .hero-subtitle {
@@ -193,8 +188,7 @@
 /* Small phones */
 @media (max-width: 400px) {
     .hero-brand-logo {
-        width: min(300px, 92vw);
-        height: auto;
+        max-width: min(280px, 90vw);
         max-height: 60px;
     }
 

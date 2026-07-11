@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from typing import Any, Optional
 
@@ -54,12 +55,34 @@ class ExtensionConnection:
         self.websocket = websocket
         self.id = uuid.uuid4().hex[:12]
         self.extension_instance_id: Optional[str] = None
+        self.extension_name: Optional[str] = None
+        self.extension_version: Optional[str] = None
+        self.extension_last_hello_at: Optional[float] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._closed = False
         # JSON-RPC 客户端侧:pending 请求的 Future。
         self._next_id = 1
         self._pending: dict[int, asyncio.Future] = {}
         self._notification_handlers: dict[str, list] = {}
+
+    def apply_extension_meta(self, params: Any) -> None:
+        """Update identity fields from extension hello/ping payloads."""
+        if not isinstance(params, dict):
+            return
+        version = params.get("version") or params.get("extension_version")
+        if version is not None and str(version).strip():
+            self.extension_version = str(version).strip()
+        name = params.get("name") or params.get("extension_name")
+        if name is not None and str(name).strip():
+            self.extension_name = str(name).strip()
+        instance_id = (
+            params.get("instance_id")
+            or params.get("extension_instance_id")
+            or params.get("extensionInstanceId")
+        )
+        if instance_id is not None and str(instance_id).strip():
+            self.extension_instance_id = str(instance_id).strip()
+        self.extension_last_hello_at = time.time()
 
     async def serve(self) -> None:
         """读循环:收扩展发来的消息,分发到响应/通知 handler。"""
@@ -98,13 +121,24 @@ class ExtensionConnection:
                 fut.set_result(msg.get("result"))
             return
 
-        # 通知(无 id,有 method):如 ping。
+        # 通知(无 id,有 method):如 hello / ping。
         method = msg.get("method")
         if method and "id" not in msg:
+            params = msg.get("params") or {}
+            if method in ("hello", "ping", "register"):
+                self.apply_extension_meta(params)
+                if method == "hello":
+                    logger.info(
+                        "[bridge] extension hello conn_id=%s name=%s version=%s instance=%s",
+                        self.id,
+                        self.extension_name,
+                        self.extension_version,
+                        self.extension_instance_id,
+                    )
             handlers = self._notification_handlers.get(method, [])
             for h in handlers:
                 try:
-                    await h(msg.get("params") or {})
+                    await h(params if isinstance(params, dict) else {})
                 except Exception as e:
                     logger.warning("[bridge] notification handler %s error: %s", method, e)
             return
@@ -263,7 +297,9 @@ class BridgeClient:
             conn = _extension_connection
             if conn is None or conn._closed:
                 return False
-            await asyncio.wait_for(conn.call("ping", {}, timeout_ms=3000), timeout=5.0)
+            result = await asyncio.wait_for(conn.call("ping", {}, timeout_ms=3000), timeout=5.0)
+            if isinstance(result, dict):
+                conn.apply_extension_meta(result)
             return True
         except Exception:
             return False
@@ -507,3 +543,23 @@ def get_ws_port() -> int:
 def is_extension_connected() -> bool:
     conn = _extension_connection
     return conn is not None and not conn._closed
+
+
+def get_extension_info() -> dict:
+    """Return connection identity for /api/health and settings UI."""
+    conn = _extension_connection
+    if conn is None or conn._closed:
+        return {
+            "connected": False,
+            "conn_id": None,
+            "name": None,
+            "version": None,
+            "instance_id": None,
+        }
+    return {
+        "connected": True,
+        "conn_id": conn.id,
+        "name": conn.extension_name,
+        "version": conn.extension_version,
+        "instance_id": conn.extension_instance_id,
+    }

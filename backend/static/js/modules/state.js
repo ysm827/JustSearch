@@ -10,12 +10,20 @@ export const state = {
     bridgeConnected: null,
     bridgeWsUrl: 'ws://127.0.0.1:38975/justsearch',
     bridgeDownloadUrl: '/api/extension/download',
+    bridgeLastCheckedAt: null,
+    bridgeExtensionVersion: null,
+    bridgeExtensionName: null,
+    bridgeLatestExtensionVersion: null,
+    bridgeUpdateAvailable: false,
     lastActivityTime: Date.now(),
 };
 
 const BOOLEAN_SETTING_DEFAULTS = {
     interactive_search: true,
     live_artifacts_mode: false,
+    bridge_require_before_send: true,
+    bridge_show_banner: true,
+    bridge_toast_on_change: true,
 };
 
 export function coerceBooleanSetting(value, fallback = false) {

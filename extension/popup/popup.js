@@ -38,6 +38,12 @@ async function init() {
   const idStored = await chrome.storage.local.get("extensionInstanceId");
   instanceIdEl.textContent = idStored.extensionInstanceId ?? "—";
 
+  const versionEl = document.getElementById("extension-version");
+  if (versionEl) {
+    const manifest = chrome.runtime.getManifest?.() || {};
+    versionEl.textContent = manifest.version ? `v${manifest.version}` : "—";
+  }
+
   saveBtn.addEventListener("click", async () => {
     const url = urlInput.value.trim();
     if (!url) return;

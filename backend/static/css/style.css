@@ -1404,14 +1404,18 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 14px;
+    width: 100%;
     margin-bottom: 12px;
 }
 
 .hero-brand-logo {
-    width: min(460px, 88vw);
+    display: block;
+    width: auto;
     height: auto;
-    max-height: 96px;
+    max-width: min(420px, 86vw);
+    max-height: 88px;
+    margin-left: auto;
+    margin-right: auto;
     object-fit: contain;
     object-position: center;
     border-radius: 0;
@@ -1441,6 +1445,8 @@ body {
     margin-top: 12px;
     line-height: 1.6;
     max-width: 480px;
+    width: 100%;
+    text-align: center;
 }
 
 /* ========================================
@@ -6149,13 +6155,8 @@ body.live-artifacts-open .live-artifacts-panel {
     }
 
     .hero-brand-logo {
-        width: min(360px, 90vw);
-        height: auto;
+        max-width: min(340px, 88vw);
         max-height: 72px;
-    }
-
-    .hero-header {
-        gap: 10px;
     }
 
     .hero-subtitle {
@@ -6250,8 +6251,7 @@ body.live-artifacts-open .live-artifacts-panel {
 /* Small phones */
 @media (max-width: 400px) {
     .hero-brand-logo {
-        width: min(300px, 92vw);
-        height: auto;
+        max-width: min(280px, 90vw);
         max-height: 60px;
     }
 
@@ -6807,4 +6807,244 @@ body.live-artifacts-open .live-artifacts-panel {
 [data-theme="dark"] .main-header {
     border-bottom: none;
     box-shadow: none;
+}
+
+/* ===== Bridge settings (aligned with general settings layout) ===== */
+.settings-tab-status-dot,
+.bridge-inline-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #94a3b8;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #94a3b8 22%, transparent);
+}
+
+.settings-tab-btn .settings-tab-status-dot {
+    margin-left: auto;
+}
+
+.settings-tab-status-dot[data-state="connected"],
+.bridge-inline-dot[data-state="connected"] {
+    background: #22c55e;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 28%, transparent);
+}
+
+.settings-tab-status-dot[data-state="disconnected"],
+.bridge-inline-dot[data-state="disconnected"] {
+    background: #ef4444;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #ef4444 28%, transparent);
+}
+
+.settings-tab-status-dot[data-state="outdated"],
+.bridge-inline-dot[data-state="outdated"] {
+    background: #f59e0b;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #f59e0b 28%, transparent);
+}
+
+.bridge-status-label-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+}
+
+.bridge-status-label-row label {
+    margin: 0;
+}
+
+.bridge-status-label-row .settings-save-status {
+    min-height: 26px;
+    padding: 3px 8px;
+    font-size: 11.5px;
+}
+
+.bridge-actions-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+    flex-shrink: 0;
+}
+
+.bridge-settings-btn {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 6px;
+    width: auto !important;
+    min-height: 34px;
+    padding: 7px 12px !important;
+    border-radius: var(--amc-radius) !important;
+    font-size: 12px !important;
+    font-weight: 650 !important;
+    white-space: nowrap;
+}
+
+.bridge-settings-btn .material-symbols-rounded {
+    font-size: 16px;
+}
+
+.bridge-settings-btn.compact {
+    min-height: 30px;
+    padding: 5px 10px !important;
+}
+
+.bridge-field-value {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: right;
+    max-width: min(320px, 48vw);
+    word-break: break-word;
+}
+
+.bridge-field-code {
+    display: inline-block;
+    max-width: min(360px, 52vw);
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    word-break: break-all;
+    text-align: left;
+}
+
+.bridge-value-with-action {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    max-width: min(420px, 58vw);
+    min-width: 0;
+}
+
+.bridge-value-with-action .bridge-field-code {
+    max-width: none;
+    flex: 1;
+    min-width: 0;
+}
+
+.bridge-field-stack {
+    align-items: flex-start;
+}
+
+.bridge-field-stack .settings-field-copy {
+    width: 100%;
+}
+
+.bridge-inline-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 0;
+    border-top: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border-light);
+}
+
+.bridge-inline-notice[hidden] {
+    display: none !important;
+}
+
+.bridge-inline-notice-copy {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bridge-inline-notice-title {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 650;
+}
+
+.bridge-inline-notice.is-warning .bridge-inline-notice-title {
+    color: var(--warning);
+}
+
+.bridge-help-steps {
+    margin: 0;
+    padding: 4px 0 8px 1.2rem;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.bridge-help-steps li + li {
+    margin-top: 6px;
+}
+
+.bridge-help-steps code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+    border: 1px solid var(--border-light);
+}
+
+.bridge-help-steps .bridge-settings-btn {
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* Version status badges reuse settings-save-status color language */
+#settings-bridge-version-status[data-state="latest"],
+#settings-bridge-status-badge[data-state="connected"] {
+    border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+    background: var(--success-light);
+    color: var(--success);
+}
+
+#settings-bridge-version-status[data-state="outdated"],
+#settings-bridge-status-badge[data-state="outdated"],
+#settings-bridge-status-badge[data-state="disconnected"] {
+    border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+    background: var(--warning-light);
+    color: var(--warning);
+}
+
+#settings-bridge-version-status[data-state="newer"] {
+    border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+    background: var(--primary-light);
+    color: var(--primary);
+}
+
+#settings-bridge-extension-version.is-outdated {
+    color: var(--warning);
+}
+
+#settings-bridge-extension-version.is-ready {
+    color: var(--success);
+}
+
+@media (max-width: 720px) {
+    #tab-bridge .settings-field-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .bridge-actions-row,
+    .bridge-value-with-action {
+        justify-content: flex-start;
+        max-width: none;
+        width: 100%;
+    }
+
+    .bridge-field-value,
+    .bridge-field-code {
+        max-width: none;
+        text-align: left;
+    }
+
+    .bridge-inline-notice {
+        flex-direction: column;
+        align-items: stretch;
+    }
 }

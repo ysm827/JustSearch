@@ -68,6 +68,8 @@ export class WebSocketTransport {
       this._clearReconnectTimeout();
       this._clearReconnectAlarm();
       this._updateStatus("connected");
+      // 连上后立刻上报扩展版本/实例 ID,供后端 / 设置页展示。
+      this._sendHello().catch(() => {});
     };
     socket.onmessage = (event) => {
       if (this.socket !== socket) return;
@@ -142,12 +144,36 @@ export class WebSocketTransport {
     }
   };
 
+  async _collectIdentity() {
+    const manifest = chrome.runtime.getManifest?.() || {};
+    let instanceId = null;
+    try {
+      const stored = await chrome.storage.local.get("extensionInstanceId");
+      instanceId = stored.extensionInstanceId || null;
+    } catch {
+      // storage 可能暂不可用
+    }
+    return {
+      name: typeof manifest.name === "string" ? manifest.name : "JustSearch Bridge",
+      version: typeof manifest.version === "string" ? manifest.version : "0.0.0",
+      instance_id: instanceId,
+      ts: Date.now(),
+    };
+  }
+
+  async _sendHello() {
+    if (!this._isConnected()) return;
+    const identity = await this._collectIdentity();
+    this.sendMessage({ jsonrpc: "2.0", method: "hello", params: identity });
+  }
+
   async _heartbeat() {
     // WS 活跃时 service worker 不会被回收,但仍定期 ping 让后端知道扩展还在。
     if (!this._isConnected()) return;
     try {
-      // 直接发一个 ping 通知,不等响应。
-      this.sendMessage({ jsonrpc: "2.0", method: "ping", params: { ts: Date.now() } });
+      const identity = await this._collectIdentity();
+      // 直接发一个 ping 通知,不等响应;顺带刷新版本元数据。
+      this.sendMessage({ jsonrpc: "2.0", method: "ping", params: identity });
     } catch {
       // 忽略:下一轮重连会处理。
     }

@@ -21,6 +21,10 @@
     "max_iterations": 5,
     "interactive_search": true,
     "live_artifacts_mode": false,
+    "bridge_require_before_send": true,
+    "bridge_show_banner": true,
+    "bridge_toast_on_change": true,
+    "bridge_poll_interval_sec": 5,
     "base_font_size": 16,
     "live_artifacts_font_size": 16
 }

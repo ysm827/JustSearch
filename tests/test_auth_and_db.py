@@ -3798,6 +3798,20 @@ def test_health_endpoint_includes_bridge_install_metadata(monkeypatch):
         "backend.app.extension_bridge.get_ws_endpoint",
         lambda: "ws://127.0.0.1:38975/justsearch",
     )
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.get_extension_info",
+        lambda: {
+            "connected": False,
+            "conn_id": None,
+            "name": None,
+            "version": None,
+            "instance_id": None,
+        },
+    )
+    monkeypatch.setattr(
+        "backend.app.routers.stats.get_bundled_extension_version",
+        lambda: "0.1.1",
+    )
 
     app = FastAPI()
     app.include_router(router)
@@ -3811,11 +3825,117 @@ def test_health_endpoint_includes_bridge_install_metadata(monkeypatch):
         payload = response.json()
         assert payload["browser"] is False
         assert payload["bridge"]["extension_connected"] is False
+        assert payload["bridge"]["extension_version"] is None
+        assert payload["bridge"]["latest_extension_version"] == "0.1.1"
+        assert payload["bridge"]["extension_version_status"] == "disconnected"
+        assert payload["bridge"]["update_available"] is False
         assert payload["bridge"]["download_url"] == "/api/extension/download"
         assert "38975" in payload["bridge"]["ws_url"]
         assert "chrome://extensions" in payload["bridge"]["install_hint"]
 
     asyncio.run(run())
+
+
+def test_health_endpoint_reports_extension_version_when_connected(monkeypatch):
+    from backend.app.routers.stats import router
+
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.is_extension_connected",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.get_ws_endpoint",
+        lambda: "ws://127.0.0.1:38975/justsearch",
+    )
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.get_extension_info",
+        lambda: {
+            "connected": True,
+            "conn_id": "abc123",
+            "name": "JustSearch Bridge",
+            "version": "0.1.1",
+            "instance_id": "inst-1",
+        },
+    )
+    monkeypatch.setattr(
+        "backend.app.routers.stats.get_bundled_extension_version",
+        lambda: "0.1.1",
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/health")
+
+        assert response.status_code == 200
+        bridge = response.json()["bridge"]
+        assert bridge["extension_connected"] is True
+        assert bridge["extension_name"] == "JustSearch Bridge"
+        assert bridge["extension_version"] == "0.1.1"
+        assert bridge["extension_instance_id"] == "inst-1"
+        assert bridge["conn_id"] == "abc123"
+        assert bridge["latest_extension_version"] == "0.1.1"
+        assert bridge["extension_version_status"] == "latest"
+        assert bridge["update_available"] is False
+        assert bridge["is_latest"] is True
+
+    asyncio.run(run())
+
+
+def test_health_endpoint_flags_outdated_extension_version(monkeypatch):
+    from backend.app.routers.stats import router
+
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.is_extension_connected",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.get_ws_endpoint",
+        lambda: "ws://127.0.0.1:38975/justsearch",
+    )
+    monkeypatch.setattr(
+        "backend.app.extension_bridge.get_extension_info",
+        lambda: {
+            "connected": True,
+            "conn_id": "abc123",
+            "name": "JustSearch Bridge",
+            "version": "0.1.0",
+            "instance_id": "inst-1",
+        },
+    )
+    monkeypatch.setattr(
+        "backend.app.routers.stats.get_bundled_extension_version",
+        lambda: "0.1.1",
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/health")
+
+        bridge = response.json()["bridge"]
+        assert bridge["extension_version"] == "0.1.0"
+        assert bridge["latest_extension_version"] == "0.1.1"
+        assert bridge["extension_version_status"] == "outdated"
+        assert bridge["update_available"] is True
+        assert bridge["is_latest"] is False
+
+    asyncio.run(run())
+
+
+def test_compare_extension_versions_handles_semver_parts():
+    from backend.app.routers.stats import compare_extension_versions
+
+    assert compare_extension_versions("0.1.0", "0.1.1") == -1
+    assert compare_extension_versions("0.1.1", "0.1.1") == 0
+    assert compare_extension_versions("0.2.0", "0.1.9") == 1
+    assert compare_extension_versions("v1.0.0", "1.0") == 0
 
 
 def test_check_search_engines_reports_availability(monkeypatch):

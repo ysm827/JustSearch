@@ -1,5 +1,5 @@
 import { authFetch } from './auth.js?v=1';
-import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=2';
+import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=3';
 import { showToast } from './toast.js';
 import { elements, showConfirm } from './ui.js?v=25';
 import { renderHistory } from './history-view.js?v=23';
@@ -9,13 +9,19 @@ import {
     isUnsupportedGemini25Model,
     splitModelItem,
 } from './provider-models.js?v=1';
-import * as API from './api.js?v=7';
+import * as API from './api.js?v=8';
 import {
     clampBaseFontSize,
     clampLiveArtifactsFontSize,
     resolveBaseFontSize,
     resolveLiveArtifactsFontSize,
 } from './utils.js?v=6';
+import {
+    applyBridgePreferencesFromSettings,
+    fetchBridgeStatus,
+    normalizeBridgePollIntervalSec,
+    wireBridgeSettingsPanel,
+} from './bridge.js?v=6';
 
 const WORKFLOW_STEPS = [
     { id: 'analysis', label: '问题分析' },
@@ -82,6 +88,10 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
             panel.classList.toggle('active', panel.id === `tab-${activeTabId}`);
         });
         safeSetLocalStorageItem(SETTINGS_LAST_TAB_STORAGE_KEY, activeTabId);
+        if (activeTabId === 'bridge') {
+            wireBridgeSettingsPanel();
+            fetchBridgeStatus().catch(() => {});
+        }
     }
 
     tabs.forEach(tab => {
@@ -116,6 +126,8 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         await updateVersionDisplay();
         await API.fetchSettings();
         await populateSettingsForm(rememberCurrentSettingsPayload);
+        wireBridgeSettingsPanel();
+        fetchBridgeStatus().catch(() => {});
     };
 
     settingsBtn.addEventListener('click', openSettings);
@@ -324,6 +336,10 @@ export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSe
         'interactive-search-input',
         'base-font-size-input',
         'live-artifacts-font-size-input',
+        'bridge-require-before-send-input',
+        'bridge-show-banner-input',
+        'bridge-toast-on-change-input',
+        'bridge-poll-interval-select',
     ];
 
     autoSaveInputs.forEach(id => {
@@ -476,9 +492,28 @@ function fillSettingsForm(settings) {
             settings.default_provider_id || '',
         );
         document.getElementById('interactive-search-input').checked = coerceBooleanSetting(settings.interactive_search, true);
+        const requireBridgeInput = document.getElementById('bridge-require-before-send-input');
+        if (requireBridgeInput) {
+            requireBridgeInput.checked = coerceBooleanSetting(settings.bridge_require_before_send, true);
+        }
+        const showBannerInput = document.getElementById('bridge-show-banner-input');
+        if (showBannerInput) {
+            showBannerInput.checked = coerceBooleanSetting(settings.bridge_show_banner, true);
+        }
+        const toastOnChangeInput = document.getElementById('bridge-toast-on-change-input');
+        if (toastOnChangeInput) {
+            toastOnChangeInput.checked = coerceBooleanSetting(settings.bridge_toast_on_change, true);
+        }
+        const pollIntervalSelect = document.getElementById('bridge-poll-interval-select');
+        if (pollIntervalSelect) {
+            pollIntervalSelect.value = String(
+                normalizeBridgePollIntervalSec(settings.bridge_poll_interval_sec, 5)
+            );
+        }
         updateProviderValidationUI();
         updateProviderCountLabel(collectProvidersForm().length);
         setSettingsSaveStatus('saved');
+        applyBridgePreferencesFromSettings();
     } finally {
         isApplyingSettingsForm = false;
     }
@@ -489,6 +524,10 @@ function collectSettingsForm() {
     const defaultProvider = document.querySelector('input[name="default-provider-radio"]:checked');
     const baseFontSizeInput = document.getElementById('base-font-size-input');
     const liveArtifactsFontSizeInput = document.getElementById('live-artifacts-font-size-input');
+    const requireBridgeInput = document.getElementById('bridge-require-before-send-input');
+    const showBannerInput = document.getElementById('bridge-show-banner-input');
+    const toastOnChangeInput = document.getElementById('bridge-toast-on-change-input');
+    const pollIntervalSelect = document.getElementById('bridge-poll-interval-select');
     return {
         theme: document.getElementById('theme-select').value,
         search_engine: document.getElementById('engine-select').value,
@@ -500,6 +539,19 @@ function collectSettingsForm() {
         providers,
         workflow_step_models: collectWorkflowStepModels(),
         interactive_search: document.getElementById('interactive-search-input').checked,
+        bridge_require_before_send: requireBridgeInput
+            ? requireBridgeInput.checked
+            : coerceBooleanSetting(state.settings?.bridge_require_before_send, true),
+        bridge_show_banner: showBannerInput
+            ? showBannerInput.checked
+            : coerceBooleanSetting(state.settings?.bridge_show_banner, true),
+        bridge_toast_on_change: toastOnChangeInput
+            ? toastOnChangeInput.checked
+            : coerceBooleanSetting(state.settings?.bridge_toast_on_change, true),
+        bridge_poll_interval_sec: normalizeBridgePollIntervalSec(
+            pollIntervalSelect?.value ?? state.settings?.bridge_poll_interval_sec,
+            5
+        ),
     };
 }
 
