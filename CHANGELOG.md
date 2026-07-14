@@ -2,15 +2,20 @@
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-07-15
+
 ### Added
 - **引用定位原文片段（研究可信）**：答案中的 `[n]` 点击后打开证据侧栏，展示论断、原文摘录、匹配状态（已定位/弱匹配/未定位）。后端在生成完成后对 claim→quote 做日期/数字锚定 + token 重叠对齐；SSE 与历史消息下发 `snippet`/`excerpt`/`citations`（不含全文）。Live Artifacts iframe 内引用通过 postMessage 同样打开侧栏。
+- **消息编辑与重新发送**：用户气泡支持编辑后从该轮截断重发；助手气泡支持重新生成。后端 `truncate_from_index` + 数据库截断消息；前端编辑横幅、Esc 取消、ArrowUp 快捷编辑。
 
 ### Changed
 - **正文提取主引擎改为 Defuddle**：扩展新增 `extractContent` RPC，注入 `defuddle.full.js`（与 ToMarkdown / Obsidian Web Clipper 同款）输出 AI 友好 Markdown；薄内容时仍回退站点选择器 + 密度打分 + JSON-LD/OG，并保留 SPA 等待/滚动重试。扩展版本升至 0.2.0（需重新加载扩展）。
 - **正文提取强化（SPA/官方站）**：多策略抽取（站点选择器 → 密度+链接密度打分 → 清洗 body → JSON-LD/OG/轻量 Next 数据回退）；对 openai/anthropic/rust blog 等 SPA 主机自动等待滚动并在“过薄”时重试，缓解官方页只抓到几十字符的问题。
+- 版本升至 2.4.0（`version.py` / `Dockerfile` LABEL）。
 
 ### Fixed
 - **交互模式 `evaluate` 缺 `tab_id`**：`run_interactive_mode` 与 `extract_github_repo_stats` 调用 `BridgeClient.evaluate` 时未传 `tab_id`，触发 `missing 1 required positional argument: 'expression'`，导致深度搜索里的自动点击完全失效。现已按 `(tab_id, expression)` 签名修正，并对非 list 返回值做防护。
+- **Live Artifacts 空白预览**：流式预览将 HTML 写入 `srcdoc` 并在 ready/load 时重同步，避免空壳 iframe 与 postMessage 竞态导致空白。
 
 ### Removed
 - **SearXNG 搜索引擎与 compose 依赖**：浏览器桥接架构下宿主机 Chrome 无法访问 Docker 内网 `searxng:8080`，且与 Google/Bing/DDG 等直连引擎重叠。已移除 `searxng` 服务、`SEARXNG_*` 环境变量、选择器配置与 UI 选项。
