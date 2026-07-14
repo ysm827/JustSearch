@@ -306,6 +306,8 @@ def test_crawler_content_helpers_are_split_out():
 
     assert "async def extract_page_content" in content_source
     assert "async def extract_og_metadata" in content_source
+    assert "_try_defuddle_extract" in content_source
+    assert "extract_content" in content_source
     # 桥接重构后 install_resource_blocker 已移除(真实浏览器无需 page.route 拦截)。
     assert "install_resource_blocker" not in content_source
     assert "const rawHref = a.getAttribute('href')" in content_source
@@ -314,6 +316,16 @@ def test_crawler_content_helpers_are_split_out():
     assert "_JS_EXTRACT_CONTENT" not in page_crawler_source
     assert "def _extract_og_metadata" not in page_crawler_source
     assert "def _install_resource_blocker" not in page_crawler_source
+
+    # Defuddle is bundled in the bridge extension (ToMarkdown-compatible engine).
+    extension_root = PROJECT_ROOT / "extension"
+    assert (extension_root / "lib" / "defuddle.full.js").is_file()
+    assert (extension_root / "content" / "defuddle-extract.js").is_file()
+    handlers_source = (extension_root / "lib" / "handlers.js").read_text(encoding="utf-8")
+    assert "extractContent" in handlers_source
+    assert "defuddle.full.js" in handlers_source
+    bridge_source = (PROJECT_ROOT / "backend/app/extension_bridge.py").read_text(encoding="utf-8")
+    assert "async def extract_content" in bridge_source
 
 
 def test_legacy_migration_is_split_from_database_module():
@@ -803,16 +815,14 @@ def test_settings_modal_has_search_engine_availability_check():
     assert ".engine-check-result.unavailable" in settings_css
 
 
-def test_docker_compose_wires_self_hosted_searxng():
+def test_docker_compose_does_not_include_searxng():
     compose_source = (PROJECT_ROOT / "docker-compose.yml").read_text(
         encoding="utf-8"
     )
 
-    assert "searxng:" in compose_source
-    assert "image: searxng/searxng:latest" in compose_source
-    assert "depends_on:" in compose_source
-    assert "- searxng" in compose_source
-    assert "SEARXNG_SEARCH_URL=${SEARXNG_SEARCH_URL:-http://searxng:8080/search?q={query}&format=html}" in compose_source
+    assert "searxng" not in compose_source.lower()
+    assert "SEARXNG" not in compose_source
+    assert "justsearch:" in compose_source or "container_name: justsearch" in compose_source
 
 
 def test_runtime_security_defaults_are_not_wide_open():
@@ -1035,15 +1045,15 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "hasCitationSources" in ui_source
     assert "normalizeCitationSources" in ui_source
     assert "hasCitationSources" in chat_source
-    assert "from './source-renderer.js?v=8'" in ui_source
-    assert "from './source-renderer.js?v=8'" in chat_source
-    assert "from './ui.js?v=25'" in (
+    assert "from './source-renderer.js?v=9'" in ui_source
+    assert "from './source-renderer.js?v=9'" in chat_source
+    assert "from './ui.js?v=27'" in (
         PROJECT_ROOT / "backend/static/js/modules/history-view.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=25'" in (
+    assert "from './ui.js?v=27'" in (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=25'" in (
+    assert "from './ui.js?v=27'" in (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
@@ -1090,8 +1100,8 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     ).read_text(encoding="utf-8")
 
     # style.css 现为各分片拼接（不再用 @import）；index.html 引用带缓存版本号的单文件
-    assert 'href="/static/css/style.css?v=36"' in index_source
-    assert 'src="/static/js/main.js?v=61"' in index_source
+    assert 'href="/static/css/style.css?v=45"' in index_source
+    assert 'src="/static/js/main.js?v=71"' in index_source
     assert "=== base.css (inlined) ===" in style_source
     assert "=== sidebar.css (inlined) ===" in style_source
     assert "=== chat.css (inlined) ===" in style_source
@@ -1100,15 +1110,16 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "=== live-artifacts.css (inlined) ===" in style_source
     assert "=== responsive.css (inlined) ===" in style_source
     assert "=== polish.css (inlined) ===" in style_source
+    assert "edit-message-banner" in style_source
     assert "from './modules/auth.js?v=1'" in main_source
-    assert "from './modules/state.js?v=2'" in main_source
-    assert "from './modules/ui.js?v=25'" in main_source
-    assert "from './modules/chat.js?v=32'" in main_source
+    assert "from './modules/state.js?v=5'" in main_source
+    assert "from './modules/ui.js?v=27'" in main_source
+    assert "from './modules/chat.js?v=36'" in main_source
     assert "from './modules/history-view.js?v=23'" in main_source
-    assert "from './modules/settings-modal.js?v=46'" in main_source
-    assert "from './modules/sidebar.js?v=17'" in main_source
+    assert "from './modules/settings-modal.js?v=50'" in main_source
+    assert "from './modules/sidebar.js?v=19'" in main_source
     assert "from './modules/model-selector.js?v=15'" in main_source
-    assert "from './modules/api.js?v=7'" in main_source
+    assert "from './modules/api.js?v=11'" in main_source
     assert "import('./modules/utils.js?v=6')" in main_source
     assert "search-intensity.js?v=1" in (PROJECT_ROOT / "backend/static/js/modules/chat.js").read_text(encoding="utf-8")
     assert 'id="search-intensity-bar"' in index_source
@@ -1339,7 +1350,15 @@ def test_message_side_actions_follow_amc_interaction_pattern():
     assert "createMessageShell('assistant')" in chat_source
     assert "contentWrapper.className = 'message-answer-body'" in chat_source
     assert "sideColumn.appendChild(createMessageActionRail" in chat_source
-    assert "stageMessageForInput" in chat_source
+    # AMC-style edit/resend: composer staging + truncate-from-index resend
+    assert "beginEditMessage" in chat_source
+    assert "truncateFromIndex" in chat_source
+    assert "setEditingMessage" in chat_source
+    assert "clearEditingMessage" in chat_source
+    assert "previousUserIndex" in ui_source
+    assert "edit-message-banner" in (
+        PROJECT_ROOT / "backend/static/index.html"
+    ).read_text(encoding="utf-8")
     assert "from './utils.js?v=6'" in chat_source
     assert "from './utils.js?v=6'" in ui_source
     assert "from './utils.js?v=6'" in source_renderer

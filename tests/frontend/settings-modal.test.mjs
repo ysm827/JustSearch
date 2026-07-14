@@ -10,7 +10,7 @@ function installBrowserGlobals() {
         <!doctype html>
         <body>
             <select id="theme-select"><option value="light">Light</option></select>
-            <select id="engine-select"><option value="searxng">SearXNG</option></select>
+            <select id="engine-select"><option value="google">Google</option></select>
             <input id="base-font-size-input" type="range" min="12" max="24" value="16">
             <span id="base-font-size-value">16px</span>
             <input id="live-artifacts-font-size-input" type="range" min="10" max="32" value="16">
@@ -215,7 +215,7 @@ test('engine check results render untrusted response fields as text', async () =
                 error: '<script>alert(1)</script>',
             },
             {
-                engine: 'searxng',
+                engine: 'google',
                 available: true,
                 result_count: 'not-a-number',
             },
@@ -270,7 +270,7 @@ test('settings form coerces string boolean toggles when filling form', async () 
 
     __settingsModalTestHooks.fillSettingsForm({
         theme: 'light',
-        search_engine: 'searxng',
+        search_engine: 'google',
         interactive_search: 'false',
         providers: [],
         workflow_step_models: {},
@@ -279,7 +279,7 @@ test('settings form coerces string boolean toggles when filling form', async () 
 
     __settingsModalTestHooks.fillSettingsForm({
         theme: 'light',
-        search_engine: 'searxng',
+        search_engine: 'google',
         interactive_search: 'true',
         providers: [],
         workflow_step_models: {},

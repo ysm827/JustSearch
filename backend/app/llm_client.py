@@ -561,11 +561,11 @@ class LLMClient:
             # Fallback: return top 3 if parsing fails
             return [s['id'] for s in snippets[:3]]
 
-    async def decide_click_elements(self, query: str, elements: List[Dict]) -> List[int]:
+    async def decide_click_elements(self, query: str, elements: List[Dict]) -> List[str]:
         """
         [New] AI Model: Decide which elements to click
         Input: Query and a list of interactive elements (id, text, type).
-        Returns: List of IDs to click.
+        Returns: List of element id strings to click (e.g. "js-interact-0").
         """
         if not elements:
             return []

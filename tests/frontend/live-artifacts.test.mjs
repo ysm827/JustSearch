@@ -44,6 +44,10 @@ function installBrowserGlobals(html = '<!doctype html><body></body>') {
     globalThis.NodeFilter = dom.window.NodeFilter;
     globalThis.history = dom.window.history;
     globalThis.location = dom.window.location;
+    // chat.js batches stream renders on rAF; jsdom does not provide it by default.
+    const raf = (cb) => setTimeout(() => cb(Date.now()), 0);
+    globalThis.requestAnimationFrame = raf;
+    dom.window.requestAnimationFrame = raf;
     if (!dom.window.HTMLElement.prototype.scrollTo) {
         dom.window.HTMLElement.prototype.scrollTo = function scrollTo(options = {}) {
             if (typeof options === 'object' && options !== null && Number.isFinite(options.top)) {
@@ -157,7 +161,10 @@ test('streaming open HTML fences keep the pending artifact preview path', () => 
     assert.ok(artifact);
     assert.equal(artifact.isStreaming, true);
     assert.match(artifact.streamHtml, /Partial/);
-    assert.match(artifact.srcdoc, /data-amc-stream-preview-root/);
+    // Streaming markup is baked into srcdoc so the iframe is never blank while waiting
+    // for a racy postMessage into an empty stream shell.
+    assert.match(artifact.srcdoc, /Partial/);
+    assert.match(artifact.srcdoc, /stream-render/);
 });
 
 test('Live Artifact srcdoc uses AMC-style CSP and preview diagnostics', () => {
@@ -447,11 +454,11 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
                 <section id="hero-section"></section>
             </body>
         `);
-        const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
+        const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
         const button = document.getElementById('quick-live-artifacts-btn');
 
-        state.settings = { search_engine: 'searxng', interactive_search: true };
+        state.settings = { search_engine: 'google', interactive_search: true };
         setLiveArtifactsMode(false);
         globalThis.fetch = async (_input, init) => {
             savedBody = JSON.parse(init.body);
@@ -491,7 +498,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
 
 test('string false setting does not enable Live Artifacts mode', async () => {
     installBrowserGlobals();
-    const { state, setLiveArtifactsMode, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
+    const { state, setLiveArtifactsMode, setSettings } = await import('../../backend/static/js/modules/state.js?v=5');
 
     setLiveArtifactsMode(true);
     setSettings({ live_artifacts_mode: 'false' });
@@ -525,12 +532,12 @@ test('quick interactive search button coerces string false before toggling', asy
                 <section id="hero-section"></section>
             </body>
         `);
-        const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
+        const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=5');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
-        setSettings({ search_engine: 'searxng', interactive_search: 'false' });
+        setSettings({ search_engine: 'google', interactive_search: 'false' });
         globalThis.fetch = async (_input, init) => {
             savedBody = JSON.parse(init.body);
             return new Response(JSON.stringify({ settings: savedBody }), {
@@ -632,9 +639,9 @@ test('saved HTML answers with sources render citation links instead of inline ar
         </body>
     `);
 
-    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=25');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=27');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -669,9 +676,9 @@ test('saved rich HTML table answers link citation tags in place', async () => {
         </body>
     `);
 
-    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=25');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=27');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -719,9 +726,9 @@ test('saved HTML answers with JSON-encoded sources still render citation links',
         </body>
     `);
 
-    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
+    const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=25');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=27');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -879,15 +886,15 @@ test('Live Artifact frame messages require a registered preview iframe source', 
 
 test('streamChat sends live_artifacts_mode without the old Canvas request field', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=5');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=11');
     let capturedBody = null;
     let doneCalled = false;
 
     state.currentSessionId = 'session-live-artifacts';
     state.settings = {
         default_provider_id: 'provider-a',
-        search_engine: 'searxng',
+        search_engine: 'google',
         max_results: 10,
         max_iterations: 3,
         interactive_search: true,
@@ -919,15 +926,15 @@ test('streamChat sends live_artifacts_mode without the old Canvas request field'
 
 test('streamChat processes trailing SSE event when stream closes without blank delimiter', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=5');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=11');
     let answer = null;
     let doneCalled = false;
 
     state.currentSessionId = 'session-trailing-sse';
     state.settings = {
         default_provider_id: 'provider-a',
-        search_engine: 'searxng',
+        search_engine: 'google',
         max_results: 10,
         max_iterations: 3,
         interactive_search: true,
@@ -961,8 +968,8 @@ test('streamChat processes trailing SSE event when stream closes without blank d
 
 test('streamChat treats SSE error events as terminal failures', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=5');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=11');
     const encoder = new TextEncoder();
     let errorMessage = '';
     let doneCalled = false;
@@ -971,7 +978,7 @@ test('streamChat treats SSE error events as terminal failures', async () => {
     state.currentSessionId = 'session-sse-error';
     state.settings = {
         default_provider_id: 'provider-a',
-        search_engine: 'searxng',
+        search_engine: 'google',
         max_results: 10,
         max_iterations: 3,
         interactive_search: true,
@@ -1005,14 +1012,14 @@ test('streamChat treats SSE error events as terminal failures', async () => {
 
 test('streamChat reports plain text error responses from gateways', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=5');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=11');
     let errorMessage = '';
 
     state.currentSessionId = 'session-text-error';
     state.settings = {
         default_provider_id: 'provider-a',
-        search_engine: 'searxng',
+        search_engine: 'google',
         max_results: 10,
         max_iterations: 3,
         interactive_search: true,
@@ -1030,8 +1037,8 @@ test('streamChat reports plain text error responses from gateways', async () => 
 
 test('streamChat does not retry a non-idempotent chat request after response starts', async () => {
     installBrowserGlobals();
-    const { state } = await import('../../backend/static/js/modules/state.js?v=2');
-    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=7');
+    const { state } = await import('../../backend/static/js/modules/state.js?v=5');
+    const { streamChat } = await import('../../backend/static/js/modules/api.js?v=11');
     const originalSetTimeout = globalThis.setTimeout;
     const originalConsoleError = console.error;
     let fetchCalls = 0;
@@ -1040,7 +1047,7 @@ test('streamChat does not retry a non-idempotent chat request after response sta
     state.currentSessionId = 'session-midstream-error';
     state.settings = {
         default_provider_id: 'provider-a',
-        search_engine: 'searxng',
+        search_engine: 'google',
         max_results: 10,
         max_iterations: 3,
         interactive_search: true,
@@ -1087,17 +1094,52 @@ test('streamChat does not retry a non-idempotent chat request after response sta
     }
 });
 
-test('streaming inline HTML keeps a stable pending preview frame', () => {
+test('streaming inline HTML bakes markup into srcdoc instead of an empty shell', () => {
     const html = '<section style="display:grid"><strong>Partial';
     const artifact = extractInlineLiveArtifact(html, 'message-stream', true);
 
     assert.ok(artifact);
     assert.equal(artifact.isStreaming, true);
     assert.equal(artifact.streamHtml, html);
-    assert.match(artifact.srcdoc, /data-amc-stream-preview-root/);
+    // Primary path: real HTML is in srcdoc (fixes intermittent blank previews).
+    assert.match(artifact.srcdoc, /Partial/);
     assert.match(artifact.srcdoc, /stream-render/);
     assert.match(artifact.srcdoc, /sanitizeStreamDocument/);
-    assert.doesNotMatch(artifact.srcdoc, /Partial/);
+    assert.match(artifact.srcdoc, /event: 'ready'/);
+    // Empty stream shell is only used when there is no markup yet.
+    assert.doesNotMatch(artifact.srcdoc, /data-amc-stream-preview-root="true"/);
+});
+
+test('streaming preview stays populated across incremental re-renders', () => {
+    installBrowserGlobals('<!doctype html><body><div id="message"></div></body>');
+    const container = document.getElementById('message');
+    const partial = '<section style="display:block;width:100%"><h2>Live';
+    const fuller = '<section style="display:block;width:100%"><h2>Live Title</h2><p>Body text</p></section>';
+
+    renderLiveArtifactsForMessage(container, partial, {
+        messageId: 'stream-stable',
+        isStreaming: true,
+    });
+    const frame1 = container.querySelector('.live-artifact-inline-iframe');
+    assert.ok(frame1);
+    assert.match(frame1.getAttribute('srcdoc') || '', /Live/);
+    assert.doesNotMatch(frame1.getAttribute('srcdoc') || '', /data-amc-stream-preview-root="true"/);
+
+    renderLiveArtifactsForMessage(container, fuller, {
+        messageId: 'stream-stable',
+        isStreaming: true,
+    });
+    const frame2 = container.querySelector('.live-artifact-inline-iframe');
+    assert.equal(frame1, frame2, 'iframe element is reused across stream updates');
+    assert.match(frame2.getAttribute('srcdoc') || '', /Live Title/);
+    assert.match(frame2.getAttribute('srcdoc') || '', /Body text/);
+
+    renderLiveArtifactsForMessage(container, fuller, {
+        messageId: 'stream-stable',
+        isStreaming: false,
+    });
+    assert.match(frame2.getAttribute('srcdoc') || '', /Body text/);
+    assert.equal(frame2.dataset.liveArtifactStreaming, 'false');
 });
 
 test('public inline Live Artifact probe matches AMC raw HTML fragments', () => {
@@ -1199,9 +1241,9 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
     `);
 
     try {
-        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
+        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=27');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -1216,7 +1258,7 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
         setLiveArtifactsMode(false);
         state.settings = {
             default_provider_id: 'provider-a',
-            search_engine: 'searxng',
+            search_engine: 'google',
             max_results: 10,
             max_iterations: 3,
             interactive_search: true,
@@ -1232,6 +1274,12 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
                         controller.close();
                     },
                 }), { status: 200 });
+            }
+            if (url === '/api/health') {
+                return new Response(JSON.stringify({ bridge: { extension_connected: true } }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
             }
             if (url === '/api/history' || url === '/api/history/groups') {
                 return new Response(JSON.stringify([]), {
@@ -1291,9 +1339,9 @@ test('streaming chat marks SSE error events as failed instead of completed', asy
     `);
 
     try {
-        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
+        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=27');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'error-status-session' },
@@ -1307,7 +1355,7 @@ test('streaming chat marks SSE error events as failed instead of completed', asy
         setLiveArtifactsMode(false);
         state.settings = {
             default_provider_id: 'provider-a',
-            search_engine: 'searxng',
+            search_engine: 'google',
             max_results: 10,
             max_iterations: 3,
             interactive_search: true,
@@ -1323,6 +1371,12 @@ test('streaming chat marks SSE error events as failed instead of completed', asy
                         controller.close();
                     },
                 }), { status: 200 });
+            }
+            if (url === '/api/health') {
+                return new Response(JSON.stringify({ bridge: { extension_connected: true } }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
             }
             throw new Error(`Unexpected request: ${url}`);
         };
@@ -1381,9 +1435,9 @@ test('streaming raw HTML answer exits inline artifact mode when sources arrive',
     `);
 
     try {
-        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
+        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=27');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1399,7 +1453,7 @@ test('streaming raw HTML answer exits inline artifact mode when sources arrive',
         setLiveArtifactsMode(false);
         state.settings = {
             default_provider_id: 'provider-a',
-            search_engine: 'searxng',
+            search_engine: 'google',
             max_results: 10,
             max_iterations: 3,
             interactive_search: true,
@@ -1415,6 +1469,12 @@ test('streaming raw HTML answer exits inline artifact mode when sources arrive',
                         controller.close();
                     },
                 }), { status: 200 });
+            }
+            if (url === '/api/health') {
+                return new Response(JSON.stringify({ bridge: { extension_connected: true } }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
             }
             if (url === '/api/history' || url === '/api/history/groups') {
                 return new Response(JSON.stringify([]), {
@@ -1476,9 +1536,9 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
     `);
 
     try {
-        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=2');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=31');
+        const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=27');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1498,7 +1558,7 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
         setLiveArtifactsMode(false);
         state.settings = {
             default_provider_id: 'provider-a',
-            search_engine: 'searxng',
+            search_engine: 'google',
             max_results: 10,
             max_iterations: 3,
             interactive_search: true,
@@ -1514,6 +1574,12 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
                         controller.close();
                     },
                 }), { status: 200 });
+            }
+            if (url === '/api/health') {
+                return new Response(JSON.stringify({ bridge: { extension_connected: true } }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
             }
             if (url === '/api/history' || url === '/api/history/groups') {
                 return new Response(JSON.stringify([]), {

@@ -1,5 +1,6 @@
 import base64
 import asyncio
+import re
 
 from backend.app import browser_manager
 from backend.app import page_crawler
@@ -401,12 +402,12 @@ def test_search_web_records_wait_selector_timeout_as_selector_failure(monkeypatc
             return []
 
         async def get_tab_url(self, tab_id):
-            return "https://searxng.example/search"
+            return "https://www.google.com/search?q=test"
 
     monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
     monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: FakeBridge())
 
-    manager = BrowserManager(engine="searxng", max_results=3)
+    manager = BrowserManager(engine="google", max_results=3)
 
     assert asyncio.run(manager.search_web("FastAPI CORS")) == []
 
@@ -636,7 +637,7 @@ def test_search_web_cache_is_isolated_from_returned_results(monkeypatch):
             return None
 
         async def get_tab_url(self, tab_id):
-            return "https://searx.be/search?q=cache%20isolation&format=html"
+            return "https://www.google.com/search?q=cache%20isolation&num=5&hl=en"
 
     async def fake_resolve(url, log_func=None):
         return url
@@ -649,7 +650,7 @@ def test_search_web_cache_is_isolated_from_returned_results(monkeypatch):
     monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
     monkeypatch.setattr(browser_manager.random, "uniform", lambda *_args: 0)
 
-    manager = BrowserManager(engine="searxng", max_results=3)
+    manager = BrowserManager(engine="google", max_results=3)
 
     first = asyncio.run(manager.search_web("cache isolation"))
     first[0]["title"] = "Mutated by caller"
@@ -657,7 +658,9 @@ def test_search_web_cache_is_isolated_from_returned_results(monkeypatch):
     second = asyncio.run(manager.search_web("cache isolation"))
 
     assert second[0]["title"] == "Original cached title"
-    assert fake_bridge.loaded_urls == ["https://searx.be/search?q=cache%20isolation&format=html"]
+    assert fake_bridge.loaded_urls == [
+        "https://www.google.com/search?q=cache%20isolation&num=5&hl=en"
+    ]
 
 
 def test_search_web_can_check_preferred_engine_without_fallback_or_cache(monkeypatch):
@@ -734,32 +737,6 @@ def test_search_web_can_check_preferred_engine_without_fallback_or_cache(monkeyp
     assert "brave:JustSearch test" not in browser_manager._search_cache
 
 
-def test_searxng_search_url_can_be_overridden_for_self_hosting(monkeypatch):
-    monkeypatch.setenv(
-        "SEARXNG_SEARCH_URL",
-        "http://searxng:8080/search?q={query}&format=html",
-    )
-    monkeypatch.setattr(search_engine, "_config_cache", {})
-    monkeypatch.setattr(search_engine, "_config_mtime", 0.0)
-
-    config = search_engine.load_selectors("searxng")
-
-    assert config["base_url"] == "http://searxng:8080/search?q={query}&format=html"
-
-
-def test_searxng_search_url_override_applies_to_fallback_config(monkeypatch, tmp_path):
-    monkeypatch.setenv(
-        "SEARXNG_SEARCH_URL",
-        "http://searxng:8080/search?q={query}&format=html",
-    )
-    monkeypatch.setattr(search_engine, "__file__", str(tmp_path / "search_engine.py"))
-    monkeypatch.setattr(search_engine, "_config_cache", {})
-    monkeypatch.setattr(search_engine, "_config_mtime", 0.0)
-
-    config = search_engine.load_selectors("searxng")
-
-    assert config["base_url"] == "http://searxng:8080/search?q={query}&format=html"
-    assert search_engine.get_all_engines() == ["searxng"]
 
 
 def test_search_selector_hot_reload_keeps_last_good_config_on_bad_json(monkeypatch, tmp_path):
@@ -767,8 +744,8 @@ def test_search_selector_hot_reload_keeps_last_good_config_on_bad_json(monkeypat
     config_path.write_text(
         """
         {
-            "searxng": {
-                "base_url": "https://searx.example/search?q={query}",
+            "google": {
+                "base_url": "https://google.example/search?q={query}",
                 "selectors": {
                     "result_container": [".result"],
                     "title": "h3",
@@ -808,7 +785,7 @@ def test_search_selector_hot_reload_keeps_last_good_config_on_bad_json(monkeypat
     reloaded = search_engine.load_selectors(None)
 
     assert reloaded["custom"]["base_url"] == "https://custom.example/search?q={query}"
-    assert search_engine.get_all_engines() == ["searxng", "custom"]
+    assert search_engine.get_all_engines() == ["google", "custom"]
 
 
 def test_search_selector_hot_reload_keeps_last_good_config_on_bad_shape(monkeypatch, tmp_path):
@@ -816,8 +793,8 @@ def test_search_selector_hot_reload_keeps_last_good_config_on_bad_shape(monkeypa
     config_path.write_text(
         """
         {
-            "searxng": {
-                "base_url": "https://searx.example/search?q={query}",
+            "google": {
+                "base_url": "https://google.example/search?q={query}",
                 "selectors": {
                     "result_container": ".result",
                     "title": "h3",
@@ -869,7 +846,7 @@ def test_search_selector_hot_reload_keeps_last_good_config_on_bad_shape(monkeypa
     reloaded = search_engine.load_selectors(None)
 
     assert reloaded["custom"]["base_url"] == "https://custom.example/search?q={query}"
-    assert search_engine.get_all_engines() == ["searxng", "custom"]
+    assert search_engine.get_all_engines() == ["google", "custom"]
 
 
 def test_search_selector_loader_skips_invalid_engines(monkeypatch, tmp_path):
@@ -945,8 +922,8 @@ def test_workflow_skips_crawl_when_no_results_are_relevant():
             return []
 
     class FakeBrowser:
-        engine = "searxng"
-        engine_config = {"searxng": {}}
+        engine = "google"
+        engine_config = {"google": {}}
 
         async def search_web(self, *_args, **_kwargs):
             return [
@@ -965,7 +942,7 @@ def test_workflow_skips_crawl_when_no_results_are_relevant():
         api_key="test",
         base_url="https://example.test/v1",
         model="test-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
     workflow.llm = FakeLLM()
@@ -999,7 +976,7 @@ def test_workflow_crawl_batch_keeps_successful_pages_when_one_fails():
         api_key="test",
         base_url="https://example.test/v1",
         model="test-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
     workflow.browser = FakeBrowser()
@@ -1042,7 +1019,7 @@ def test_workflow_source_ids_do_not_skip_failed_pages():
         api_key="test",
         base_url="https://example.test/v1",
         model="test-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
     workflow.browser = FakeBrowser()
@@ -1073,7 +1050,7 @@ def test_workflow_skips_crawler_error_strings():
         api_key="test",
         base_url="https://example.test/v1",
         model="test-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
     workflow.browser = FakeBrowser()
@@ -1106,7 +1083,7 @@ def test_workflow_direct_url_skips_blocked_private_error():
         api_key="test",
         base_url="https://example.test/v1",
         model="test-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
     workflow.browser = FakeBrowser()
@@ -1135,7 +1112,7 @@ def test_workflow_decodes_bing_redirect_with_following_query_params():
         api_key="test",
         base_url="https://example.test/v1",
         model="test-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
 
@@ -1149,8 +1126,8 @@ def test_workflow_deduplicates_visited_urls_after_normalization():
             return [1, 2]
 
     class FakeBrowser:
-        engine = "searxng"
-        engine_config = {"searxng": {}}
+        engine = "google"
+        engine_config = {"google": {}}
 
         async def search_web(self, *_args, **_kwargs):
             return [
@@ -1175,7 +1152,7 @@ def test_workflow_deduplicates_visited_urls_after_normalization():
         api_key="test",
         base_url="https://example.test/v1",
         model="test-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
     workflow.llm = FakeLLM()
@@ -1218,7 +1195,7 @@ def test_workflow_routes_llm_calls_to_configured_step_clients():
         api_key="test",
         base_url="https://example.test/v1",
         model="fallback-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
     workflow.step_llms["analysis"] = AnalysisLLM()
@@ -1286,7 +1263,7 @@ def test_workflow_does_not_append_markdown_references_to_live_artifacts():
         api_key="test",
         base_url="https://example.test/v1",
         model="fallback-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
         live_artifacts_mode=True,
     )
@@ -1354,7 +1331,7 @@ def test_workflow_keeps_partial_live_artifact_answers_in_artifact_format():
         api_key="test",
         base_url="https://example.test/v1",
         model="fallback-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
         max_iterations=1,
         live_artifacts_mode=True,
@@ -1398,7 +1375,7 @@ def test_workflow_keeps_partial_live_artifact_answers_in_artifact_format():
 def test_workflow_returns_partial_answer_after_exhausting_iterations():
     class AnalysisLLM:
         async def analyze_task(self, _query, _history):
-            return {"type": "search", "queries": ["SearXNG 是什么"]}
+            return {"type": "search", "queries": ["FastAPI CORS 是什么"]}
 
     class AnswerLLM:
         total_prompt_tokens = 3
@@ -1407,15 +1384,15 @@ def test_workflow_returns_partial_answer_after_exhausting_iterations():
         async def generate_answer(self, _query, _sources, _history, _stream_callback, canvas_mode=False, live_artifacts_mode=False):
             return {
                 "status": "insufficient",
-                "missing_info": "缺少官方隐私说明",
-                "answer": "SearXNG 是一个免费的开源元搜索引擎。",
+                "missing_info": "缺少官方示例细节",
+                "answer": "FastAPI 的 Depends 用于依赖注入。",
             }
 
     workflow = SearchWorkflow(
         api_key="test",
         base_url="https://example.test/v1",
         model="fallback-model",
-        search_engine="searxng",
+        search_engine="google",
         max_results=3,
     )
     workflow.step_llms["analysis"] = AnalysisLLM()
@@ -1426,9 +1403,9 @@ def test_workflow_returns_partial_answer_after_exhausting_iterations():
             [
                 {
                     "id": 1,
-                    "title": "SearXNG docs",
-                    "url": "https://docs.searxng.org/",
-                    "content": "SearXNG is a free internet metasearch engine.",
+                    "title": "FastAPI docs",
+                    "url": "https://docs.example.org/",
+                    "content": "FastAPI dependency injection with Depends().",
                 }
             ],
             1,
@@ -1441,7 +1418,7 @@ def test_workflow_returns_partial_answer_after_exhausting_iterations():
 
     result = asyncio.run(
         workflow.run(
-            "SearXNG 是什么",
+            "FastAPI CORS 是什么",
             progress.append,
             None,
             [],
@@ -1451,10 +1428,337 @@ def test_workflow_returns_partial_answer_after_exhausting_iterations():
     )
 
     assert "无法确认资料足够完整" in result
-    assert "SearXNG 是一个免费的开源元搜索引擎。" in result
+    assert "FastAPI 的 Depends 用于依赖注入。" in result
     assert "多次尝试后未能生成有效答案" not in result
-    assert "[SearXNG docs](https://docs.searxng.org/)" in result
+    assert "[FastAPI docs](https://docs.example.org/)" in result
     assert any("已达到最大迭代次数" in item for item in progress)
     assert stats["iterations"] == 6
     assert stats["prompt_tokens"] == 3
     assert stats["completion_tokens"] == 5
+
+
+def test_run_interactive_mode_passes_tab_id_to_evaluate_and_clicks():
+    """Regression: BridgeClient.evaluate requires (tab_id, expression).
+
+    Interactive mode used to call evaluate(expression) without tab_id, which
+    raised TypeError and silently disabled all click-to-expand behavior.
+    """
+    logs = []
+    evaluate_calls = []
+    click_calls = []
+    move_calls = []
+
+    class FakeBridge:
+        async def evaluate(self, tab_id, expression, timeout_ms=None):
+            evaluate_calls.append({
+                "tab_id": tab_id,
+                "expression": expression,
+                "timeout_ms": timeout_ms,
+            })
+            # Must receive an int/str tab id, not a JS blob.
+            assert not isinstance(tab_id, str) or not tab_id.strip().startswith("(")
+            assert isinstance(expression, str) and "js-interact" in expression
+            return [
+                {
+                    "id": "js-interact-0",
+                    "text": "Read more",
+                    "tag": "button",
+                    "x": 120.0,
+                    "y": 340.0,
+                },
+                {
+                    "id": "js-interact-1",
+                    "text": "Share",
+                    "tag": "button",
+                    "x": 200.0,
+                    "y": 400.0,
+                },
+            ]
+
+        async def move_mouse(self, tab_id, x, y, **kwargs):
+            move_calls.append({"tab_id": tab_id, "x": x, "y": y, **kwargs})
+
+        async def click_at(self, tab_id, x, y):
+            click_calls.append({"tab_id": tab_id, "x": x, "y": y})
+
+    class FakeLLM:
+        async def decide_click_elements(self, query, elements):
+            assert query == "expand article details"
+            assert elements[0]["id"] == "js-interact-0"
+            return ["js-interact-0"]
+
+    asyncio.run(
+        page_crawler.run_interactive_mode(
+            FakeBridge(),
+            tab_id=42,
+            query="expand article details",
+            llm_client=FakeLLM(),
+            log_func=logs.append,
+            session_id="test-session",
+            turn_id="test-turn",
+        )
+    )
+
+    assert evaluate_calls, "evaluate must be called"
+    assert evaluate_calls[0]["tab_id"] == 42
+    assert isinstance(evaluate_calls[0]["expression"], str)
+    assert click_calls == [{"tab_id": 42, "x": 120.0, "y": 340.0}]
+    assert move_calls and move_calls[0]["tab_id"] == 42
+    assert any("提取到 2 个候选元素" in msg for msg in logs)
+    assert any("已点击元素 js-interact-0" in msg for msg in logs)
+
+
+def test_run_interactive_mode_handles_non_list_evaluate_result():
+    class FakeBridge:
+        async def evaluate(self, tab_id, expression, timeout_ms=None):
+            assert tab_id == 7
+            return None  # bridge glitch / non-list return
+
+        async def move_mouse(self, *a, **k):
+            raise AssertionError("should not move")
+
+        async def click_at(self, *a, **k):
+            raise AssertionError("should not click")
+
+    class FakeLLM:
+        async def decide_click_elements(self, query, elements):
+            raise AssertionError("should not ask LLM with empty elements")
+
+    logs = []
+    asyncio.run(
+        page_crawler.run_interactive_mode(
+            FakeBridge(),
+            tab_id=7,
+            query="anything",
+            llm_client=FakeLLM(),
+            log_func=logs.append,
+        )
+    )
+    assert any("未找到显著的可交互元素" in msg for msg in logs)
+
+
+def test_extract_github_repo_stats_passes_tab_id_to_evaluate():
+    """Same missing-tab_id bug existed in GitHub repo star extraction."""
+    evaluate_calls = []
+
+    class FakeBridge:
+        async def evaluate(self, tab_id, expression, timeout_ms=None):
+            evaluate_calls.append((tab_id, expression[:40], timeout_ms))
+            if "user-repositories-list" in expression:
+                return True
+            return {
+                "totalStars": 42,
+                "repos": [{"name": "demo", "stars": 42}],
+                "count": 1,
+            }
+
+    result = asyncio.run(
+        page_crawler.extract_github_repo_stats(FakeBridge(), tab_id=9, url="https://github.com/demo")
+    )
+    assert result is not None
+    assert "42" in result
+    assert all(call[0] == 9 for call in evaluate_calls)
+    assert len(evaluate_calls) >= 2
+
+
+def test_is_spa_like_url_detects_official_hosts():
+    assert crawler_content.is_spa_like_url("https://openai.com/index/introducing-gpt-5/") is True
+    assert crawler_content.is_spa_like_url("https://www.anthropic.com/news/claude-opus-4-8") is True
+    assert crawler_content.is_spa_like_url("https://blog.rust-lang.org/2026/07/09/Rust-1.97.0/") is True
+    assert crawler_content.is_spa_like_url("https://fastapi.tiangolo.com/tutorial/dependencies/") is True
+    assert crawler_content.is_spa_like_url("https://example.com/plain-html-page") is False
+
+
+def test_coerce_extract_result_accepts_legacy_string_and_dict():
+    from backend.app.crawler.content import _coerce_extract_result
+
+    legacy = _coerce_extract_result("hello world content here")
+    assert legacy["text"].startswith("hello")
+    assert legacy["useful"] > 0
+
+    rich = _coerce_extract_result({"text": "abc  def", "strategy": "scored:main", "useful": 6})
+    assert rich["strategy"] == "scored:main"
+    assert rich["useful"] == 6
+
+    empty = _coerce_extract_result(None)
+    assert empty["text"] == ""
+    assert empty["useful"] == 0
+
+
+def test_extract_page_content_retries_when_first_pass_is_thin():
+    """SPA shells often return tiny chrome first; extractor must retry then succeed."""
+    calls = {"n": 0}
+    logs = []
+
+    class FakeBridge:
+        async def evaluate(self, tab_id, expression, timeout_ms=None):
+            assert tab_id == 3
+            # scroll helpers
+            if "scrollTo" in expression:
+                return None
+            calls["n"] += 1
+            # first primary extract: thin shell
+            if calls["n"] == 1 and "HOST_SELECTORS" in expression:
+                return {"text": "Menu Login", "strategy": "cleaned-body", "useful": 9}
+            # second primary extract after wait: real body
+            if "HOST_SELECTORS" in expression:
+                body = (
+                    "Introducing GPT-5. " * 40
+                    + "Released on August 7, 2025. Official OpenAI announcement. "
+                    * 20
+                )
+                return {"text": body, "strategy": "host-selector:main", "useful": len(body.replace(" ", ""))}
+            return {"text": "", "strategy": "structured-fallback", "useful": 0}
+
+    text = asyncio.run(
+        crawler_content.extract_page_content(
+            FakeBridge(),
+            tab_id=3,
+            url="https://openai.com/index/introducing-gpt-5/",
+            log_func=logs.append,
+        )
+    )
+    assert "GPT-5" in text
+    assert calls["n"] >= 2
+    assert any("正文偏少" in msg or "SPA" in msg or "客户端渲染" in msg for msg in logs)
+
+
+def test_extract_page_content_uses_structured_fallback_when_dom_stays_thin():
+    class FakeBridge:
+        async def evaluate(self, tab_id, expression, timeout_ms=None):
+            if "scrollTo" in expression:
+                return None
+            if "structured-fallback" in expression or "application/ld+json" in expression or "JSON-LD" in expression or "@graph" in expression or "__NEXT_DATA__" in expression:
+                article = "Claude Opus 4.8 was released on May 28, 2026. " * 30
+                return {
+                    "text": "标题: Introducing Claude Opus 4.8\n\n" + article,
+                    "strategy": "structured-fallback",
+                    "useful": 400,
+                }
+            # primary always thin
+            return {"text": "Nav Home", "strategy": "cleaned-body", "useful": 7}
+
+    text = asyncio.run(
+        crawler_content.extract_page_content(
+            FakeBridge(),
+            tab_id=1,
+            url="https://www.anthropic.com/news/claude-opus-4-8",
+            log_func=None,
+        )
+    )
+    assert "Opus 4.8" in text
+    assert "May 28, 2026" in text or "2026" in text
+
+
+def test_extract_page_content_prefers_defuddle_markdown():
+    """Defuddle (extract_content) is the primary path when available."""
+    logs = []
+    evaluate_calls = {"n": 0}
+
+    rich_md = (
+        "# Introducing GPT-5\n\n"
+        + "OpenAI released GPT-5 with major improvements. " * 40
+    )
+
+    class FakeBridge:
+        async def extract_content(self, tab_id, timeout_ms=None):
+            assert tab_id == 7
+            return {
+                "ok": True,
+                "text": rich_md,
+                "strategy": "defuddle",
+                "useful": len(re.sub(r"\s+", "", rich_md)),
+                "title": "Introducing GPT-5",
+            }
+
+        async def evaluate(self, tab_id, expression, timeout_ms=None):
+            evaluate_calls["n"] += 1
+            if "scrollTo" in expression:
+                return None
+            raise AssertionError("legacy evaluate path should not run when Defuddle succeeds")
+
+    text = asyncio.run(
+        crawler_content.extract_page_content(
+            FakeBridge(),
+            tab_id=7,
+            url="https://example.com/posts/gpt-5",  # non-SPA path → no pre-scroll evaluate
+            log_func=logs.append,
+        )
+    )
+    assert "GPT-5" in text
+    assert "OpenAI released" in text
+    assert any("Defuddle" in msg for msg in logs)
+    assert evaluate_calls["n"] == 0
+
+
+def test_extract_page_content_falls_back_when_defuddle_thin():
+    """Thin Defuddle result should fall through to legacy host-selector / density path."""
+    body = ("Full article body with enough characters for the threshold. " * 20)
+
+    class FakeBridge:
+        async def extract_content(self, tab_id, timeout_ms=None):
+            return {
+                "ok": True,
+                "text": "Hi",
+                "strategy": "defuddle",
+                "useful": 2,
+                "title": "Thin",
+            }
+
+        async def evaluate(self, tab_id, expression, timeout_ms=None):
+            if "scrollTo" in expression:
+                return None
+            if "HOST_SELECTORS" in expression:
+                return {
+                    "text": body,
+                    "strategy": "host-selector:main",
+                    "useful": len(re.sub(r"\s+", "", body)),
+                }
+            return {"text": "", "strategy": "structured-fallback", "useful": 0}
+
+    text = asyncio.run(
+        crawler_content.extract_page_content(
+            FakeBridge(),
+            tab_id=2,
+            url="https://example.com/post",
+            log_func=None,
+        )
+    )
+    assert "Full article body" in text
+
+
+def test_extract_page_content_falls_back_when_extract_content_missing():
+    """Older bridges without extract_content still use legacy JS extractors."""
+    body = ("Legacy extraction still works without Defuddle bridge method. " * 15)
+
+    class FakeBridge:
+        async def evaluate(self, tab_id, expression, timeout_ms=None):
+            if "scrollTo" in expression:
+                return None
+            if "HOST_SELECTORS" in expression:
+                return {
+                    "text": body,
+                    "strategy": "scored:main",
+                    "useful": len(re.sub(r"\s+", "", body)),
+                }
+            return {"text": "", "strategy": "none", "useful": 0}
+
+    text = asyncio.run(
+        crawler_content.extract_page_content(
+            FakeBridge(),
+            tab_id=4,
+            url="https://example.com/legacy",
+            log_func=None,
+        )
+    )
+    assert "Legacy extraction" in text
+
+
+def test_js_extract_script_keeps_download_link_resolution():
+    """Hygiene / regression: download link absolute href logic must remain."""
+    src = crawler_content._JS_EXTRACT_CONTENT
+    assert "const rawHref = a.getAttribute('href')" in src
+    assert "const href = a.href || rawHref" in src
+    assert "HOST_SELECTORS" in src
+    assert "openai" in src
+    assert "anthropic" in src

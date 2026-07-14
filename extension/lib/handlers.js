@@ -183,6 +183,14 @@ export function registerHandlers(bridge) {
     return { value: result.result?.value ?? null, type: result.result?.type };
   });
 
+  // Defuddle 正文抽取(ToMarkdown 同款引擎):scripting 注入 isolated world,不走 CDP evaluate。
+  // 返回 { ok, text, strategy, useful, title, author, thin, ... } 供后端 extract_page_content 使用。
+  bridge.registerRequestHandler("extractContent", async ({ tabId, timeoutMs = 45000 } = {}) => {
+    requireInt(tabId, "tabId");
+    const ms = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : 45000;
+    return withTimeout(extractWithDefuddle(tabId), ms, "extractContent");
+  });
+
   bridge.registerRequestHandler("screenshot", async ({ tabId, fullPage = false, format = "jpeg", quality = 80 } = {}) => {
     requireInt(tabId, "tabId");
     if (fullPage) {
@@ -365,6 +373,40 @@ function requireStr(v, name) {
 }
 function requireNum(v, name) {
   if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`Expected number for ${name}, got: ${v}`);
+}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Inject Defuddle full bundle + extractor into the tab (isolated world).
+ * Same pattern as ToMarkdown: files run in order; last file's result is returned.
+ */
+async function extractWithDefuddle(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["lib/defuddle.full.js", "content/defuddle-extract.js"],
+  });
+  const payload = results && results[0] && results[0].result;
+  if (!payload || typeof payload !== "object") {
+    return {
+      ok: false,
+      text: "",
+      strategy: "defuddle-empty",
+      useful: 0,
+      title: "",
+      error: "No extraction result returned (page may block scripting)",
+    };
+  }
+  return payload;
 }
 
 async function evaluateJs(tabId, expression, timeoutMs) {

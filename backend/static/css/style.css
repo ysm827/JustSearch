@@ -225,6 +225,7 @@ body {
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
 }
+
 /* === sidebar.css (inlined) === */
 /* ========================================
    Sidebar UI - AMC WebUI Style
@@ -1085,6 +1086,7 @@ body {
     color: var(--text-muted);
     font-size: 13px;
 }
+
 /* === chat.css (inlined) === */
 /* ========================================
    Main Chat Area
@@ -2025,10 +2027,86 @@ body {
     78% { opacity: 1; }
     100% { transform: translateX(395%); opacity: 0; }
 }
+
 /* === input-modal.css (inlined) === */
 /* ========================================
    Input Area - AMC Deep Mimicry
    ======================================== */
+
+/* AMC-style edit/resend banner above the composer */
+.edit-message-banner {
+    width: 90%;
+    max-width: 820px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    border: 1px solid color-mix(in srgb, #f59e0b 45%, var(--amc-border, #d9d9e3));
+    border-radius: 12px;
+    background: color-mix(in srgb, #f59e0b 12%, var(--amc-bg-input, #fff));
+    color: var(--amc-text-primary, #111);
+    box-sizing: border-box;
+}
+
+.edit-message-banner[hidden] {
+    display: none !important;
+}
+
+.edit-message-banner-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.edit-message-banner-copy .material-symbols-rounded {
+    color: #d97706;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.edit-message-cancel-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--amc-text-secondary, #666);
+    font-size: 12px;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.edit-message-cancel-btn:hover {
+    background: color-mix(in srgb, #f59e0b 18%, transparent);
+    color: var(--amc-text-primary, #111);
+}
+
+.edit-message-cancel-btn .material-symbols-rounded {
+    font-size: 16px;
+}
+
+#input-area.is-editing-message .input-box {
+    border-color: color-mix(in srgb, #f59e0b 55%, var(--amc-border, #d9d9e3));
+    box-shadow: 0 0 0 1px color-mix(in srgb, #f59e0b 25%, transparent);
+}
+
+#input-area.is-editing-message #send-btn:not(.processing) {
+    background: #f59e0b;
+    color: #fff;
+}
+
+#input-area.is-editing-message #send-btn:not(.processing):hover {
+    background: #d97706;
+}
+
 #input-area {
     position: relative;
     flex-shrink: 0;
@@ -2588,9 +2666,6 @@ body {
     color: #FB542B !important;
 }
 
-.engine-icon.logo-searxng {
-    color: #00A9E0 !important;
-}
 
 .engine-icon.logo-baidu {
     color: #2932E1 !important;
@@ -2600,11 +2675,11 @@ body {
     color: #FC3F1D !important;
 }
 
-.quick-dropdown-item:hover .engine-icon:not(.logo-duckduckgo):not(.logo-google):not(.logo-bing):not(.logo-sogou):not(.logo-brave):not(.logo-searxng):not(.logo-baidu):not(.logo-yandex) {
+.quick-dropdown-item:hover .engine-icon:not(.logo-duckduckgo):not(.logo-google):not(.logo-bing):not(.logo-sogou):not(.logo-brave):not(.logo-baidu):not(.logo-yandex) {
     color: var(--amc-text-primary);
 }
 
-.quick-dropdown-item.active .engine-icon:not(.logo-duckduckgo):not(.logo-google):not(.logo-bing):not(.logo-sogou):not(.logo-brave):not(.logo-searxng):not(.logo-baidu):not(.logo-yandex) {
+.quick-dropdown-item.active .engine-icon:not(.logo-duckduckgo):not(.logo-google):not(.logo-bing):not(.logo-sogou):not(.logo-brave):not(.logo-baidu):not(.logo-yandex) {
     color: var(--amc-border-focus);
 }
 
@@ -4728,6 +4803,247 @@ body {
         justify-self: end;
     }
 }
+
+/* ===== Bridge settings (aligned with general settings layout) ===== */
+.settings-tab-status-dot,
+.bridge-inline-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #94a3b8;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #94a3b8 22%, transparent);
+}
+
+.settings-tab-btn .settings-tab-status-dot {
+    margin-left: auto;
+}
+
+.settings-tab-status-dot[data-state="connected"],
+.bridge-inline-dot[data-state="connected"] {
+    background: #22c55e;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 28%, transparent);
+}
+
+.settings-tab-status-dot[data-state="disconnected"],
+.bridge-inline-dot[data-state="disconnected"] {
+    background: #ef4444;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #ef4444 28%, transparent);
+}
+
+.settings-tab-status-dot[data-state="outdated"],
+.bridge-inline-dot[data-state="outdated"] {
+    background: #f59e0b;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #f59e0b 28%, transparent);
+}
+
+.bridge-status-label-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+}
+
+.bridge-status-label-row label {
+    margin: 0;
+}
+
+.bridge-status-label-row .settings-save-status {
+    min-height: 26px;
+    padding: 3px 8px;
+    font-size: 11.5px;
+}
+
+.bridge-actions-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+    flex-shrink: 0;
+}
+
+.bridge-settings-btn {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 6px;
+    width: auto !important;
+    min-height: 34px;
+    padding: 7px 12px !important;
+    border-radius: var(--amc-radius) !important;
+    font-size: 12px !important;
+    font-weight: 650 !important;
+    white-space: nowrap;
+}
+
+.bridge-settings-btn .material-symbols-rounded {
+    font-size: 16px;
+}
+
+.bridge-settings-btn.compact {
+    min-height: 30px;
+    padding: 5px 10px !important;
+}
+
+.bridge-field-value {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: right;
+    max-width: min(320px, 48vw);
+    word-break: break-word;
+}
+
+.bridge-field-code {
+    display: inline-block;
+    max-width: min(360px, 52vw);
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    word-break: break-all;
+    text-align: left;
+}
+
+.bridge-value-with-action {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    max-width: min(420px, 58vw);
+    min-width: 0;
+}
+
+.bridge-value-with-action .bridge-field-code {
+    max-width: none;
+    flex: 1;
+    min-width: 0;
+}
+
+.bridge-field-stack {
+    align-items: flex-start;
+}
+
+.bridge-field-stack .settings-field-copy {
+    width: 100%;
+}
+
+.bridge-inline-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 0;
+    border-top: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border-light);
+}
+
+.bridge-inline-notice[hidden] {
+    display: none !important;
+}
+
+.bridge-inline-notice-copy {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bridge-inline-notice-title {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 650;
+}
+
+.bridge-inline-notice.is-warning .bridge-inline-notice-title {
+    color: var(--warning);
+}
+
+.bridge-help-steps {
+    margin: 0;
+    padding: 4px 0 8px 1.2rem;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.bridge-help-steps li + li {
+    margin-top: 6px;
+}
+
+.bridge-help-steps code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+    border: 1px solid var(--border-light);
+}
+
+.bridge-help-steps .bridge-settings-btn {
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* Version status badges reuse settings-save-status color language */
+#settings-bridge-version-status[data-state="latest"],
+#settings-bridge-status-badge[data-state="connected"] {
+    border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+    background: var(--success-light);
+    color: var(--success);
+}
+
+#settings-bridge-version-status[data-state="outdated"],
+#settings-bridge-status-badge[data-state="outdated"],
+#settings-bridge-status-badge[data-state="disconnected"] {
+    border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+    background: var(--warning-light);
+    color: var(--warning);
+}
+
+#settings-bridge-version-status[data-state="newer"] {
+    border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+    background: var(--primary-light);
+    color: var(--primary);
+}
+
+#settings-bridge-extension-version.is-outdated {
+    color: var(--warning);
+}
+
+#settings-bridge-extension-version.is-ready {
+    color: var(--success);
+}
+
+@media (max-width: 720px) {
+    #tab-bridge .settings-field-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .bridge-actions-row,
+    .bridge-value-with-action {
+        justify-content: flex-start;
+        max-width: none;
+        width: 100%;
+    }
+
+    .bridge-field-value,
+    .bridge-field-code {
+        max-width: none;
+        text-align: left;
+    }
+
+    .bridge-inline-notice {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
 /* === markdown.css (inlined) === */
 /* ========================================
    Markdown Rendering
@@ -5153,6 +5469,7 @@ code.hljs {
     0% { background-color: var(--primary-light); }
     100% { background-color: transparent; }
 }
+
 /* === live-artifacts.css (inlined) === */
 /* ========================================
    Live Artifacts
@@ -5736,6 +6053,7 @@ body.live-artifacts-open .live-artifacts-panel {
         grid-template-columns: 1fr;
     }
 }
+
 /* === overlays.css (inlined) === */
 /* ========================================
    Toast Notifications
@@ -6060,6 +6378,7 @@ body.live-artifacts-open .live-artifacts-panel {
     background-color: var(--warning-light);
     font-size: 14px;
 }
+
 /* === responsive.css (inlined) === */
 /* ========================================
    Mobile Responsive
@@ -6402,6 +6721,7 @@ body.live-artifacts-open .live-artifacts-panel {
     background: var(--success);
     animation: none;
 }
+
 /* === polish.css (inlined) === */
 /* ========================================
    Keyboard Shortcut Hints
@@ -6809,242 +7129,3 @@ body.live-artifacts-open .live-artifacts-panel {
     box-shadow: none;
 }
 
-/* ===== Bridge settings (aligned with general settings layout) ===== */
-.settings-tab-status-dot,
-.bridge-inline-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: #94a3b8;
-    box-shadow: 0 0 0 2px color-mix(in srgb, #94a3b8 22%, transparent);
-}
-
-.settings-tab-btn .settings-tab-status-dot {
-    margin-left: auto;
-}
-
-.settings-tab-status-dot[data-state="connected"],
-.bridge-inline-dot[data-state="connected"] {
-    background: #22c55e;
-    box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 28%, transparent);
-}
-
-.settings-tab-status-dot[data-state="disconnected"],
-.bridge-inline-dot[data-state="disconnected"] {
-    background: #ef4444;
-    box-shadow: 0 0 0 2px color-mix(in srgb, #ef4444 28%, transparent);
-}
-
-.settings-tab-status-dot[data-state="outdated"],
-.bridge-inline-dot[data-state="outdated"] {
-    background: #f59e0b;
-    box-shadow: 0 0 0 2px color-mix(in srgb, #f59e0b 28%, transparent);
-}
-
-.bridge-status-label-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 10px;
-}
-
-.bridge-status-label-row label {
-    margin: 0;
-}
-
-.bridge-status-label-row .settings-save-status {
-    min-height: 26px;
-    padding: 3px 8px;
-    font-size: 11.5px;
-}
-
-.bridge-actions-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: flex-end;
-    flex-shrink: 0;
-}
-
-.bridge-settings-btn {
-    display: inline-flex !important;
-    align-items: center;
-    gap: 6px;
-    width: auto !important;
-    min-height: 34px;
-    padding: 7px 12px !important;
-    border-radius: var(--amc-radius) !important;
-    font-size: 12px !important;
-    font-weight: 650 !important;
-    white-space: nowrap;
-}
-
-.bridge-settings-btn .material-symbols-rounded {
-    font-size: 16px;
-}
-
-.bridge-settings-btn.compact {
-    min-height: 30px;
-    padding: 5px 10px !important;
-}
-
-.bridge-field-value {
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 600;
-    text-align: right;
-    max-width: min(320px, 48vw);
-    word-break: break-word;
-}
-
-.bridge-field-code {
-    display: inline-block;
-    max-width: min(360px, 52vw);
-    padding: 4px 8px;
-    border-radius: 8px;
-    border: 1px solid var(--border-light);
-    background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
-    color: var(--text-primary);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 12px;
-    line-height: 1.4;
-    word-break: break-all;
-    text-align: left;
-}
-
-.bridge-value-with-action {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    max-width: min(420px, 58vw);
-    min-width: 0;
-}
-
-.bridge-value-with-action .bridge-field-code {
-    max-width: none;
-    flex: 1;
-    min-width: 0;
-}
-
-.bridge-field-stack {
-    align-items: flex-start;
-}
-
-.bridge-field-stack .settings-field-copy {
-    width: 100%;
-}
-
-.bridge-inline-notice {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 12px 0;
-    border-top: 1px solid var(--border-light);
-    border-bottom: 1px solid var(--border-light);
-}
-
-.bridge-inline-notice[hidden] {
-    display: none !important;
-}
-
-.bridge-inline-notice-copy {
-    min-width: 0;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.bridge-inline-notice-title {
-    color: var(--text-primary);
-    font-size: 14px;
-    font-weight: 650;
-}
-
-.bridge-inline-notice.is-warning .bridge-inline-notice-title {
-    color: var(--warning);
-}
-
-.bridge-help-steps {
-    margin: 0;
-    padding: 4px 0 8px 1.2rem;
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.7;
-}
-
-.bridge-help-steps li + li {
-    margin-top: 6px;
-}
-
-.bridge-help-steps code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 12px;
-    padding: 1px 6px;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
-    border: 1px solid var(--border-light);
-}
-
-.bridge-help-steps .bridge-settings-btn {
-    margin-left: 6px;
-    vertical-align: middle;
-}
-
-/* Version status badges reuse settings-save-status color language */
-#settings-bridge-version-status[data-state="latest"],
-#settings-bridge-status-badge[data-state="connected"] {
-    border-color: color-mix(in srgb, var(--success) 28%, var(--border));
-    background: var(--success-light);
-    color: var(--success);
-}
-
-#settings-bridge-version-status[data-state="outdated"],
-#settings-bridge-status-badge[data-state="outdated"],
-#settings-bridge-status-badge[data-state="disconnected"] {
-    border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
-    background: var(--warning-light);
-    color: var(--warning);
-}
-
-#settings-bridge-version-status[data-state="newer"] {
-    border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
-    background: var(--primary-light);
-    color: var(--primary);
-}
-
-#settings-bridge-extension-version.is-outdated {
-    color: var(--warning);
-}
-
-#settings-bridge-extension-version.is-ready {
-    color: var(--success);
-}
-
-@media (max-width: 720px) {
-    #tab-bridge .settings-field-row {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .bridge-actions-row,
-    .bridge-value-with-action {
-        justify-content: flex-start;
-        max-width: none;
-        width: 100%;
-    }
-
-    .bridge-field-value,
-    .bridge-field-code {
-        max-width: none;
-        text-align: left;
-    }
-
-    .bridge-inline-notice {
-        flex-direction: column;
-        align-items: stretch;
-    }
-}

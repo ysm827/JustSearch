@@ -1,7 +1,8 @@
 import { authFetch } from './auth.js?v=1';
-import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=3';
+import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=5';
+import { abandonActiveChatWork } from './chat.js?v=36';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=25';
+import { elements, showConfirm } from './ui.js?v=27';
 import { renderHistory } from './history-view.js?v=23';
 import {
     getModelDisplayName,
@@ -9,7 +10,7 @@ import {
     isUnsupportedGemini25Model,
     splitModelItem,
 } from './provider-models.js?v=1';
-import * as API from './api.js?v=8';
+import * as API from './api.js?v=11';
 import {
     clampBaseFontSize,
     clampLiveArtifactsFontSize,
@@ -21,7 +22,7 @@ import {
     fetchBridgeStatus,
     normalizeBridgePollIntervalSec,
     wireBridgeSettingsPanel,
-} from './bridge.js?v=6';
+} from './bridge.js?v=7';
 
 const WORKFLOW_STEPS = [
     { id: 'analysis', label: '问题分析' },
@@ -62,6 +63,18 @@ function safeSetLocalStorageItem(key, value) {
 
 export function setupSettingsModal({ updateModelSelector, historyCallbacks, onSettingsSaved }) {
     const settingsBtn = document.getElementById('settings-btn');
+    // Guard: if ui.js was loaded as a separate module instance (mismatched ?v=),
+    // elements.settingsModal may be null and the whole setup would throw before binding clicks.
+    if (!elements?.settingsModal) {
+        console.error(
+            '[JustSearch] settings modal element missing — check that all modules import the same ui.js?v= version'
+        );
+        return;
+    }
+    if (!settingsBtn) {
+        console.error('[JustSearch] #settings-btn not found');
+        return;
+    }
     const closeBtn = elements.settingsModal.querySelector('.close-btn');
     const resetSettingsBtn = document.getElementById('reset-settings-btn');
     const clearHistoryBtn = document.getElementById('clear-history-btn');
@@ -804,7 +817,6 @@ function getEngineDisplayName(engine) {
     const names = {
         bing: 'Bing',
         sogou: '搜狗（中文备用）',
-        searxng: 'SearXNG（自托管）',
         baidu: '百度（中文）',
         yandex: 'Yandex',
         duckduckgo: 'DuckDuckGo',
@@ -866,6 +878,7 @@ async function validateApiKey(e) {
 }
 
 function resetConversationView(historyCallbacks) {
+    abandonActiveChatWork(elements);
     setCurrentSessionId(null);
     if (elements.historySearchInput) {
         elements.historySearchInput.value = '';

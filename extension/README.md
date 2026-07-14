@@ -16,7 +16,8 @@ JustSearch 后端 ws://127.0.0.1:38975/justsearch
 后端需要时,通过 JSON-RPC 调用扩展:
 
 - `createTab` / `navigate` / `closeTab` / `finalizeTabs` — 后台开标签、导航、用完即关
-- `evaluate` — 在标签页里跑任意 JS(`chrome.debugger` + `Runtime.evaluate`),所有正文提取器走这里
+- `evaluate` — 在标签页里跑任意 JS(`chrome.debugger` + `Runtime.evaluate`),站点特判与启发式回退走这里
+- `extractContent` — 注入 [Defuddle](https://github.com/kepano/defuddle)(与 ToMarkdown / Obsidian Web Clipper 同款)抽取主正文 Markdown
 - `clickAt` / `scrollBy` / `typeText` / `pressKey` — 真实输入事件
 - `moveMouse` — 驱动虚拟光标动画到目标(可视化自动交互)
 - `screenshot` — 截图

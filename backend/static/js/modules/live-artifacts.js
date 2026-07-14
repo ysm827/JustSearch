@@ -1,5 +1,5 @@
 import { showToast } from './toast.js';
-import { state } from './state.js?v=2';
+import { state } from './state.js?v=5';
 
 const ARTIFACT_LANGUAGES = new Set(['html', 'svg']);
 const SUPPORTING_LANGUAGES = new Set(['css', 'javascript', 'js']);
@@ -177,15 +177,12 @@ export function refreshLiveArtifactPreviews(settings) {
     registry.forEach((artifact) => {
         if (!artifact?.renderable) return;
         const sources = Array.isArray(artifact.sources) ? artifact.sources : [];
-        const previewCode = artifact.isStreaming ? STREAM_PREVIEW_ROOT : artifact.code;
+        const previewCode = resolveArtifactPreviewCode(artifact);
         artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, sources, {
             frameId: artifact.id,
             baseFontSize: fontSize,
             themeId,
         });
-        if (artifact.isStreaming && artifact.streamHtml) {
-            // Keep stream payload; theme/font live in srcdoc base styles.
-        }
     });
 
     document.querySelectorAll('.live-artifact-inline-iframe').forEach((frame) => {
@@ -193,9 +190,8 @@ export function refreshLiveArtifactPreviews(settings) {
         const artifact = frameId ? registry.get(frameId) : null;
         if (artifact?.srcdoc && frame.srcdoc !== artifact.srcdoc) {
             frame.srcdoc = artifact.srcdoc;
-            if (artifact.isStreaming && artifact.streamHtml) {
-                postInlineArtifactStream(frame, artifact.streamHtml);
-            }
+            // After srcdoc reload the bridge re-listens; re-push any pending stream HTML.
+            syncPendingStreamToFrame(frame, artifact);
         }
     });
 
@@ -203,11 +199,26 @@ export function refreshLiveArtifactPreviews(settings) {
         const active = registry.get(activeArtifactId);
         if (active?.renderable && active.srcdoc) {
             panelState.frame.srcdoc = active.srcdoc;
-            if (active.isStreaming && active.streamHtml) {
-                postInlineArtifactStream(panelState.frame, active.streamHtml);
-            }
+            syncPendingStreamToFrame(panelState.frame, active);
         }
     }
+}
+
+/**
+ * Prefer the real HTML/SVG payload for preview srcdoc.
+ * Empty shell is only used while streaming before any markup arrives.
+ * (Previously streaming always used an empty root + postMessage, which often
+ * painted a blank iframe when the message raced the sandbox bridge.)
+ */
+function resolveArtifactPreviewCode(artifact) {
+    const code = String(artifact?.code || '').trim();
+    if (code) return artifact.code;
+    if (artifact?.isStreaming) {
+        const stream = String(artifact.streamHtml || '').trim();
+        if (stream) return artifact.streamHtml;
+        return STREAM_PREVIEW_ROOT;
+    }
+    return artifact?.code || '';
 }
 
 function resolveLiveArtifactFontSizePx(settings) {
@@ -357,8 +368,14 @@ function extractLiveArtifactInteraction(markdownText, isStreaming) {
 }
 
 function createInlineArtifact(code, messageId, { isStreaming = false, language = 'html' } = {}) {
-    const previewCode = isStreaming ? STREAM_PREVIEW_ROOT : code;
-    const title = getArtifactTitle({ info: '', language, code }, language, 0);
+    const rawCode = String(code || '');
+    // Always bake live markup into srcdoc so the iframe is never an empty shell
+    // waiting on a racy postMessage. STREAM_PREVIEW_ROOT is only a last-resort
+    // placeholder when the stream has started but no markup has arrived yet.
+    const previewCode = rawCode.trim()
+        ? rawCode
+        : (isStreaming ? STREAM_PREVIEW_ROOT : '');
+    const title = getArtifactTitle({ info: '', language, code: rawCode }, language, 0);
     const id = `${messageId}-inline-0`;
     return {
         id,
@@ -369,13 +386,13 @@ function createInlineArtifact(code, messageId, { isStreaming = false, language =
         title,
         language,
         fileName: getArtifactFileName(title, language),
-        code,
+        code: rawCode,
         renderable: true,
         supportBlockIndices: [],
         srcdoc: buildSrcdoc(previewCode, language, [], { frameId: id }),
         inline: true,
         isStreaming,
-        streamHtml: isStreaming ? code : '',
+        streamHtml: isStreaming ? rawCode : '',
     };
 }
 
@@ -760,18 +777,23 @@ function ensureArtifactSrcdocTheme(artifact, sources = null) {
     const normalizedSources = sources !== null && sources !== undefined
         ? normalizeArtifactSources(sources)
         : (Array.isArray(artifact.sources) ? artifact.sources : []);
-    const previewCode = artifact.isStreaming ? STREAM_PREVIEW_ROOT : artifact.code;
-    artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, normalizedSources, {
-        frameId: artifact.id,
-        baseFontSize: fontSize,
-        themeId,
-    });
+    // Keep streamHtml themed for any secondary postMessage path, but always bake
+    // the real payload into srcdoc (never an empty stream shell when markup exists).
     if (artifact.isStreaming && artifact.streamHtml) {
         artifact.streamHtml = materializeLiveArtifactThemeVars(
             adaptArtifactHtmlForTheme(artifact.streamHtml, themeId),
             themeId,
         );
+        if (!String(artifact.code || '').trim() && artifact.streamHtml) {
+            artifact.code = artifact.streamHtml;
+        }
     }
+    const previewCode = resolveArtifactPreviewCode(artifact);
+    artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, normalizedSources, {
+        frameId: artifact.id,
+        baseFontSize: fontSize,
+        themeId,
+    });
     return artifact;
 }
 
@@ -783,11 +805,12 @@ function hydrateArtifactCitations(artifact, sources) {
     if (!artifact?.renderable || artifact.language !== 'html' || normalizedSources.length === 0) {
         return artifact;
     }
-    const previewCode = artifact.isStreaming ? STREAM_PREVIEW_ROOT : artifact.code;
-    artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, normalizedSources, { frameId: artifact.id });
+    // Keep original artifact.code intact for copy/download; buildSrcdoc links citations.
     if (artifact.isStreaming && artifact.streamHtml) {
         artifact.streamHtml = linkArtifactCitationsInHtml(artifact.streamHtml, normalizedSources);
     }
+    const previewCode = resolveArtifactPreviewCode(artifact);
+    artifact.srcdoc = buildSrcdoc(previewCode, artifact.language, normalizedSources, { frameId: artifact.id });
     return artifact;
 }
 
@@ -893,14 +916,15 @@ function replaceCitationTextNode(node, sourceById) {
 
 function createArtifactCitationLink(id, source, safeUrl) {
     const anchor = document.createElement('a');
-    anchor.href = safeUrl;
+    anchor.href = safeUrl || '#';
     anchor.target = '_blank';
     anchor.rel = 'noopener noreferrer';
     anchor.className = 'citation-link live-artifact-citation-link';
-    anchor.dataset.liveArtifactSourceUrl = safeUrl;
+    anchor.dataset.liveArtifactSourceUrl = safeUrl || '';
     anchor.dataset.liveArtifactSourceId = id;
+    anchor.dataset.evidenceSourceId = id;
     anchor.title = source.title || source.url || `Source ${id}`;
-    anchor.setAttribute('aria-label', `打开来源 ${id}`);
+    anchor.setAttribute('aria-label', `查看来源 ${id} 的原文证据`);
     // Use injected theme tokens so citation chips stay readable in dark mode.
     anchor.setAttribute('style', 'color:var(--amc-live-artifact-accent,#2563eb);text-decoration:none;cursor:pointer;margin:0 1px;font-weight:700;font-size:11px;padding:0 4px;border-radius:6px;background:var(--amc-live-artifact-accent-surface,rgba(37,99,235,.12));display:inline-flex;align-items:center;justify-content:center;vertical-align:super;line-height:16px;min-height:16px;white-space:nowrap;');
     anchor.textContent = id;
@@ -1238,10 +1262,36 @@ function injectPreviewBridge(code, frameId = '') {
     });
   };
   const notifyReady = () => {
+    try {
+      parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'ready', frameId: FRAME_ID }, '*');
+    } catch {}
     scheduleResize();
     setTimeout(notifyResize, 50);
     setTimeout(notifyResize, 250);
   };
+  // Citation chips open the parent evidence panel instead of navigating away.
+  document.addEventListener('click', (event) => {
+    try {
+      const anchor = event.target && event.target.closest
+        ? event.target.closest('a.live-artifact-citation-link, a.citation-link')
+        : null;
+      if (!anchor) return;
+      const sourceId = anchor.getAttribute('data-live-artifact-source-id')
+        || anchor.getAttribute('data-evidence-source-id')
+        || (anchor.textContent || '').trim();
+      if (!sourceId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      parent.postMessage({
+        channel: 'justsearch-live-artifacts',
+        event: 'citation-click',
+        sourceId: sourceId,
+        url: anchor.getAttribute('data-live-artifact-source-url') || anchor.href || '',
+        title: anchor.getAttribute('title') || '',
+        frameId: FRAME_ID,
+      }, '*');
+    } catch {}
+  }, true);
   const notifyDiagnostic = (payload) => {
     try {
       parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'diagnostic', payload }, '*');
@@ -1835,8 +1885,16 @@ function renderInlineArtifactFrame(container, artifact) {
         // Hint the browser's built-in form/scroll styling for the active scheme.
         frame.style.colorScheme = resolveLiveArtifactThemeId();
         frame.addEventListener('load', () => {
+            // After every srcdoc navigation, re-push pending stream HTML and remeasure.
+            // Sandboxed frames often drop postMessages sent before the bridge listens.
+            const frameId = frame.dataset.liveArtifactFrameId || '';
+            const liveArtifact = frameId ? registry.get(frameId) : null;
+            if (liveArtifact) {
+                syncPendingStreamToFrame(frame, liveArtifact);
+            } else if (frame.dataset.liveArtifactStreaming === 'true' && frame.dataset.liveArtifactProbeHtml) {
+                postInlineArtifactStream(frame, frame.dataset.liveArtifactProbeHtml);
+            }
             scheduleInlineArtifactFrameResize(frame, viewport);
-            // Re-probe after layout settles (fonts / async styles).
             const html = frame.dataset.liveArtifactProbeHtml || '';
             if (html) {
                 const height = measureArtifactContentHeight(html, resolveInlineFrameWidth(viewport, container));
@@ -1865,18 +1923,37 @@ function renderInlineArtifactFrame(container, artifact) {
     if (frame.srcdoc !== artifact.srcdoc) {
         frame.srcdoc = artifact.srcdoc;
     }
-    if (artifact.isStreaming && artifact.streamHtml) {
-        postInlineArtifactStream(frame, artifact.streamHtml);
-    }
+    // Secondary path: if the baked srcdoc still uses the empty stream shell, push HTML
+    // via postMessage (with retries). Primary path already embeds markup in srcdoc.
+    syncPendingStreamToFrame(frame, artifact);
     scheduleInlineArtifactFrameResize(frame, viewport);
 }
 
+function syncPendingStreamToFrame(frame, artifact) {
+    if (!frame || !artifact?.isStreaming) return;
+    const html = artifact.streamHtml || artifact.code || '';
+    if (!html || !String(html).trim()) return;
+    // Only postMessage when srcdoc is still the empty stream shell; otherwise content
+    // is already baked in and a reload will show it without messaging.
+    const srcdoc = frame.srcdoc || artifact.srcdoc || '';
+    if (srcdoc.includes('data-amc-stream-preview-root="true"') && !String(artifact.code || '').trim()) {
+        postInlineArtifactStream(frame, html);
+        return;
+    }
+    // Also re-push when the shell is present as a wrapper (legacy/partial docs).
+    if (srcdoc.includes('data-amc-stream-preview-root="true"') && String(html).trim()) {
+        postInlineArtifactStream(frame, html);
+    }
+}
+
 function postInlineArtifactStream(frame, html) {
+    if (!frame || typeof html !== 'string' || !html.trim()) return;
     const themeId = resolveLiveArtifactThemeId();
     const adaptedHtml = materializeLiveArtifactThemeVars(
         adaptArtifactHtmlForTheme(html, themeId),
         themeId,
     );
+    frame.dataset.liveArtifactPendingStreamHtml = adaptedHtml;
     const send = () => {
         try {
             frame.contentWindow?.postMessage({
@@ -1888,8 +1965,13 @@ function postInlineArtifactStream(frame, html) {
             // Ignore frame messaging failures while the iframe is mounting.
         }
     };
+    // Retries cover the common race where srcdoc navigation has not installed the
+    // bridge listener yet (setTimeout(0) alone is often too early).
     send();
     setTimeout(send, 0);
+    setTimeout(send, 50);
+    setTimeout(send, 150);
+    setTimeout(send, 400);
 }
 
 function normalizeArtifactSources(sources) {
@@ -2450,6 +2532,25 @@ function handleArtifactFrameMessage(event) {
     if (data.channel !== 'justsearch-live-artifacts') return;
     const sourceFrame = findArtifactFrameByMessage(event);
     if (!sourceFrame) return;
+
+    if (data.event === 'ready') {
+        // Bridge is listening — re-deliver any pending stream HTML that raced load.
+        const frame = sourceFrame.frame;
+        const frameId = frame.dataset.liveArtifactFrameId || '';
+        const artifact = frameId ? registry.get(frameId) : null;
+        if (artifact) {
+            syncPendingStreamToFrame(frame, artifact);
+        } else if (frame.dataset.liveArtifactPendingStreamHtml) {
+            postInlineArtifactStream(frame, frame.dataset.liveArtifactPendingStreamHtml);
+        } else if (frame.dataset.liveArtifactStreaming === 'true' && frame.dataset.liveArtifactProbeHtml) {
+            postInlineArtifactStream(frame, frame.dataset.liveArtifactProbeHtml);
+        }
+        if (sourceFrame.kind === 'inline') {
+            const viewport = frame.closest('.live-artifact-inline-viewport');
+            scheduleInlineArtifactFrameResize(frame, viewport);
+        }
+        return;
+    }
 
     if (data.event === 'resize' && typeof data.height === 'number' && Number.isFinite(data.height)) {
         if (sourceFrame.kind === 'inline') {

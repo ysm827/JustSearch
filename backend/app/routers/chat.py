@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from ..database import (
     load_settings, save_chat_history, load_chat_history, get_chat_path, get_next_api_key,
-    delete_message, normalize_route_safe_id,
+    delete_message, truncate_messages_from, normalize_route_safe_id,
 )
 from ..providers import (
     WORKFLOW_MODEL_STEP_IDS,
@@ -27,6 +27,11 @@ from ..workflow import SearchWorkflow
 from ..logging_utils import set_request_id
 from ..search_engine import get_all_engines
 from ..extension_bridge import get_ws_endpoint, is_extension_connected
+from ..citation_evidence import (
+    build_citation_evidences,
+    client_source_payload,
+    strip_source_content_for_storage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +92,9 @@ class ChatRequest(BaseModel):
     interactive_search: Optional[bool] = None
     live_artifacts_mode: Optional[bool] = None
     canvas_mode: Optional[bool] = None
+    # AMC-style resend/edit: drop this message index and everything after it
+    # before running the workflow and saving the new user+assistant turn.
+    truncate_from_index: Optional[int] = None
 
 
 async def _resolve_workflow_step_models(
@@ -153,19 +161,13 @@ def _safe_step_model_meta(step_model_configs: dict[str, dict[str, str]]) -> dict
     }
 
 
-def _client_source_payload(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    payload = []
-    for source in sources or []:
-        if not isinstance(source, dict):
-            continue
-        item = {
-            key: source[key]
-            for key in ("id", "title", "url", "date")
-            if key in source and source[key] not in (None, "")
-        }
-        if item:
-            payload.append(item)
-    return payload
+def _client_source_payload(
+    sources: list[dict[str, Any]],
+    *,
+    query_hint: str | None = None,
+) -> list[dict[str, Any]]:
+    """SSE-safe source payload with snippet/excerpt (no full crawl body)."""
+    return client_source_payload(sources, query_hint=query_hint)
 
 
 def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
@@ -300,6 +302,26 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     chat_history_data = await load_chat_history(chat_path)
     context_messages = chat_history_data.get("messages", []) if chat_history_data else []
 
+    # AMC resend/retry: truncate history at the edited user message (or the user
+    # message preceding an assistant retry) so context and persistence match.
+    truncate_from_index = request.truncate_from_index
+    if truncate_from_index is not None:
+        try:
+            truncate_from_index = int(truncate_from_index)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="truncate_from_index 必须是整数")
+        if truncate_from_index < 0:
+            raise HTTPException(status_code=400, detail="truncate_from_index 不能为负数")
+        if raw_session_id:
+            truncated = await truncate_messages_from(session_id, truncate_from_index)
+            if not truncated:
+                raise HTTPException(status_code=404, detail="会话不存在，无法截断消息")
+            chat_history_data = await load_chat_history(chat_path)
+            context_messages = chat_history_data.get("messages", []) if chat_history_data else []
+        else:
+            # Brand-new session has no history; ignore truncate.
+            truncate_from_index = None
+
     async def event_generator():
         yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'provider_id': provider_id, 'model': model, 'step_models': _safe_step_model_meta(workflow_step_models)})}\n\n"
 
@@ -317,7 +339,10 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
 
         def source_callback(sources):
             accumulated_sources[:] = list(sources or [])
-            queue.put_nowait({"type": "sources", "content": _client_source_payload(accumulated_sources)})
+            queue.put_nowait({
+                "type": "sources",
+                "content": _client_source_payload(accumulated_sources, query_hint=query_text),
+            })
 
         def stats_callback(stats):
             nonlocal final_stats
@@ -363,6 +388,11 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
                     break
 
             result = task.result()
+            answer_text = result if isinstance(result, str) else str(result or "")
+            slim_sources = strip_source_content_for_storage(
+                accumulated_sources, query_hint=query_text
+            )
+            citations = build_citation_evidences(answer_text, accumulated_sources)
 
             try:
                 path = get_chat_path(session_id)
@@ -371,7 +401,15 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
 
                 new_messages = [
                     {"role": "user", "content": query_text},
-                    {"role": "assistant", "content": result, "logs": logs, "sources": accumulated_sources, "stats": final_stats},
+                    {
+                        "role": "assistant",
+                        "content": answer_text,
+                        "logs": logs,
+                        # Persist slim sources + citation evidence (no full crawl bodies).
+                        "sources": slim_sources,
+                        "citations": citations,
+                        "stats": final_stats,
+                    },
                 ]
 
                 full_messages = existing_messages + new_messages
@@ -390,12 +428,12 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
                 
                 await save_chat_history(session_id, full_messages, title)
 
-                yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id, 'sources': _client_source_payload(accumulated_sources)})}\n\n"
+                yield f"data: {json.dumps({'type': 'answer', 'content': answer_text, 'session_id': session_id, 'sources': slim_sources, 'citations': citations}, ensure_ascii=False)}\n\n"
 
             except Exception as e:
                 logger.error("Failed to save chat history for %s: %s", session_id, e)
                 # Still yield the answer even if saving fails
-                yield f"data: {json.dumps({'type': 'answer', 'content': result, 'session_id': session_id, 'sources': _client_source_payload(accumulated_sources)})}\n\n"
+                yield f"data: {json.dumps({'type': 'answer', 'content': answer_text, 'session_id': session_id, 'sources': slim_sources, 'citations': citations}, ensure_ascii=False)}\n\n"
 
             yield "data: [DONE]\n\n"
 

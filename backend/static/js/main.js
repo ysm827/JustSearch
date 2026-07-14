@@ -1,10 +1,11 @@
 import { initializeAuth, normalizeSettings } from './modules/auth.js?v=1';
-import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/state.js?v=3';
-import { initUI, elements } from './modules/ui.js?v=25';
-import { setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=33';
+import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/state.js?v=5';
+import { initUI, elements } from './modules/ui.js?v=27';
+import { abandonActiveChatWork, setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=36';
+import { initEvidencePanel } from './modules/evidence-panel.js?v=1';
 import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=23';
-import { setupSettingsModal } from './modules/settings-modal.js?v=48';
-import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=17';
+import { setupSettingsModal } from './modules/settings-modal.js?v=50';
+import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=19';
 import {
     findOptionForModelPreference,
     initCustomModelSelect,
@@ -12,11 +13,12 @@ import {
     syncCustomModelSelect,
 } from './modules/model-selector.js?v=15';
 import { getSupportedModelItems, splitModelItem } from './modules/provider-models.js?v=1';
-import * as API from './modules/api.js?v=8';
-import { applyBridgePreferencesFromSettings, startBridgeStatusPolling } from './modules/bridge.js?v=6';
+import * as API from './modules/api.js?v=11';
+import { applyBridgePreferencesFromSettings, startBridgeStatusPolling } from './modules/bridge.js?v=7';
 
 document.addEventListener('DOMContentLoaded', async () => {
     initUI();
+    initEvidencePanel();
     initializeAuth();
     initCustomModelSelect();
     startBridgeStatusPolling();
@@ -145,6 +147,7 @@ function restoreSessionFromUrl(chatHistory, loadChat) {
 }
 
 function showHomeState() {
+    abandonActiveChatWork(elements);
     setCurrentSessionId(null);
     elements.chatContainer.innerHTML = '';
     elements.heroSection.style.display = 'block';

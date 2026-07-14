@@ -157,6 +157,8 @@ class ChatMessage(Base):
     logs = Column(JSON, default=list)
     sources = Column(JSON, default=list)
     stats = Column(JSON, default=dict)
+    # Citation evidence: claim → quote mappings for [n] markers (research credibility).
+    citations = Column(JSON, default=list)
     created_at = Column(DateTime, default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")
@@ -216,6 +218,11 @@ async def init_db():
                 "ALTER TABLE chat_messages ADD COLUMN stats JSON DEFAULT '{}'"
             ))
             logger.info("Added missing 'stats' column to chat_messages")
+        if "citations" not in existing_cols:
+            await conn.execute(text(
+                "ALTER TABLE chat_messages ADD COLUMN citations JSON DEFAULT '[]'"
+            ))
+            logger.info("Added missing 'citations' column to chat_messages")
 
         # Ensure performance indexes exist
         await conn.execute(text(
@@ -357,9 +364,17 @@ async def load_chat_history(session_id_or_path: str) -> Optional[Dict[str, Any]]
             if m.logs:
                 msg_dict["logs"] = m.logs
             if m.sources:
-                msg_dict["sources"] = m.sources
+                # Never ship full crawl bodies to the client; keep snippet/excerpt only.
+                try:
+                    from .citation_evidence import client_source_payload
+                    msg_dict["sources"] = client_source_payload(m.sources)
+                except Exception:
+                    msg_dict["sources"] = m.sources
             if m.stats:
                 msg_dict["stats"] = m.stats
+            citations = getattr(m, "citations", None)
+            if citations:
+                msg_dict["citations"] = citations
             if m.created_at:
                 msg_dict["timestamp"] = _format_utc_timestamp(m.created_at)
             messages.append(msg_dict)
@@ -405,6 +420,7 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
                     logs=msg.get("logs") if isinstance(msg.get("logs"), list) else [],
                     sources=msg.get("sources") if isinstance(msg.get("sources"), list) else [],
                     stats=msg.get("stats") if isinstance(msg.get("stats"), dict) else {},
+                    citations=msg.get("citations") if isinstance(msg.get("citations"), list) else [],
                 ))
             await session.commit()
             return
@@ -428,6 +444,7 @@ async def save_chat_history(session_id: str, messages: list, title: Optional[str
                     logs=msg.get("logs") if isinstance(msg.get("logs"), list) else [],
                     sources=msg.get("sources") if isinstance(msg.get("sources"), list) else [],
                     stats=msg.get("stats") if isinstance(msg.get("stats"), dict) else {},
+                    citations=msg.get("citations") if isinstance(msg.get("citations"), list) else [],
                 ))
 
         await session.commit()
@@ -615,6 +632,45 @@ async def delete_message(session_id: str, message_index: int):
         return True
 
 
+async def truncate_messages_from(session_id: str, from_index: int) -> bool:
+    """Delete the message at from_index and every message after it (AMC resend).
+
+    Used when editing/resending a user turn or retrying an assistant answer:
+    history is sliced to keep only messages before the anchor, then a new turn
+    is appended. Returns True when the session exists (even if already shorter).
+    """
+    if from_index is None:
+        return False
+    try:
+        from_index = int(from_index)
+    except (TypeError, ValueError):
+        return False
+    if from_index < 0:
+        return False
+
+    async with await get_session() as session:
+        sess = (await session.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
+        )).scalar_one_or_none()
+        if sess is None:
+            return False
+
+        msgs = (await session.execute(
+            select(ChatMessage).where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at, ChatMessage.id)
+        )).scalars().all()
+
+        if from_index >= len(msgs):
+            # Already truncated past end — treat as success so resend can append.
+            return True
+
+        for msg in msgs[from_index:]:
+            await session.delete(msg)
+        sess.updated_at = _utc_now()
+        await session.commit()
+        return True
+
+
 async def delete_all_chats():
     async with await get_session() as session:
         await session.execute(delete(ChatMessage))
@@ -670,6 +726,7 @@ def _normalize_imported_message(message: dict, index: int, session_time: datetim
         "logs": message.get("logs") if isinstance(message.get("logs"), list) else [],
         "sources": message.get("sources") if isinstance(message.get("sources"), list) else [],
         "stats": message.get("stats") if isinstance(message.get("stats"), dict) else {},
+        "citations": message.get("citations") if isinstance(message.get("citations"), list) else [],
         "created_at": message_time,
     }
 
@@ -796,6 +853,7 @@ async def import_history_package(payload: dict) -> Dict[str, int]:
                     logs=message["logs"],
                     sources=message["sources"],
                     stats=message["stats"],
+                    citations=message.get("citations") if isinstance(message.get("citations"), list) else [],
                     created_at=message["created_at"],
                 ))
             existing_session_ids.add(chat["id"])

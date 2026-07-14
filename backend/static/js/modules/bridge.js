@@ -1,4 +1,4 @@
-import { coerceBooleanSetting, state, setBridgeConnected } from './state.js?v=3';
+import { coerceBooleanSetting, state, setBridgeConnected } from './state.js?v=5';
 import { authFetch } from './auth.js?v=1';
 import { showToast } from './toast.js';
 

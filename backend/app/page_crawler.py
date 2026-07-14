@@ -9,6 +9,7 @@ from typing import Any
 from .crawler.content import (
     extract_og_metadata,
     extract_page_content,
+    is_spa_like_url,
 )
 from .crawler.redirects import resolve_redirect_url
 from .crawler.security import is_private_url
@@ -86,7 +87,7 @@ async def extract_github_repo_stats(bridge, tab_id: int, url: str, log_func=None
                 break
             await asyncio.sleep(0.5)
 
-        repo_stats = await bridge.evaluate("""(() => {
+        repo_stats = await bridge.evaluate(tab_id, """(() => {
             let totalStars = 0;
             let repos = [];
 
@@ -142,8 +143,9 @@ async def run_interactive_mode(bridge, tab_id: int, query: str, llm_client, log_
     if log_func:
         log_func("浏览器: 交互模式已开启，正在提取可点击元素...")
 
-    # Extract elements and store their positions (no DOM mutation)
-    elements = await bridge.evaluate(r"""(() => {
+    # Extract elements and store their positions (no DOM mutation).
+    # BridgeClient.evaluate(tab_id, expression) — tab_id must be first.
+    elements = await bridge.evaluate(tab_id, r"""(() => {
         const items = [];
         let idCounter = 0;
 
@@ -163,7 +165,7 @@ async def run_interactive_mode(bridge, tab_id: int, query: str, llm_client, log_
         for (const el of candidates) {
             if (!isVisible(el)) continue;
 
-            const text = el.innerText.trim();
+            const text = (el.innerText || '').trim();
             if (text.length < 2 || text.length > 50) continue;
             if (blacklist.test(text)) continue;
             if (navPatterns.test(text)) continue;
@@ -187,6 +189,9 @@ async def run_interactive_mode(bridge, tab_id: int, query: str, llm_client, log_
         }
         return items;
     })()""", timeout_ms=15000)
+
+    if not isinstance(elements, list):
+        elements = []
 
     if elements:
         if log_func:
@@ -320,17 +325,19 @@ async def crawl_page(url: str, log_func=None,
             if log_func:
                 log_func(f"浏览器: 等待页面内容渲染...")
             # 桥接无 networkidle;给渲染一点时间。
-            await asyncio.sleep(1.5)
-            # SPA / documentation sites often need extra rendering time
-            spa_indicators = ['.wiki', '/docs/', '/documentation/', 'docusaurus', 'vitepress',
-                             'notion.site', 'vercel.app', 'netlify.app',
-                             'gitbook.io', 'readme.io', 'mkdocs']
-            is_spa = any(ind in final_url.lower() for ind in spa_indicators)
-            if is_spa:
-                await asyncio.sleep(2.0)  # Extra wait for client-side rendering
-                # Try to scroll to trigger lazy content
-                await bridge.evaluate(tab_id, "window.scrollTo(0, document.body.scrollHeight / 2)")
-                await asyncio.sleep(1.0)
+            # SPA / 官方站的额外等待与滚动由 extract_page_content 内的
+            # SPA 感知重试路径负责，这里只做基础 settle。
+            await asyncio.sleep(1.2 if is_spa_like_url(final_url) else 1.0)
+            if is_spa_like_url(final_url):
+                try:
+                    await bridge.evaluate(
+                        tab_id,
+                        "window.scrollTo(0, Math.min(document.body.scrollHeight / 3, 900));",
+                        timeout_ms=5000,
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(0.8)
             if "github.com" in final_url:
                 if "tab=repositories" in final_url:
                     prepend_text = await extract_github_repo_stats(bridge, tab_id, final_url, log_func) or ""

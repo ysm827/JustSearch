@@ -74,20 +74,6 @@
         },
         "wait_selector": "#results, .snippet"
     },
-    "searxng": {
-        "base_url": "https://searx.be/search?q={query}&format=html",
-        "selectors": {
-            "result_container": [
-                "article.result",
-                ".result"
-            ],
-            "title": "h3 a",
-            "link": "h3 a",
-            "snippet": ".content, p",
-            "date": ""
-        },
-        "wait_selector": "#results, .result"
-    },
     "baidu": {
         "base_url": "https://www.baidu.com/s?wd={query}&rn={num}",
         "selectors": {

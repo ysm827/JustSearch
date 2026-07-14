@@ -372,6 +372,19 @@ class BridgeClient:
             return result.get("value")
         return result
 
+    async def extract_content(self, tab_id: int, timeout_ms: int = 45_000) -> dict:
+        """用扩展侧 Defuddle 抽取主正文(Markdown),不经 CDP evaluate。
+
+        返回 dict: {ok, text, strategy, useful, title, author, thin, ...}
+        旧扩展无此方法时抛异常,由 content.extract_page_content 回退到启发式 JS。
+        """
+        result = await self._conn().call(
+            "extractContent",
+            {"tabId": tab_id, "timeoutMs": timeout_ms},
+            timeout_ms=timeout_ms + 5000,
+        )
+        return result if isinstance(result, dict) else {}
+
     # --- 截图 ---
 
     async def screenshot(self, tab_id: int, full_page: bool = False) -> Optional[str]:

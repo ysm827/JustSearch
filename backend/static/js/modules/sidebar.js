@@ -1,6 +1,7 @@
-import { state, setCurrentSessionId } from './state.js?v=2';
-import { elements } from './ui.js?v=25';
+import { state, setCurrentSessionId } from './state.js?v=5';
+import { elements } from './ui.js?v=27';
 import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=23';
+import { abandonActiveChatWork } from './chat.js?v=36';
 
 let popoverEl = null;
 let popoverTimeout = null;
@@ -234,8 +235,8 @@ export function setupSidebar(loadChat) {
             applyTheme(newTheme);
             updateThemeIcon();
 
-            const { saveSettingsAPI } = await import('./api.js?v=7');
-            const { state } = await import('./state.js?v=2');
+            const { saveSettingsAPI } = await import('./api.js?v=11');
+            const { state } = await import('./state.js?v=5');
             if (state.settings) {
                 const newSettings = { ...state.settings, theme: newTheme };
                 await saveSettingsAPI(newSettings);
@@ -288,6 +289,10 @@ export function toggleSidebarFromShortcut() {
 
 function resetToNewChat() {
     removeRecentChatsPopover();
+    // Abort in-flight streams and bump chatEpoch so late SSE cannot re-bind
+    // state.currentSessionId to the previous conversation (would cause the
+    // next message to append into history instead of a fresh chat).
+    abandonActiveChatWork(elements);
     setCurrentSessionId(null);
     elements.chatContainer.innerHTML = '';
     elements.heroSection.style.display = 'block';

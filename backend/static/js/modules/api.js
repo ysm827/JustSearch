@@ -1,4 +1,4 @@
-import { state, setSettings } from './state.js?v=3';
+import { state, setSettings } from './state.js?v=5';
 import { authFetch } from './auth.js?v=1';
 import { applyFontSizes, applyTheme } from './utils.js?v=6';
 
@@ -61,7 +61,7 @@ function applyAppearanceSettings(settings) {
     applyTheme(settings.theme);
     applyFontSizes(settings);
     // Rebuild open Live Artifact previews when LA base size or theme changes.
-    import('./live-artifacts.js?v=18')
+    import('./live-artifacts.js?v=20')
         .then((mod) => {
             if (typeof mod.refreshLiveArtifactPreviews === 'function') {
                 mod.refreshLiveArtifactPreviews(settings);
@@ -385,7 +385,28 @@ export async function fetchGitHubStats() {
 }
 
 export async function streamChat(query, callbacks) {
-    const { onLog, onAnswerChunk, onAnswer, onSources, onStats, onError, onDone, onMeta, signal, model, providerId, liveArtifactsMode } = callbacks;
+    const {
+        onLog,
+        onAnswerChunk,
+        onAnswer,
+        onSources,
+        onStats,
+        onError,
+        onDone,
+        onMeta,
+        signal,
+        model,
+        providerId,
+        liveArtifactsMode,
+        // AMC resend/retry: drop this message index and everything after it server-side.
+        truncateFromIndex,
+        // Prefer an explicit session id frozen by the caller so concurrent
+        // "new chat" / history switches cannot redirect the request body.
+        sessionId: explicitSessionId,
+    } = callbacks;
+    const requestSessionId = explicitSessionId !== undefined
+        ? explicitSessionId
+        : state.currentSessionId;
 
     const MAX_RETRIES = 2;
     const RETRY_DELAYS = [2000, 5000]; // 渐进式重试延迟
@@ -422,7 +443,7 @@ export async function streamChat(query, callbacks) {
                 onAnswerChunk(event.content);
             }
             else if (event.type === 'answer' && onAnswer) {
-                onAnswer(event.content, event.session_id, event.sources);
+                onAnswer(event.content, event.session_id, event.sources, event.citations);
             }
             else if (event.type === 'error' && onError) {
                 onError(event.content);
@@ -451,14 +472,17 @@ export async function streamChat(query, callbacks) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     query: query,
-                    session_id: state.currentSessionId,
+                    session_id: requestSessionId,
                     provider_id: providerId || state.settings.default_provider_id,
                     model: model,
                     search_engine: state.settings.search_engine,
                     max_results: state.settings.max_results,
                     max_iterations: state.settings.max_iterations,
                     interactive_search: state.settings.interactive_search,
-                    live_artifacts_mode: Boolean(liveArtifactsMode)
+                    live_artifacts_mode: Boolean(liveArtifactsMode),
+                    ...(Number.isFinite(Number(truncateFromIndex)) && Number(truncateFromIndex) >= 0
+                        ? { truncate_from_index: Math.floor(Number(truncateFromIndex)) }
+                        : {}),
                 }),
                 signal: signal
             });
@@ -472,7 +496,7 @@ export async function streamChat(query, callbacks) {
                     || response.status === 503
                 ) {
                     try {
-                        const { isBridgeRequiredError, openBridgeInstallModal, fetchBridgeStatus } = await import('./bridge.js?v=6');
+                        const { isBridgeRequiredError, openBridgeInstallModal, fetchBridgeStatus } = await import('./bridge.js?v=7');
                         if (isBridgeRequiredError(bridgeDetail) || response.status === 503) {
                             await fetchBridgeStatus();
                             openBridgeInstallModal();

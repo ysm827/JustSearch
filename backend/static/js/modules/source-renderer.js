@@ -154,13 +154,20 @@ export function linkCitationsInElement(root, sources) {
                 if (source) {
                     const safeUrl = getSafeExternalUrl(source.url);
                     const anchor = document.createElement('a');
+                    // href kept as fallback / middle-click; primary click opens evidence panel.
                     anchor.href = safeUrl || '#';
                     anchor.className = 'citation-link';
+                    anchor.dataset.evidenceSourceId = id;
+                    if (source.snippet) anchor.dataset.evidenceSnippet = String(source.snippet).slice(0, 200);
                     if (safeUrl) {
                         anchor.target = '_blank';
                         anchor.rel = 'noopener noreferrer';
                     }
-                    anchor.title = source.title || source.url;
+                    const statusHint = source.excerpt || source.snippet || source.title || source.url || '';
+                    anchor.title = statusHint
+                        ? `${source.title || source.url || id}\n点击查看原文证据`
+                        : (source.title || source.url || `来源 ${id}`);
+                    anchor.setAttribute('aria-label', `查看来源 ${id} 的原文证据`);
 
                     const faviconUrl = getFaviconUrl(safeUrl);
                     if (faviconUrl) {

@@ -1793,7 +1793,7 @@ def test_settings_api_partial_update_preserves_existing_values(tmp_path):
         await database.save_settings(
             {
                 "theme": "light",
-                "search_engine": "searxng",
+                "search_engine": "google",
                 "max_results": 17,
                 "max_iterations": 4,
                 "interactive_search": False,
@@ -1812,15 +1812,15 @@ def test_settings_api_partial_update_preserves_existing_values(tmp_path):
         saved = response.json()["settings"]
         loaded = loaded_response.json()
         assert saved["theme"] == "dark"
-        assert saved["search_engine"] == "searxng"
+        assert saved["search_engine"] == "google"
         assert saved["max_results"] == 17
         assert saved["max_iterations"] == 4
         assert saved["interactive_search"] is False
-        assert loaded["search_engine"] == "searxng"
+        assert loaded["search_engine"] == "google"
 
         raw_settings = await database.load_settings()
         assert raw_settings["theme"] == "dark"
-        assert raw_settings["search_engine"] == "searxng"
+        assert raw_settings["search_engine"] == "google"
         assert raw_settings["max_results"] == 17
         assert raw_settings["max_iterations"] == 4
         assert raw_settings["interactive_search"] is False
@@ -1854,7 +1854,7 @@ def test_settings_api_uses_configured_search_engines(tmp_path, monkeypatch):
         app.include_router(router)
         monkeypatch.setattr(
             "backend.app.routers.settings.get_all_engines",
-            lambda: ["searxng", "custom-engine"],
+            lambda: ["google", "custom-engine"],
         )
 
         transport = httpx.ASGITransport(app=app)
@@ -2693,6 +2693,54 @@ def test_delete_message_refreshes_chat_timestamp(tmp_path):
     asyncio.run(run())
 
 
+def test_truncate_messages_from_drops_anchor_and_tail(tmp_path):
+    """AMC resend: truncate at user message index removes that turn and everything after."""
+    from backend.app import database
+
+    async def run():
+        if database._engine is not None:
+            await database._engine.dispose()
+
+        db_path = tmp_path / "justsearch-truncate.db"
+        database._engine = None
+        database._async_session_factory = None
+        database._DB_PATH = str(db_path)
+        database._DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+        database._CHATS_DIR = str(tmp_path / "legacy_chats")
+        database._SETTINGS_FILE = str(tmp_path / "settings.json")
+        await database.init_db()
+        await database.save_chat_history(
+            "truncate-session",
+            [
+                {"role": "user", "content": "q1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "q2"},
+                {"role": "assistant", "content": "a2"},
+                {"role": "user", "content": "q3"},
+                {"role": "assistant", "content": "a3"},
+            ],
+            title="Truncate Session",
+        )
+
+        assert await database.truncate_messages_from("truncate-session", 2) is True
+        after = await database.load_chat_history("truncate-session")
+        assert [m["content"] for m in after["messages"]] == ["q1", "a1"]
+
+        # Truncating past the end is a no-op success (allows resend on short sessions).
+        assert await database.truncate_messages_from("truncate-session", 99) is True
+        after2 = await database.load_chat_history("truncate-session")
+        assert [m["content"] for m in after2["messages"]] == ["q1", "a1"]
+
+        assert await database.truncate_messages_from("missing-session", 0) is False
+
+        if database._engine is not None:
+            await database._engine.dispose()
+            database._engine = None
+            database._async_session_factory = None
+
+    asyncio.run(run())
+
+
 def test_chat_endpoint_uses_selected_provider_id(tmp_path, monkeypatch):
     from backend.app import database
     from backend.app.routers.chat import router
@@ -2882,7 +2930,7 @@ def test_chat_endpoint_coerces_string_interactive_search_default(tmp_path, monke
                 "interaction": {"provider_id": "", "model_id": ""},
                 "answer": {"provider_id": "", "model_id": ""},
             },
-            "search_engine": "searxng",
+            "search_engine": "google",
             "max_results": 8,
             "max_iterations": 4,
             "interactive_search": "false",
@@ -2965,7 +3013,7 @@ def test_chat_endpoint_reports_cancelled_workflow_without_stream_crash(monkeypat
                 "interaction": {"provider_id": "", "model_id": ""},
                 "answer": {"provider_id": "", "model_id": ""},
             },
-            "search_engine": "searxng",
+            "search_engine": "google",
         }
 
     async def fake_load_chat_history(_path):
@@ -4086,7 +4134,7 @@ def test_clear_cache_endpoint_resets_runtime_caches(tmp_path, monkeypatch):
             fake_reset_browser_profile_data,
         )
 
-        browser_manager._search_cache["searxng:cached"] = ([{"title": "old"}], 1.0)
+        browser_manager._search_cache["google:cached"] = ([{"title": "old"}], 1.0)
         llm_client._ANALYSIS_CACHE["task:old"] = ({"type": "search"}, 1.0)
         stats_router.github_stats_cache.update({
             "stars": 99,
@@ -4216,7 +4264,8 @@ def test_engines_endpoint_returns_full_configured_engine_list(monkeypatch):
                 "duckduckgo",
                 "sogou",
                 "brave",
-                "searxng",
+                "baidu",
+                "yandex",
             ]
         }
 

@@ -10,21 +10,20 @@ logger = logging.getLogger(__name__)
 _config_cache: dict = {}
 _config_mtime: float = 0.0
 
-_SEARCH_URL_ENV_OVERRIDES = {
-    "searxng": ("SEARXNG_SEARCH_URL", "JUSTSEARCH_SEARXNG_SEARCH_URL"),
-}
+# Optional per-engine base_url overrides via env (engine -> env var names).
+_SEARCH_URL_ENV_OVERRIDES: dict[str, tuple[str, ...]] = {}
 
 _FALLBACK_SELECTOR_CONFIG = {
-    "searxng": {
-        "base_url": "https://searx.be/search?q={query}&format=html",
+    "google": {
+        "base_url": "https://www.google.com/search?q={query}&num={num}&hl=en",
         "selectors": {
-            "result_container": ["article.result", ".result"],
-            "title": "h3 a",
-            "link": "h3 a",
-            "snippet": ".content, p",
-            "date": "",
+            "result_container": ["div.g", "#rso > div"],
+            "title": "h3, div[role='heading']",
+            "link": "a[href]:not([href^=\"#\"]):not([href^=\"/search\"])",
+            "snippet": "div[style*='-webkit-line-clamp'], .VwiC3b, [data-sncf]",
+            "date": ".LEwnzc, span.f",
         },
-        "wait_selector": "#results, .result",
+        "wait_selector": "#rso, [data-ved]",
     }
 }
 

@@ -5,9 +5,10 @@ import {
     createMessageActionRail,
     createRegenerateButton
 } from './utils.js?v=6';
-import { extractSources, hasCitationSources, linkCitationsInElement, normalizeCitationSources, renderWithCitations } from './source-renderer.js?v=8';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=18';
-import { state } from './state.js?v=2';
+import { extractSources, hasCitationSources, linkCitationsInElement, normalizeCitationSources, renderWithCitations } from './source-renderer.js?v=9';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=20';
+import { bindCitationEvidenceClicks, setEvidenceContext } from './evidence-panel.js?v=1';
+import { state } from './state.js?v=5';
 
 const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;
 const USER_MESSAGE_COLLAPSE_LINE_THRESHOLD = 8;
@@ -112,7 +113,11 @@ export const elements = {
     closeSidebarBtn: null,
     mobileOverlay: null,
     scrollToBottomBtn: null,
-    historySearchInput: null
+    historySearchInput: null,
+    editMessageBanner: null,
+    cancelEditBtn: null,
+    editMessageBannerText: null,
+    inputArea: null,
 };
 
 export function initUI() {
@@ -130,12 +135,17 @@ export function initUI() {
     elements.mobileOverlay = document.getElementById('mobile-overlay');
     elements.scrollToBottomBtn = document.getElementById('scroll-to-bottom-btn');
     elements.historySearchInput = document.getElementById('history-search-input');
+    elements.editMessageBanner = document.getElementById('edit-message-banner');
+    elements.cancelEditBtn = document.getElementById('cancel-edit-btn');
+    elements.editMessageBannerText = document.getElementById('edit-message-banner-text');
+    elements.inputArea = document.getElementById('input-area');
 
     initScrollBehavior();
 }
 
 function initScrollBehavior() {
     const { chatContainer, scrollToBottomBtn } = elements;
+    if (!chatContainer || !scrollToBottomBtn) return;
 
     chatContainer.addEventListener('scroll', () => {
         const { scrollTop, scrollHeight, clientHeight } = chatContainer;
@@ -160,6 +170,15 @@ function findPreviousUserContent(messages, fromIndex) {
         }
     }
     return '';
+}
+
+function findPreviousUserIndex(messages, fromIndex) {
+    for (let i = fromIndex - 1; i >= 0; i -= 1) {
+        if (messages[i]?.role === 'user' && messages[i]?.content) {
+            return i;
+        }
+    }
+    return null;
 }
 
 function parseMessageTimestamp(value) {
@@ -298,19 +317,32 @@ export function renderMessages(messages, actionCallbacks = {}) {
     
     messages.forEach((msg, idx) => {
         const previousMessage = idx > 0 ? messages[idx - 1] : null;
+        const previousUserIndex = normalizeMessageRole(msg.role) === 'assistant'
+            ? findPreviousUserIndex(messages, idx)
+            : null;
         appendMessage(msg.role, msg.content, msg.logs, msg.sources, msg.stats, idx, msg.timestamp, {
             ...actionCallbacks,
             isGrouped: isGroupedWithPrevious(msg, previousMessage),
-            previousUserContent: normalizeMessageRole(msg.role) === 'assistant' ? findPreviousUserContent(messages, idx) : ''
+            previousUserContent: previousUserIndex !== null ? messages[previousUserIndex].content : '',
+            previousUserIndex,
+            citations: msg.citations,
         });
     });
-    
+
     scrollToBottom();
 }
 
-function stageMessageForEdit(content, actionCallbacks = {}) {
+/**
+ * AMC: no inline bubble editor — stage content into the composer.
+ * onEdit receives { content, messageIndex, mode }.
+ */
+function stageMessageForEdit(content, messageIndex, actionCallbacks = {}, mode = 'resend') {
     if (typeof actionCallbacks.onEdit === 'function') {
-        actionCallbacks.onEdit(content);
+        actionCallbacks.onEdit({
+            content,
+            messageIndex,
+            mode,
+        });
         return;
     }
 
@@ -325,20 +357,32 @@ function createMessageActions({ role, content, msgDiv, messageIndex, actionCallb
     const normalizedRole = normalizeMessageRole(role);
     const buttons = [createCopyButton(content)];
 
+    // AMC user Edit3 → resend mode (truncate from this user msg + re-send).
     if (normalizedRole === 'user') {
         buttons.push(createEditMessageButton(content, (value) => {
-            stageMessageForEdit(value, actionCallbacks);
+            stageMessageForEdit(value, messageIndex, actionCallbacks, 'resend');
         }));
     }
 
-    if (normalizedRole === 'assistant' && actionCallbacks.previousUserContent && typeof actionCallbacks.onRegenerate === 'function') {
-        buttons.push(createRegenerateButton(() => actionCallbacks.onRegenerate(actionCallbacks.previousUserContent, { messageIndex })));
+    // AMC assistant Retry → regenerate from previous user message (truncate at user).
+    if (
+        normalizedRole === 'assistant'
+        && actionCallbacks.previousUserContent
+        && typeof actionCallbacks.onRegenerate === 'function'
+    ) {
+        buttons.push(createRegenerateButton(() => actionCallbacks.onRegenerate(
+            actionCallbacks.previousUserContent,
+            {
+                messageIndex,
+                previousUserIndex: actionCallbacks.previousUserIndex ?? null,
+            },
+        )));
     }
 
-    if (messageIndex !== null) {
+    if (messageIndex !== null && messageIndex !== undefined) {
         buttons.push(createDeleteMessageButton(async () => {
             if (!await showConfirm('确定要删除这条消息吗？', '删除消息')) return;
-                const { deleteMessageAPI } = await import('./api.js?v=7');
+            const { deleteMessageAPI } = await import('./api.js?v=11');
             const ok = await deleteMessageAPI(state.currentSessionId, messageIndex);
             if (ok) {
                 msgDiv.remove();
@@ -361,6 +405,10 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
         grouped: Boolean(actionCallbacks.isGrouped),
         timestamp
     });
+    if (messageIndex !== null && messageIndex !== undefined && Number.isFinite(Number(messageIndex))) {
+        msgDiv.dataset.messageIndex = String(Math.floor(Number(messageIndex)));
+    }
+    const citations = Array.isArray(actionCallbacks.citations) ? actionCallbacks.citations : [];
 
     if (normalizedRole === 'assistant' && logs && logs.length > 0) {
          const siteCount = (stats && stats.sites_searched) ? stats.sites_searched : normalizeCitationSources(sources).length;
@@ -386,6 +434,8 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
             suppressUnfencedInlineArtifact,
         });
         linkCitationsInElement(answerBody, resolvedSources);
+        setEvidenceContext({ sources: resolvedSources, citations });
+        bindCitationEvidenceClicks(answerBody, { sources: resolvedSources, citations });
         contentDiv.appendChild(answerBody);
     } else {
         renderUserMessageContent(content, contentDiv);

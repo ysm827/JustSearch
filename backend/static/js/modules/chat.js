@@ -1,20 +1,70 @@
-import { coerceBooleanSetting, state, setAbortController, setCurrentSessionId, setIsProcessing, setLiveArtifactsMode } from './state.js?v=3';
+import {
+    abortActiveStream,
+    bumpChatEpoch,
+    clearEditingMessage,
+    coerceBooleanSetting,
+    isChatEpochCurrent,
+    isEditingMessage,
+    setEditingMessage,
+    setLastUserMessageIndex,
+    setSessionMessageCount,
+    state,
+    setAbortController,
+    setCurrentSessionId,
+    setIsProcessing,
+    setLiveArtifactsMode,
+} from './state.js?v=5';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=6';
 import { updateActiveHistoryItem } from './history-view.js?v=23';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=25';
-import { extractSources, hasCitationSources, linkCitationsInElement, renderWithCitations } from './source-renderer.js?v=8';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=18';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=27';
+import { extractSources, hasCitationSources, linkCitationsInElement, renderWithCitations } from './source-renderer.js?v=9';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=20';
+import { bindCitationEvidenceClicks, setEvidenceContext } from './evidence-panel.js?v=1';
 import {
     applyIntensityPresetToSettings,
     getIntensityPreset,
     updateIntensityUI,
 } from './search-intensity.js?v=1';
 import { showToast } from './toast.js';
-import * as API from './api.js?v=8';
-import { ensureBridgeConnected, warnIfBridgeDisconnected } from './bridge.js?v=6';
+import * as API from './api.js?v=11';
+import { ensureBridgeConnected, warnIfBridgeDisconnected } from './bridge.js?v=7';
 
 function chatRoute(sessionId) {
     return `/c/${encodeURIComponent(String(sessionId ?? ''))}`;
+}
+
+/**
+ * Leave the current chat view cleanly: abort any stream so its late SSE
+ * events cannot re-bind state.currentSessionId, bump epoch so stale
+ * callbacks become no-ops, and restore the send button.
+ */
+export function abandonActiveChatWork(uiElements = elements) {
+    abortActiveStream();
+    bumpChatEpoch();
+    clearEditingMessage();
+    setLastUserMessageIndex(null);
+    setSessionMessageCount(0);
+    const banner = uiElements?.editMessageBanner || document.getElementById('edit-message-banner');
+    const inputArea = uiElements?.inputArea || document.getElementById('input-area');
+    if (banner) banner.hidden = true;
+    if (inputArea) inputArea.classList.remove('is-editing-message');
+    if (uiElements?.userInput) {
+        uiElements.userInput.placeholder = '提出问题...';
+    }
+    if (!uiElements?.sendBtn) return;
+    const sendBtnIcon = uiElements.sendBtn.querySelector('.material-symbols-rounded');
+    if (sendBtnIcon) sendBtnIcon.textContent = 'send';
+    uiElements.sendBtn.classList.remove('processing');
+    uiElements.sendBtn.setAttribute('aria-label', '发送消息');
+    uiElements.sendBtn.title = '发送';
+    const hasText = Boolean(uiElements.userInput?.value?.trim());
+    uiElements.sendBtn.disabled = !hasText;
+    uiElements.sendBtn.setAttribute('aria-disabled', hasText ? 'false' : 'true');
+    try {
+        syncQuickSettingsFromState();
+    } catch {
+        // settings UI may not be ready during early init
+    }
 }
 
 /**
@@ -39,21 +89,146 @@ export function setupChatHandler(elements, renderHistory) {
         renderHistory(history, state.currentSessionId, { onSelect: loadChat, onDelete: deleteChat }, groups);
     }
 
-    function stageMessageForInput(text) {
-        elements.userInput.value = text;
+    function syncEditChrome() {
+        const banner = elements.editMessageBanner || document.getElementById('edit-message-banner');
+        const inputArea = elements.inputArea || document.getElementById('input-area');
+        const bannerText = elements.editMessageBannerText || document.getElementById('edit-message-banner-text');
+        const editing = isEditingMessage();
+        if (banner) banner.hidden = !editing;
+        if (inputArea) inputArea.classList.toggle('is-editing-message', editing);
+        if (bannerText && editing) {
+            bannerText.textContent = state.editMode === 'update'
+                ? '正在修改消息内容 · 发送后仅更新该条'
+                : '正在编辑消息 · 发送后将从此处截断并重新生成';
+        }
+        if (elements.sendBtn && !state.isProcessing) {
+            elements.sendBtn.setAttribute(
+                'aria-label',
+                editing ? (state.editMode === 'update' ? '更新消息' : '更新并重新发送') : '发送消息',
+            );
+            elements.sendBtn.title = editing
+                ? (state.editMode === 'update' ? '更新消息' : '更新并重新发送')
+                : '发送';
+        }
+    }
+
+    function cancelEdit() {
+        clearEditingMessage();
+        syncEditChrome();
+        if (elements.userInput) {
+            elements.userInput.placeholder = '提出问题...';
+        }
+    }
+
+    /**
+     * AMC edit: fill composer + set editingMessageIndex (resend by default).
+     * @param {{ content: string, messageIndex?: number|null, mode?: 'resend'|'update' }|string} payload
+     */
+    function beginEditMessage(payload) {
+        const content = typeof payload === 'string' ? payload : String(payload?.content || '');
+        const messageIndex = typeof payload === 'object' && payload
+            ? payload.messageIndex
+            : null;
+        const mode = typeof payload === 'object' && payload?.mode === 'update' ? 'update' : 'resend';
+
+        if (!content) return;
+        if (state.isProcessing) {
+            // AMC stops generation when starting an edit.
+            if (state.abortController) {
+                state.abortController.abort();
+                setAbortController(null);
+            }
+            setIsProcessing(false);
+            syncQuickSettingsFromState();
+        }
+
+        if (messageIndex !== null && messageIndex !== undefined && Number.isFinite(Number(messageIndex))) {
+            setEditingMessage(Number(messageIndex), mode);
+        } else {
+            // No stable index (e.g. live bubble) — still prefill for convenience.
+            clearEditingMessage();
+        }
+
+        elements.userInput.value = content;
+        elements.userInput.placeholder = mode === 'update' ? '修改消息内容...' : '编辑后发送将重新生成...';
         elements.userInput.dispatchEvent(new Event('input', { bubbles: true }));
         resetInputHeight();
         elements.userInput.focus({ preventScroll: true });
         scrollToBottom();
-        showToast('已填入输入框，可修改后发送', 'info');
+        syncEditChrome();
+        showToast(
+            mode === 'update' ? '已进入修改模式，发送后仅更新该条' : '已进入编辑模式，发送后将从此处重新生成',
+            'info',
+        );
     }
 
-    async function regenerateFromPrompt(prompt) {
-        if (!prompt || state.isProcessing) return;
-        await handleSendMessage(prompt);
+    /**
+     * Remove DOM message bubbles from `fromIndex` onward (optimistic AMC truncate).
+     */
+    function removeMessagesFromDom(fromIndex) {
+        if (!Number.isFinite(Number(fromIndex))) return;
+        const cutoff = Math.floor(Number(fromIndex));
+        const nodes = Array.from(elements.chatContainer.querySelectorAll('.message'));
+        const lastKept = nodes
+            .filter((node) => {
+                const idx = Number(node.dataset.messageIndex);
+                return Number.isFinite(idx) && idx < cutoff;
+            })
+            .pop();
+
+        nodes.forEach((node) => {
+            const idx = Number(node.dataset.messageIndex);
+            if (Number.isFinite(idx)) {
+                if (idx >= cutoff) node.remove();
+                return;
+            }
+            // Unindexed stream bubbles after the last kept message are abandoned tails.
+            if (
+                node.classList.contains('user')
+                || node.classList.contains('assistant')
+                || node.classList.contains('error')
+            ) {
+                if (!lastKept || (lastKept.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+                    node.remove();
+                }
+            }
+        });
+    }
+
+    /**
+     * AMC Retry: truncate at the previous user message and re-send it.
+     * If a stream is active, stop it first (retry-and-stop).
+     */
+    async function regenerateFromPrompt(prompt, meta = {}) {
+        if (!prompt) return;
+        if (state.isProcessing) {
+            if (state.abortController) {
+                try { state.abortController.abort(); } catch { /* ignore */ }
+                setAbortController(null);
+            }
+            setIsProcessing(false);
+            // Let the aborted stream's finally settle before starting a new turn.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        let truncateIndex = meta.previousUserIndex;
+        if (truncateIndex === null || truncateIndex === undefined) {
+            truncateIndex = state.lastUserMessageIndex;
+        }
+        if (truncateIndex === null || truncateIndex === undefined) {
+            // Fallback: resend without truncate (legacy live bubble).
+            await handleSendMessage(prompt, { skipAppendUser: false });
+            return;
+        }
+        clearEditingMessage();
+        syncEditChrome();
+        await handleSendMessage(prompt, {
+            truncateFromIndex: Number(truncateIndex),
+            skipAppendUser: false,
+        });
     }
 
     async function refreshAfterMessageDeleted() {
+        cancelEdit();
         if (state.currentSessionId) {
             await loadChat(state.currentSessionId);
         }
@@ -62,6 +237,10 @@ export function setupChatHandler(elements, renderHistory) {
     }
 
     async function loadChat(sessionId) {
+        // Drop any in-flight stream so its answer cannot land on another chat.
+        abandonActiveChatWork(elements);
+        cancelEdit();
+        const loadEpoch = state.chatEpoch;
         setCurrentSessionId(sessionId);
         updateActiveHistoryItem(sessionId);
         // 更新浏览器地址栏
@@ -70,11 +249,27 @@ export function setupChatHandler(elements, renderHistory) {
             history.pushState({ sessionId }, '', route);
         }
         const data = await API.fetchChat(sessionId);
+        // Stale response: user already switched away (new chat / other history).
+        if (!isChatEpochCurrent(loadEpoch) || state.currentSessionId !== sessionId) {
+            return;
+        }
         if (data) {
-            renderMessages(data.messages, {
-                onEdit: stageMessageForInput,
+            const messages = Array.isArray(data.messages) ? data.messages : [];
+            setSessionMessageCount(messages.length);
+            let lastUserIdx = null;
+            let lastUserContent = '';
+            messages.forEach((msg, idx) => {
+                if (msg?.role === 'user' && msg?.content) {
+                    lastUserIdx = idx;
+                    lastUserContent = msg.content;
+                }
+            });
+            setLastUserMessageIndex(lastUserIdx);
+            lastUserMessage = lastUserContent || '';
+            renderMessages(messages, {
+                onEdit: beginEditMessage,
                 onRegenerate: regenerateFromPrompt,
-                onMessageDeleted: refreshAfterMessageDeleted
+                onMessageDeleted: refreshAfterMessageDeleted,
             });
         }
     }
@@ -91,7 +286,11 @@ export function setupChatHandler(elements, renderHistory) {
         }
     }
 
-    async function handleSendMessage(overrideText) {
+    /**
+     * @param {string} [overrideText]
+     * @param {{ truncateFromIndex?: number|null, skipAppendUser?: boolean }} [options]
+     */
+    async function handleSendMessage(overrideText, options = {}) {
         if (state.isProcessing) {
             if (state.abortController) {
                 state.abortController.abort();
@@ -100,8 +299,35 @@ export function setupChatHandler(elements, renderHistory) {
             return;
         }
 
-        const text = overrideText || elements.userInput.value.trim();
+        const text = (overrideText !== undefined ? overrideText : elements.userInput.value).trim();
         if (!text) return;
+
+        // Capture session + view epoch BEFORE any await. New-chat / history
+        // switch during bridge check must not let us attach to another session,
+        // and late SSE from a previous stream must not reclaim session_id.
+        const requestSessionId = state.currentSessionId;
+        const streamEpoch = state.chatEpoch;
+        const isStreamActive = () => isChatEpochCurrent(streamEpoch);
+
+        // AMC resend: prefer explicit truncate option, else active edit state.
+        let truncateFromIndex = options.truncateFromIndex;
+        if (
+            (truncateFromIndex === null || truncateFromIndex === undefined)
+            && isEditingMessage()
+            && state.editMode === 'resend'
+        ) {
+            truncateFromIndex = state.editingMessageIndex;
+        }
+        if (truncateFromIndex !== null && truncateFromIndex !== undefined) {
+            truncateFromIndex = Number(truncateFromIndex);
+            if (!Number.isFinite(truncateFromIndex) || truncateFromIndex < 0) {
+                truncateFromIndex = null;
+            } else {
+                truncateFromIndex = Math.floor(truncateFromIndex);
+            }
+        } else {
+            truncateFromIndex = null;
+        }
 
         // Fail fast before clearing the input: all engines need the Chrome bridge.
         const bridgeReady = await ensureBridgeConnected({ forceRefresh: true });
@@ -109,8 +335,32 @@ export function setupChatHandler(elements, renderHistory) {
             showToast('请先连接 JustSearch Bridge 扩展后再搜索', 'warning', 4000);
             return;
         }
+        if (!isStreamActive()) {
+            // User already left this view (new chat / switched history) while
+            // we were waiting on the bridge. Do not start a stray request.
+            return;
+        }
 
         lastUserMessage = text;
+
+        // Optimistic DOM truncate (AMC slice) before appending the new turn.
+        if (truncateFromIndex !== null) {
+            removeMessagesFromDom(truncateFromIndex);
+            setSessionMessageCount(truncateFromIndex);
+        }
+
+        const userMessageIndex = truncateFromIndex !== null
+            ? truncateFromIndex
+            : state.sessionMessageCount;
+        const assistantMessageIndex = userMessageIndex + 1;
+        setLastUserMessageIndex(userMessageIndex);
+
+        // Clear edit chrome once send starts.
+        clearEditingMessage();
+        syncEditChrome();
+        if (elements.userInput) {
+            elements.userInput.placeholder = '提出问题...';
+        }
 
         const modelSelect = document.getElementById('model-select');
         const selectedModelOption = modelSelect?.options[modelSelect.selectedIndex] || null;
@@ -130,13 +380,16 @@ export function setupChatHandler(elements, renderHistory) {
         }
         elements.sendBtn.classList.add('processing');
 
-        appendMessage('user', text, null, null, null, null, null, {
-            onEdit: stageMessageForInput
-        });
+        if (!options.skipAppendUser) {
+            appendMessage('user', text, null, null, null, userMessageIndex, null, {
+                onEdit: beginEditMessage,
+            });
+        }
         scrollToBottom();
 
         // Assistant Message Placeholder
         const { msgDiv, contentDiv: answerDiv, sideColumn } = createMessageShell('assistant');
+        msgDiv.dataset.messageIndex = String(assistantMessageIndex);
 
         const { logContainer, logSummary, logDetails, spinner, statusText, expandIcon } = createDynamicLogContainer();
         const seenLogs = new Set(); // 去重
@@ -158,16 +411,17 @@ export function setupChatHandler(elements, renderHistory) {
         let currentAnswerBuffer = '';
         const copyBtn = createCopyButton(() => currentAnswerBuffer);
         const regenBtn = createRegenerateButton(async () => {
-            // 移除当前助手消息
-            msgDiv.remove();
-            // 重新发送
-            await handleSendMessage(lastUserMessage);
+            // AMC Retry: truncate at this turn's user message and re-send.
+            await regenerateFromPrompt(lastUserMessage, {
+                previousUserIndex: userMessageIndex,
+            });
         });
         sideColumn.appendChild(createMessageActionRail([copyBtn, regenBtn], '助手消息操作'));
 
         let currentSources = [];
         let hasReceivedChunk = false;
         let searchStats = null;
+        let currentCitations = [];
         let searchStartTime = Date.now();
         let streamOutcome = 'completed';
         // 流式渲染节流：避免每个 chunk 都全量 md.render+DOMPurify（O(n²)）。
@@ -177,12 +431,14 @@ export function setupChatHandler(elements, renderHistory) {
         let reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
         function scheduleStreamRender(isStreaming) {
+            if (!isStreamActive()) return;
             pendingRenderIsStreaming = isStreaming;
             if (pendingRender) return;
             pendingRender = true;
             // rAF 批处理；reduced-motion 下仍需渲染但不做 smooth 滚动
             requestAnimationFrame(() => {
                 pendingRender = false;
+                if (!isStreamActive()) return;
                 renderCurrentAssistantAnswer(pendingRenderIsStreaming);
                 if (!userScrolled) scrollToBottom();
             });
@@ -205,6 +461,11 @@ export function setupChatHandler(elements, renderHistory) {
                 suppressUnfencedInlineArtifact,
             });
             linkCitationsInElement(contentWrapper, resolvedSources);
+            setEvidenceContext({ sources: resolvedSources, citations: currentCitations });
+            bindCitationEvidenceClicks(contentWrapper, {
+                sources: resolvedSources,
+                citations: currentCitations,
+            });
         }
 
         // 重置滚动跟踪（新一轮对话）
@@ -212,6 +473,7 @@ export function setupChatHandler(elements, renderHistory) {
 
         // 实时耗时更新器
         const elapsedTimer = setInterval(() => {
+            if (!isStreamActive()) return;
             const elapsed = ((Date.now() - searchStartTime) / 1000).toFixed(1);
             if (statusText.textContent.includes('正在')) {
                 statusText.textContent = statusText.textContent.replace(/ \([\d.]+s\)$/, '') + ` (${elapsed}s)`;
@@ -222,9 +484,14 @@ export function setupChatHandler(elements, renderHistory) {
             await API.streamChat(text, {
                 model: selectedModel,
                 providerId: selectedProviderId,
+                // Freeze session id at send time so a concurrent view switch
+                // cannot redirect this request into another conversation.
+                sessionId: requestSessionId,
+                truncateFromIndex,
                 liveArtifactsMode: state.liveArtifactsMode,
                 signal: controller.signal,
                 onMeta: (meta) => {
+                    if (!isStreamActive()) return;
                     const sessionId = typeof meta === 'string' ? meta : meta.session_id;
                     if (sessionId) {
                         setCurrentSessionId(sessionId);
@@ -235,6 +502,7 @@ export function setupChatHandler(elements, renderHistory) {
                     }
                 },
                 onLog: (msg) => {
+                    if (!isStreamActive()) return;
                     // Detect engine fallback notification
                     if (msg.includes('自动切换到')) {
                         const match = msg.match(/切换到\s*(\S+)/);
@@ -252,16 +520,20 @@ export function setupChatHandler(elements, renderHistory) {
                     logDetails.scrollTop = logDetails.scrollHeight;
                 },
                 onSources: (sources) => {
+                    if (!isStreamActive()) return;
                     currentSources = sources;
+                    setEvidenceContext({ sources: currentSources, citations: currentCitations });
                     if (currentAnswerBuffer) {
                         renderCurrentAssistantAnswer(true);
                         if (!userScrolled) scrollToBottom();
                     }
                 },
                 onStats: (stats) => {
+                    if (!isStreamActive()) return;
                     searchStats = stats;
                 },
                 onAnswerChunk: (chunk) => {
+                    if (!isStreamActive()) return;
                     if (!hasReceivedChunk) {
                         hasReceivedChunk = true;
                         contentWrapper.innerHTML = '';
@@ -270,18 +542,26 @@ export function setupChatHandler(elements, renderHistory) {
                     // 节流到下一帧，避免逐 token 全量重渲染
                     scheduleStreamRender(true);
                 },
-                onAnswer: (finalAnswer, sessionId, finalSources) => {
+                onAnswer: (finalAnswer, sessionId, finalSources, finalCitations) => {
+                    if (!isStreamActive()) return;
                     if (hasCitationSources(finalSources)) {
                         currentSources = finalSources;
+                    }
+                    if (Array.isArray(finalCitations)) {
+                        currentCitations = finalCitations;
                     }
                     currentAnswerBuffer = finalAnswer;
                     // 取消任何挂起的节流渲染，立即用最终态渲染一次
                     pendingRender = false;
                     renderCurrentAssistantAnswer(false);
                     setCurrentSessionId(sessionId);
+                    // user + assistant persisted → count is assistantIndex + 1
+                    setSessionMessageCount(assistantMessageIndex + 1);
+                    setLastUserMessageIndex(userMessageIndex);
                     refreshHistory();
                 },
                 onError: (err) => {
+                    if (!isStreamActive()) return;
                     streamOutcome = 'failed';
                     if (!hasReceivedChunk) {
                         contentWrapper.innerHTML = '';
@@ -309,28 +589,44 @@ export function setupChatHandler(elements, renderHistory) {
                 onDone: () => {}
             });
         } catch (e) {
-            if (!hasReceivedChunk) {
-                contentWrapper.innerHTML = '';
-            }
             if (e.name === 'AbortError') {
                 streamOutcome = 'cancelled';
-                const warnDiv = document.createElement('div');
-                warnDiv.className = 'warning-box';
-                warnDiv.textContent = '[已由用户停止]';
-                contentWrapper.appendChild(warnDiv);
-            } else {
+                // Only annotate the bubble if this stream still owns the view.
+                if (isStreamActive()) {
+                    if (!hasReceivedChunk) {
+                        contentWrapper.innerHTML = '';
+                    }
+                    const warnDiv = document.createElement('div');
+                    warnDiv.className = 'warning-box';
+                    warnDiv.textContent = '[已由用户停止]';
+                    contentWrapper.appendChild(warnDiv);
+                }
+            } else if (isStreamActive()) {
                 streamOutcome = 'failed';
                 console.error(e);
+                if (!hasReceivedChunk) {
+                    contentWrapper.innerHTML = '';
+                }
                 const errDiv = document.createElement('div');
                 errDiv.className = 'error-box';
                 errDiv.textContent = `网络错误: ${e.message}`;
                 contentWrapper.appendChild(errDiv);
+            } else {
+                streamOutcome = 'cancelled';
             }
         } finally {
             clearInterval(elapsedTimer);
+            // Always clear the controller if we still own it — even after view switch.
+            if (state.abortController === controller) {
+                setAbortController(null);
+            }
+            // Only mutate shared UI / processing flags when this stream still owns the view.
+            // Otherwise a newer send (or new-chat abandon) already took over.
+            if (!isStreamActive()) {
+                return;
+            }
             const totalElapsed = ((Date.now() - searchStartTime) / 1000).toFixed(1);
             setIsProcessing(false);
-            setAbortController(null);
             syncQuickSettingsFromState();
             if (sendBtnIcon) {
                 sendBtnIcon.textContent = 'send';
@@ -413,10 +709,38 @@ export function setupChatHandler(elements, renderHistory) {
         }
     });
     // Ctrl+Enter also sends (alternative shortcut)
+    // ArrowUp on empty input → AMC edit last user message (resend mode)
+    // Escape while editing → cancel
     elements.userInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && e.ctrlKey) {
             e.preventDefault();
             handleSendMessage();
+            return;
+        }
+        if (e.key === 'Escape' && isEditingMessage()) {
+            e.preventDefault();
+            cancelEdit();
+            elements.userInput.value = '';
+            resetInputHeight();
+            updateSendButtonState();
+            return;
+        }
+        if (
+            e.key === 'ArrowUp'
+            && !e.shiftKey
+            && !e.altKey
+            && !e.ctrlKey
+            && !e.metaKey
+            && !state.isProcessing
+            && !elements.userInput.value.trim()
+            && lastUserMessage
+        ) {
+            e.preventDefault();
+            beginEditMessage({
+                content: lastUserMessage,
+                messageIndex: state.lastUserMessageIndex,
+                mode: 'resend',
+            });
         }
     });
 
@@ -427,15 +751,35 @@ export function setupChatHandler(elements, renderHistory) {
         setTimeout(autoResizeInput, 0);
     });
 
+    // AMC cancel-edit control on the composer banner
+    const cancelEditBtn = elements.cancelEditBtn || document.getElementById('cancel-edit-btn');
+    if (cancelEditBtn) {
+        cancelEditBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            cancelEdit();
+            // Keep draft text so user can still send as a new message if desired;
+            // clear only the edit anchor (matches AMC cancel clearing draft optionally).
+            // AMC clears input on cancel — mirror that.
+            elements.userInput.value = '';
+            resetInputHeight();
+            updateSendButtonState();
+            elements.userInput.focus({ preventScroll: true });
+            showToast('已取消编辑', 'info');
+        });
+    }
+    syncEditChrome();
+
     // 初始化按钮状态
     updateSendButtonState();
 
-    // Ctrl+Shift+R: regenerate last answer
+    // Ctrl+Shift+R: regenerate last answer (AMC retry last turn)
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'R') {
             e.preventDefault();
             if (lastUserMessage && !state.isProcessing) {
-                handleSendMessage(lastUserMessage);
+                regenerateFromPrompt(lastUserMessage, {
+                    previousUserIndex: state.lastUserMessageIndex,
+                });
             }
         }
     });
@@ -680,7 +1024,6 @@ export function syncQuickSettingsFromState() {
         'bing': 'Bing',
         'sogou': '搜狗 (Sogou)',
         'brave': 'Brave Search',
-        'searxng': 'SearXNG',
         'baidu': '百度 (Baidu)',
         'yandex': 'Yandex',
     };
