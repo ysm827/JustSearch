@@ -36,7 +36,10 @@ assert.match(inlineFrame.getAttribute('srcdoc'), /Inline Artifact/);
 assert.match(inlineFrame.getAttribute('srcdoc'), /data-amc-preview-base/);
 assert.match(inlineFrame.getAttribute('srcdoc'), /notifyResize/);
 assert.equal(inlineFrame.getAttribute('scrolling'), 'no');
-assert.equal(inlineFrame.getAttribute('sandbox'), 'allow-scripts allow-forms');
+assert.equal(
+  inlineFrame.getAttribute('sandbox'),
+  'allow-scripts allow-forms allow-popups allow-modals allow-downloads',
+);
 assert.equal(inlineFrame.dataset.liveArtifactFrameId, 'dom-check-message-inline-0');
 assert.match(inlineFrame.getAttribute('srcdoc'), /const FRAME_ID = "dom-check-message-inline-0"/);
 // Parent-side probe should have already set a concrete height (not stuck at 0).
@@ -56,8 +59,8 @@ handleArtifactFrameMessage({
     frameId: 'dom-check-message-inline-0',
   },
 });
-assert.equal(inlineViewport.style.height, '2048px');
-assert.equal(inlineFrame.style.height, '2048px');
+assert.equal(inlineViewport.style.height, '2056px');
+assert.equal(inlineFrame.style.height, '2056px');
 assert.equal(applyInlineArtifactFrameHeight(inlineViewport, inlineFrame, 40), 120);
 assert.ok(measureArtifactContentHeight(html, 640) >= 120);
 

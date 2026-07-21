@@ -131,125 +131,251 @@ async def extract_github_repo_stats(bridge, tab_id: int, url: str, log_func=None
     return None
 
 
+# Serialize interactive clicks across concurrent crawls — debugger/CDP does not
+# handle multi-tab Input events well under load.
+_interactive_lock = asyncio.Lock()
+
+# If main text is already long, skip click-to-expand (saves time + CDP stress).
+_INTERACTIVE_SKIP_MIN_CHARS = 8000
+
+# Keep in sync with extension/lib/handlers.js GET_VISIBLE_ELEMENTS_JS
+INTERACTIVE_ELEMENTS_JS = r"""(() => {
+    const items = [];
+    let idCounter = 0;
+
+    function isVisible(elem) {
+        if (!elem.getBoundingClientRect || !elem.checkVisibility) return false;
+        const rect = elem.getBoundingClientRect();
+        if (rect.width < 8 || rect.height < 8) return false;
+        if (rect.bottom <= 0 || rect.right <= 0) return false;
+        return elem.checkVisibility();
+    }
+
+    const candidates = document.querySelectorAll('button, a[href], [role="button"]');
+    const blacklist = /^(home|login|sign in|sign up|menu|privacy|terms|登录|注册|分享|首页|关闭|评论|like|share|follow|subscribe|cookie|accept|dismiss|下载 app|open in app|get app|feedback|举报|投诉|more actions)$/i;
+    const navPatterns = /^(back|next|previous|prev|1|2|3|4|5|6|7|8|9|10|first|last|<|>|<<|>>)$/i;
+    const skipNoise = /^(skip to (main )?content|skip navigation|跳转到?内容|跳至(主)?内容|skip to main|跳过导航)$/i;
+
+    for (const el of candidates) {
+        if (!isVisible(el)) continue;
+        const text = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+        if (text.length < 2 || text.length > 50) continue;
+        if (blacklist.test(text)) continue;
+        if (navPatterns.test(text)) continue;
+        if (skipNoise.test(text)) continue;
+        const href = (el.getAttribute && el.getAttribute('href')) || '';
+        if (href === '#' || href === '#content' || href === '#bodyContent' || href === '#main') continue;
+        const parent = el.closest('header, footer, nav, .navbar, .footer, .header, .sidebar, .nav-bar, #header, #footer, #nav');
+        if (parent) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.x + rect.width / 2 < 4 && rect.y + rect.height / 2 < 4) continue;
+        items.push({
+            id: "js-interact-" + idCounter++,
+            text: text,
+            tag: el.tagName.toLowerCase(),
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+            w: rect.width,
+            h: rect.height
+        });
+        if (items.length >= 30) break;
+    }
+    return items;
+})()"""
+
+# Scroll target into view, re-measure center, return {x,y,ok} or null
+PREPARE_CLICK_JS_TMPL = r"""(() => {
+    const wantId = %s;
+    const wantText = %s;
+    // Prefer matching by re-running selection heuristics and id order is unstable
+    // after DOM changes — match by text + similar position first.
+    const candidates = Array.from(document.querySelectorAll('button, a[href], [role="button"]'));
+    let el = null;
+    for (const c of candidates) {
+        const t = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        if (t === wantText) { el = c; break; }
+    }
+    if (!el) return { ok: false, reason: 'not-found' };
+    try {
+        el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    } catch (e) {
+        try { el.scrollIntoView(true); } catch (e2) {}
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return { ok: false, reason: 'tiny' };
+    return {
+        ok: true,
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        w: rect.width,
+        h: rect.height
+    };
+})()"""
+
+DOM_CLICK_JS_TMPL = r"""(() => {
+    const wantText = %s;
+    const candidates = Array.from(document.querySelectorAll('button, a[href], [role="button"]'));
+    for (const c of candidates) {
+        const t = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        if (t !== wantText) continue;
+        try {
+            c.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        } catch (e) {}
+        try {
+            c.click();
+            return { ok: true, method: 'click' };
+        } catch (e) {
+            try {
+                c.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                return { ok: true, method: 'dispatch' };
+            } catch (e2) {
+                return { ok: false, reason: String(e2) };
+            }
+        }
+    }
+    return { ok: false, reason: 'not-found' };
+})()"""
+
+
+def _js_str(s: str) -> str:
+    """JSON-encode a string for safe embedding in evaluate() expressions."""
+    import json as _json
+    return _json.dumps(s if s is not None else "")
+
+
 async def run_interactive_mode(bridge, tab_id: int, query: str, llm_client, log_func=None,
                               session_id: str = "default", turn_id: str | None = None):
     """Run interactive mode: extract clickable elements and ask LLM what to click.
 
     session_id/turn_id 透传给虚拟光标,让扩展端按 turn 去重路径、归组标签。
+    全局锁保证同一时刻只有一个 tab 在做 CDP 点击,避免并行挂死。
     """
+    async with _interactive_lock:
+        await _run_interactive_mode_locked(
+            bridge, tab_id, query, llm_client, log_func, session_id, turn_id
+        )
+
+
+async def _run_interactive_mode_locked(
+    bridge, tab_id: int, query: str, llm_client, log_func=None,
+    session_id: str = "default", turn_id: str | None = None,
+):
     crawl_session_id = session_id or "default"
     if turn_id is None:
         turn_id = f"{crawl_session_id}-{next_move_seq()}"
+
+    # Skip when page already has substantial text (expand rarely helps enough).
+    try:
+        text_len = await bridge.evaluate(
+            tab_id,
+            r"""(() => {
+                const t = (document.body && (document.body.innerText || '')) || '';
+                return t.replace(/\s+/g, ' ').trim().length;
+            })()""",
+            timeout_ms=10000,
+        )
+        if isinstance(text_len, (int, float)) and text_len >= _INTERACTIVE_SKIP_MIN_CHARS:
+            if log_func:
+                log_func(
+                    f"浏览器: 正文已约 {int(text_len)} 字符，跳过交互点击（阈值阈值 {_INTERACTIVE_SKIP_MIN_CHARS}）"
+                )
+            return
+    except Exception:
+        pass
+
     if log_func:
         log_func("浏览器: 交互模式已开启，正在提取可点击元素...")
 
-    # Extract elements and store their positions (no DOM mutation).
-    # BridgeClient.evaluate(tab_id, expression) — tab_id must be first.
-    elements = await bridge.evaluate(tab_id, r"""(() => {
-        const items = [];
-        let idCounter = 0;
-
-        function isVisible(elem) {
-            if (!elem.getBoundingClientRect || !elem.checkVisibility) return false;
-            const rect = elem.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0 && elem.checkVisibility();
-        }
-
-        const candidates = document.querySelectorAll('button, a[href], [role="button"]');
-
-        // Blacklist patterns for elements that are never useful to click
-        const blacklist = /^(home|login|sign in|sign up|menu|privacy|terms|登录|注册|分享|首页|关闭|评论|like|share|follow|subscribe|cookie|accept|dismiss|下载 app|open in app|get app|feedback|feedback|举报|投诉|more actions)$/i;
-        // Generic navigation that rarely helps find content
-        const navPatterns = /^(back|next|previous|prev|1|2|3|4|5|6|7|8|9|10|first|last|<|>|<<|>>)$/i;
-
-        for (const el of candidates) {
-            if (!isVisible(el)) continue;
-
-            const text = (el.innerText || '').trim();
-            if (text.length < 2 || text.length > 50) continue;
-            if (blacklist.test(text)) continue;
-            if (navPatterns.test(text)) continue;
-
-            // Skip elements in header/footer/nav sections
-            const parent = el.closest('header, footer, nav, .navbar, .footer, .header, .sidebar, .nav-bar, #header, #footer, #nav');
-            if (parent) continue;
-
-            const rect = el.getBoundingClientRect();
-            const tempId = "js-interact-" + idCounter++;
-
-            items.push({
-                id: tempId,
-                text: text,
-                tag: el.tagName.toLowerCase(),
-                x: rect.x + rect.width / 2,
-                y: rect.y + rect.height / 2
-            });
-
-            if (items.length >= 30) break;
-        }
-        return items;
-    })()""", timeout_ms=15000)
+    elements = await bridge.evaluate(tab_id, INTERACTIVE_ELEMENTS_JS, timeout_ms=15000)
 
     if not isinstance(elements, list):
         elements = []
 
-    if elements:
-        if log_func:
-            log_func(f"浏览器: 提取到 {len(elements)} 个候选元素。请求 AI 决策...")
-
-        clicked_ids = await llm_client.decide_click_elements(query, elements)
-
-        if clicked_ids:
-            if log_func:
-                log_func(f"浏览器: AI 决定点击元素 ID: {clicked_ids}")
-
-            # Build position lookup
-            pos_map = {}
-            for el in elements:
-                pos_map[el['id']] = (el['x'], el['y'])
-
-            for cid in clicked_ids:
-                if cid not in pos_map:
-                    continue
-                x, y = pos_map[cid]
-                clicked = False
-                move_seq = next_move_seq()
-                # Retry up to 3 times
-                for attempt in range(3):
-                    try:
-                        # 先驱动虚拟光标动画到目标(弹簧/贝塞尔,复刻 BCB),再真实点击。
-                        await bridge.move_mouse(
-                            tab_id, x, y,
-                            session_id=crawl_session_id,
-                            turn_id=turn_id,
-                            move_sequence=move_seq,
-                            wait_for_arrival=True,
-                        )
-                        await bridge.click_at(tab_id, x, y)
-                        if log_func:
-                            log_func(f"浏览器: 已点击元素 {cid}")
-                        clicked = True
-                        await asyncio.sleep(1.0)
-                        break
-                    except Exception as e:
-                        if attempt < 2:
-                            if log_func:
-                                log_func(f"浏览器: 点击 {cid} 失败 (重试 {attempt+1}/3): {e}")
-                            await asyncio.sleep(0.5 * (attempt + 1))
-                        else:
-                            if log_func:
-                                log_func(f"浏览器: 点击元素 {cid} 最终失败: {e}")
-
-                if clicked:
-                    # Wait for any dynamic content to load after click.
-                    # 桥接无 networkidle,用固定等待代替。
-                    await asyncio.sleep(1.0)
-        else:
-            if log_func:
-                log_func("浏览器: AI 决定不点击任何元素。")
-    else:
+    if not elements:
         if log_func:
             log_func("浏览器: 未找到显著的可交互元素。")
+        return
+
+    if log_func:
+        log_func(f"浏览器: 提取到 {len(elements)} 个候选元素。请求 AI 决策...")
+
+    clicked_ids = await llm_client.decide_click_elements(query, elements)
+
+    if not clicked_ids:
+        if log_func:
+            log_func("浏览器: AI 决定不点击任何元素。")
+        return
+
+    if log_func:
+        log_func(f"浏览器: AI 决定点击元素 ID: {clicked_ids}")
+
+    meta_by_id = {el["id"]: el for el in elements if isinstance(el, dict) and el.get("id")}
+
+    for cid in clicked_ids:
+        el_meta = meta_by_id.get(cid)
+        if not el_meta:
+            continue
+        want_text = (el_meta.get("text") or "").strip()
+        x, y = el_meta.get("x"), el_meta.get("y")
+        clicked = False
+        move_seq = next_move_seq()
+
+        for attempt in range(3):
+            try:
+                # Re-measure after scroll — coordinates from first pass go stale.
+                if want_text:
+                    prep = await bridge.evaluate(
+                        tab_id,
+                        PREPARE_CLICK_JS_TMPL % (_js_str(cid), _js_str(want_text)),
+                        timeout_ms=10000,
+                    )
+                    if isinstance(prep, dict) and prep.get("ok"):
+                        x, y = prep.get("x", x), prep.get("y", y)
+
+                if x is None or y is None:
+                    raise RuntimeError("no coordinates")
+
+                await bridge.move_mouse(
+                    tab_id, float(x), float(y),
+                    session_id=crawl_session_id,
+                    turn_id=turn_id,
+                    move_sequence=move_seq,
+                    wait_for_arrival=True,
+                )
+                await bridge.click_at(tab_id, float(x), float(y))
+                if log_func:
+                    log_func(f"浏览器: 已点击元素 {cid}")
+                clicked = True
+                await asyncio.sleep(1.0)
+                break
+            except Exception as e:
+                # CDP path failed — try native DOM click as fallback
+                if want_text:
+                    try:
+                        dom = await bridge.evaluate(
+                            tab_id,
+                            DOM_CLICK_JS_TMPL % _js_str(want_text),
+                            timeout_ms=10000,
+                        )
+                        if isinstance(dom, dict) and dom.get("ok"):
+                            if log_func:
+                                log_func(f"浏览器: 已点击元素 {cid}（DOM 兜底）")
+                            clicked = True
+                            await asyncio.sleep(1.0)
+                            break
+                    except Exception:
+                        pass
+
+                if attempt < 2:
+                    if log_func:
+                        log_func(f"浏览器: 点击 {cid} 失败 (重试 {attempt+1}/3): {e}")
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                else:
+                    if log_func:
+                        log_func(f"浏览器: 点击元素 {cid} 最终失败: {e}")
+
+        if clicked:
+            await asyncio.sleep(1.0)
 
 
 async def crawl_page(url: str, log_func=None,

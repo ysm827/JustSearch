@@ -1,8 +1,8 @@
 import { authFetch } from './auth.js?v=1';
 import { coerceBooleanSetting, setCurrentSessionId, state } from './state.js?v=5';
-import { abandonActiveChatWork } from './chat.js?v=36';
+import { abandonActiveChatWork } from './chat.js?v=40';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=27';
+import { elements, showConfirm } from './ui.js?v=31';
 import { renderHistory } from './history-view.js?v=23';
 import {
     getModelDisplayName,
@@ -505,6 +505,10 @@ function fillSettingsForm(settings) {
             settings.default_provider_id || '',
         );
         document.getElementById('interactive-search-input').checked = coerceBooleanSetting(settings.interactive_search, true);
+        const citationVerifyInput = document.getElementById('citation-verify-input');
+        if (citationVerifyInput) {
+            citationVerifyInput.checked = coerceBooleanSetting(settings.citation_verification_enabled, false);
+        }
         const requireBridgeInput = document.getElementById('bridge-require-before-send-input');
         if (requireBridgeInput) {
             requireBridgeInput.checked = coerceBooleanSetting(settings.bridge_require_before_send, true);
@@ -541,6 +545,7 @@ function collectSettingsForm() {
     const showBannerInput = document.getElementById('bridge-show-banner-input');
     const toastOnChangeInput = document.getElementById('bridge-toast-on-change-input');
     const pollIntervalSelect = document.getElementById('bridge-poll-interval-select');
+    const citationVerifyInput = document.getElementById('citation-verify-input');
     return {
         theme: document.getElementById('theme-select').value,
         search_engine: document.getElementById('engine-select').value,
@@ -552,6 +557,9 @@ function collectSettingsForm() {
         providers,
         workflow_step_models: collectWorkflowStepModels(),
         interactive_search: document.getElementById('interactive-search-input').checked,
+        citation_verification_enabled: citationVerifyInput
+            ? citationVerifyInput.checked
+            : coerceBooleanSetting(state.settings?.citation_verification_enabled, false),
         bridge_require_before_send: requireBridgeInput
             ? requireBridgeInput.checked
             : coerceBooleanSetting(state.settings?.bridge_require_before_send, true),

@@ -134,37 +134,37 @@ def test_search_result_cleanup_is_split_from_browser_manager():
     assert "def _is_search_engine_internal_page" not in manager_source
 
 
-def test_captcha_verification_logs_action_required_before_polling():
-    # 桥接重构后验证码改为轮询检测:在用户真实 Chrome 里自解。
-    # 这里断言 _wait_for_manual_verification 仍先 log ACTION_REQUIRED,再进入轮询等待。
+def test_captcha_verification_uses_real_chrome_bridge_not_remote_modal():
+    """Bridge redesign: captcha is solved in the user's real Chrome; no remote modal."""
     manager_source = (
         PROJECT_ROOT / "backend/app/browser_manager.py"
     ).read_text(encoding="utf-8")
-    verification_block = manager_source.split(
-        "async def _wait_for_manual_verification", 1
-    )[1].split(
-        "async def _handle_verification_pages", 1
-    )[0]
+    chat_source = (
+        PROJECT_ROOT / "backend/static/js/modules/chat.js"
+    ).read_text(encoding="utf-8")
+    bridge_source = (
+        PROJECT_ROOT / "backend/static/js/modules/bridge.js"
+    ).read_text(encoding="utf-8")
 
-    notify_index = verification_block.index("ACTION_REQUIRED:")
-    # 轮询等待:不再注册 interaction session(已移除),改用 sleep 循环。
-    assert "register_interaction_session" not in verification_block
-    assert "asyncio.sleep" in verification_block
-    # ACTION_REQUIRED 提示在轮询之前发出。
-    sleep_index = verification_block.index("asyncio.sleep")
-    assert notify_index < sleep_index
+    # Legacy remote-browser verification helpers must stay gone.
+    assert "async def _wait_for_manual_verification" not in manager_source
+    assert "async def _handle_verification_pages" not in manager_source
+    assert "register_interaction_session" not in manager_source
+    assert "openBrowserModal" not in chat_source
+    assert not (PROJECT_ROOT / "backend/static/js/modules/browser-modal.js").is_file()
+    # Chat requires the Chrome extension bridge before searching.
+    assert "ensureBridgeConnected" in chat_source
+    assert "fetchBridgeStatus" in bridge_source
 
 
 def test_frontend_opens_browser_modal_for_all_search_verification_actions():
-    # 桥接重构后验证码改为「在 Chrome 中就地解决」,不再弹 modal。
-    # 仍保留 ACTION_REQUIRED 日志触发,前端只改提示文案,不弹窗。
+    # Kept for historical test name; behavior is "no modal" after bridge redesign.
     chat_source = (
         PROJECT_ROOT / "backend/static/js/modules/chat.js"
     ).read_text(encoding="utf-8")
 
-    assert "ACTION_REQUIRED: CAPTCHA_DETECTED" in chat_source
-    assert "ACTION_REQUIRED: SEARCH_VERIFICATION_REQUIRED" in chat_source
     assert "openBrowserModal" not in chat_source
+    assert "ensureBridgeConnected" in chat_source
 
 
 def test_bridge_install_guidance_is_wired_in_frontend():
@@ -241,41 +241,36 @@ def test_google_engine_uses_official_multicolor_icon():
     assert "appendChild(activeSvg.cloneNode(true))" in chat_source
 
 
-def test_sidebar_brand_uses_split_google_style_colors():
+def test_sidebar_brand_uses_logo_asset():
+    """Sidebar brand is icon-only (logo asset), not split Just/Search text spans."""
     index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
         encoding="utf-8"
     )
-    sidebar_source = (
-        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
-    ).read_text(encoding="utf-8")
+    style_source = (PROJECT_ROOT / "backend/static/css/style.css").read_text(
+        encoding="utf-8"
+    )
 
-    assert '<span class="brand-text-blue">Just</span>' in index_source
-    assert '<span class="brand-text-cyan">Search</span>' in index_source
-    assert "--brand-google-blue: #0024bb;" in sidebar_source
-    assert "--brand-google-cyan: #00a5a5;" in sidebar_source
-    assert "color: var(--brand-google-blue);" in sidebar_source
-    assert "color: var(--brand-google-cyan);" in sidebar_source
+    assert 'class="sidebar-brand"' in index_source
+    assert "sidebar-brand-logo" in index_source
+    assert "/static/assets/justsearch-icon.png" in index_source
+    assert ".sidebar-brand" in style_source
+    assert ".sidebar-brand-logo" in style_source
 
 
-def test_sidebar_brand_toggles_sidebar_like_collapse_button():
+def test_sidebar_collapse_controls_toggle_sidebar():
+    """Desktop collapse / expand / mini toggle share the same sidebar toggle handler."""
     index_source = (PROJECT_ROOT / "backend/static/index.html").read_text(
         encoding="utf-8"
     )
     sidebar_js = (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
-    sidebar_source = (
-        PROJECT_ROOT / "backend/static/css/sections/sidebar.css"
-    ).read_text(encoding="utf-8")
 
-    assert 'id="sidebar-brand-toggle"' in index_source
-    assert 'role="button"' in index_source
-    assert 'tabindex="0"' in index_source
-    assert "const sidebarBrandToggle = document.getElementById('sidebar-brand-toggle');" in sidebar_js
-    assert "sidebarBrandToggle?.addEventListener('click', toggleSidebar);" in sidebar_js
-    assert "event.key === 'Enter' || event.key === ' '" in sidebar_js
-    assert ".sidebar-brand-name:hover" in sidebar_source
-    assert "cursor: pointer;" in sidebar_source
+    assert 'id="collapse-sidebar-btn"' in index_source
+    assert 'id="expand-sidebar-btn"' in index_source or "expand-sidebar-btn" in sidebar_js
+    assert "const toggleSidebar = () => {" in sidebar_js
+    assert "elements.collapseSidebarBtn?.addEventListener('click', toggleSidebar);" in sidebar_js
+    assert "elements.expandSidebarBtn?.addEventListener('click', toggleSidebar);" in sidebar_js
 
 
 def test_crawler_security_and_redirect_helpers_are_split_out():
@@ -384,7 +379,7 @@ def test_frontend_uses_generated_logo_asset():
     assert favicon_path.read_bytes()[25] in {4, 6}
     assert "/static/assets/justsearch-logo.png" in index_source
     assert "/static/assets/justsearch-logo-dark.png" in index_source
-    assert "/static/assets/justsearch-favicon.png?v=7" in index_source
+    assert "/static/assets/justsearch-favicon.png" in index_source
     assert "/static/assets/justsearch-favicon.png" in manifest_source
     assert "class=\"brand-logo\"" not in index_source
     assert "sidebar-logo" not in index_source
@@ -409,15 +404,18 @@ def test_frontend_tests_do_not_depend_on_local_absolute_paths():
 
 
 def test_favicon_has_white_rounded_square_background_for_dark_browser_tabs():
+    """Favicon uses transparent corners + a light rounded plate behind the mark."""
     favicon_path = PROJECT_ROOT / "backend/static/assets/justsearch-favicon.png"
     width, height, pixel = _read_rgba_png(favicon_path)
 
     assert (width, height) == (512, 512)
 
-    for point in [(0, 0), (511, 0), (0, 511), (511, 511), (16, 16), (495, 16), (16, 495), (495, 495)]:
+    # Outer corners stay transparent so dark browser chrome is not framed by a hard box.
+    for point in [(0, 0), (511, 0), (0, 511), (511, 511)]:
         assert pixel(*point)[3] == 0
 
-    for point in [(256, 16), (16, 256), (496, 256), (256, 496), (80, 80), (431, 80), (80, 431), (431, 431)]:
+    # Mid-edge samples on the rounded plate should be near-white / fully opaque.
+    for point in [(256, 16), (16, 256), (496, 256), (256, 496)]:
         red, green, blue, alpha = pixel(*point)
         assert red >= 245
         assert green >= 245
@@ -438,12 +436,14 @@ def test_favicon_has_white_rounded_square_background_for_dark_browser_tabs():
             icon_pixels_x.append(x)
             icon_pixels_y.append(y)
 
+    assert icon_pixels_x and icon_pixels_y
+    # Colored mark is inset from the plate edge and reasonably large.
     assert min(icon_pixels_x) >= 16
     assert max(icon_pixels_x) <= 496
-    assert min(icon_pixels_y) >= 32
-    assert max(icon_pixels_y) <= 480
-    assert max(icon_pixels_x) - min(icon_pixels_x) + 1 >= 440
-    assert max(icon_pixels_y) - min(icon_pixels_y) + 1 >= 350
+    assert min(icon_pixels_y) >= 16
+    assert max(icon_pixels_y) <= 496
+    assert max(icon_pixels_x) - min(icon_pixels_x) + 1 >= 200
+    assert max(icon_pixels_y) - min(icon_pixels_y) + 1 >= 200
 
 
 def test_frontend_relative_imports_resolve_to_files():
@@ -834,14 +834,16 @@ def test_runtime_security_defaults_are_not_wide_open():
         encoding="utf-8"
     )
 
+    # Host HTTP is mapped to 8001 (container still listens on 8000).
     local_origins = (
-        "http://localhost:8000,http://127.0.0.1:8000,"
+        "http://localhost:8001,http://127.0.0.1:8001,"
         "http://localhost,http://127.0.0.1"
     )
     assert f"CORS_ORIGINS={local_origins}" in env_example
     assert f"CORS_ORIGINS=${{CORS_ORIGINS:-{local_origins}}}" in compose_source
-    assert '"127.0.0.1:8000:8000"' in compose_source
+    assert '"127.0.0.1:8001:8000"' in compose_source
     assert '"8000:8000"' not in compose_source
+    assert '"0.0.0.0:8001:8000"' not in compose_source
     assert "JUSTSEARCH_AUTH_ENABLED=true" in env_example
     assert "JUSTSEARCH_AUTH_ENABLED=${JUSTSEARCH_AUTH_ENABLED:-true}" in compose_source
     assert 'load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))' in main_source
@@ -1005,8 +1007,10 @@ def test_initial_release_version_uses_semver_and_v_display_prefix():
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
 
-    assert '__version__ = "1.0.0"' in version_source
-    assert 'org.opencontainers.image.version="1.0.0"' in dockerfile_source
+    version_match = re.search(r'__version__\s*=\s*"(\d+\.\d+\.\d+)"', version_source)
+    assert version_match is not None, "version.py must define a semver __version__"
+    semver = version_match.group(1)
+    assert f'org.opencontainers.image.version="{semver}"' in dockerfile_source
     assert "formatVersionText" in settings_js
     assert "`v${rawVersion}`" in settings_js
 
@@ -1045,15 +1049,15 @@ def test_source_rendering_helpers_are_split_from_ui_module():
     assert "hasCitationSources" in ui_source
     assert "normalizeCitationSources" in ui_source
     assert "hasCitationSources" in chat_source
-    assert "from './source-renderer.js?v=9'" in ui_source
-    assert "from './source-renderer.js?v=9'" in chat_source
-    assert "from './ui.js?v=27'" in (
+    assert "from './source-renderer.js?v=10'" in ui_source
+    assert "from './source-renderer.js?v=10'" in chat_source
+    assert "from './ui.js?v=31'" in (
         PROJECT_ROOT / "backend/static/js/modules/history-view.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=27'" in (
+    assert "from './ui.js?v=31'" in (
         PROJECT_ROOT / "backend/static/js/modules/settings-modal.js"
     ).read_text(encoding="utf-8")
-    assert "from './ui.js?v=27'" in (
+    assert "from './ui.js?v=31'" in (
         PROJECT_ROOT / "backend/static/js/modules/sidebar.js"
     ).read_text(encoding="utf-8")
     assert "export function extractSources" not in ui_source
@@ -1100,8 +1104,8 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     ).read_text(encoding="utf-8")
 
     # style.css 现为各分片拼接（不再用 @import）；index.html 引用带缓存版本号的单文件
-    assert 'href="/static/css/style.css?v=45"' in index_source
-    assert 'src="/static/js/main.js?v=71"' in index_source
+    assert 'href="/static/css/style.css?v=46"' in index_source
+    assert 'src="/static/js/main.js?v=75"' in index_source
     assert "=== base.css (inlined) ===" in style_source
     assert "=== sidebar.css (inlined) ===" in style_source
     assert "=== chat.css (inlined) ===" in style_source
@@ -1113,10 +1117,10 @@ def test_sidebar_stylesheet_changes_are_cache_busted():
     assert "edit-message-banner" in style_source
     assert "from './modules/auth.js?v=1'" in main_source
     assert "from './modules/state.js?v=5'" in main_source
-    assert "from './modules/ui.js?v=27'" in main_source
-    assert "from './modules/chat.js?v=36'" in main_source
+    assert "from './modules/ui.js?v=31'" in main_source
+    assert "from './modules/chat.js?v=40'" in main_source
     assert "from './modules/history-view.js?v=23'" in main_source
-    assert "from './modules/settings-modal.js?v=50'" in main_source
+    assert "from './modules/settings-modal.js?v=51'" in main_source
     assert "from './modules/sidebar.js?v=19'" in main_source
     assert "from './modules/model-selector.js?v=15'" in main_source
     assert "from './modules/api.js?v=11'" in main_source

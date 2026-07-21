@@ -106,7 +106,7 @@ pip install -r backend/requirements.txt
 ### 2. 加载浏览器桥接扩展
 1. 打开 Chrome,访问 `chrome://extensions`,开启右上角「开发者模式」。
 2. 点「加载已解压的扩展程序」,选择本仓库的 [`extension/`](./extension/) 目录。
-3. 扩展弹出页会显示连接状态(默认连 `ws://127.0.0.1:38975/justsearch`)。后端启动后会自动变绿。
+3. 扩展弹出页会显示连接状态(默认连 `ws://127.0.0.1:8000/justsearch`)。后端启动后会自动变绿。
 
 > 扩展只需加载一次;后端重启无需重载扩展(它会自动重连)。
 
@@ -124,7 +124,6 @@ python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `JUSTSEARCH_BRIDGE_WS_HOST` | `127.0.0.1` | 桥接 WebSocket 监听地址(Docker 内用 `0.0.0.0`) |
-| `JUSTSEARCH_BRIDGE_WS_PORT` | `38975` | 桥接 WebSocket 端口 |
 | `JUSTSEARCH_BRIDGE_WS_PATH` | `/justsearch` | 桥接 WebSocket 路径 |
 | `BRIDGE_REQUEST_TIMEOUT_MS` | `30000` | 单次桥接 RPC 请求超时(毫秒) |
 | `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000,http://localhost,http://127.0.0.1` | 允许的 CORS 来源（逗号分隔） |
@@ -159,7 +158,7 @@ git pull
 ```bash
 docker-compose up -d --build
 ```
-> **注意**：使用 `--build` 参数确保 Docker 重新构建镜像以应用最新的代码和依赖变更。运行数据保存在 `data/` 中，会通过 Docker volume 保留。Docker 部署下,桥接 WebSocket 端口 `38975` 已映射到本机,确保 Chrome 扩展能连上容器内的后端。
+> **注意**：使用 `--build` 参数确保 Docker 重新构建镜像以应用最新的代码和依赖变更。运行数据保存在 `data/` 中，会通过 Docker volume 保留。Docker 部署下,桥接 WebSocket 与 HTTP 共用端口，扩展连接地址与页面访问地址端口一致。
 
 #### 本地 Python 用户
 ```bash
@@ -199,7 +198,7 @@ JustSearch 用一个自建 Chrome 扩展 + 后端 WebSocket 服务驱动你**真
    │ WebSocket 出站连接(JSON-RPC 2.0,自动重连)
    ▼
 JustSearch 后端 FastAPI
-   └── extension_bridge.py  ← WS 服务端(ws://127.0.0.1:38975/justsearch)
+   └── extension_bridge.py  ← WS 服务端(ws://127.0.0.1:8000/justsearch)
          持有唯一扩展连接、JSON-RPC 路由、tab 池
 ```
 
@@ -277,7 +276,6 @@ JustSearch/
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `JUSTSEARCH_BRIDGE_WS_HOST` | `127.0.0.1` | 桥接 WS 监听地址 |
-| `JUSTSEARCH_BRIDGE_WS_PORT` | `38975` | 桥接 WS 端口 |
 | `JUSTSEARCH_BRIDGE_WS_PATH` | `/justsearch` | 桥接 WS 路径 |
 | `BRIDGE_REQUEST_TIMEOUT_MS` | `30000` | 桥接 RPC 请求超时(毫秒) |
 | `CORS_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000,http://localhost,http://127.0.0.1` | CORS 允许的源（逗号分隔） |

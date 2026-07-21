@@ -8,7 +8,7 @@
     <link rel="manifest" href="/static/manifest.json">
     <meta name="theme-color" content="#3b82f6" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
-    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="description" content="JustSearch - 基于 AI 和深度搜索的智能研究助手">
     <meta name="keywords" content="AI搜索,深度搜索,智能助手,LLM,搜索增强">
@@ -23,7 +23,7 @@
             } catch (e) {}
         })();
     </script>
-    <link rel="stylesheet" href="/static/css/style.css?v=45">
+    <link rel="stylesheet" href="/static/css/style.css?v=46">
     <link rel="stylesheet" href="/static/fonts/fonts.css?v=1">
     <!-- 三方库本地托管(markdown-it / dompurify / highlight.js),避免 jsdelivr CDN 在国内超时 -->
     <script src="/static/vendor/markdown-it.min.js?v=14.0.0"></script>
@@ -424,6 +424,16 @@
                                         <span class="ios-slider"></span>
                                     </label>
                                 </div>
+                                <div class="form-group toggle-group settings-field-row">
+                                    <div class="toggle-info settings-field-copy">
+                                        <label for="citation-verify-input" class="toggle-label">引用语义复核 (Beta)</label>
+                                        <span class="toggle-desc">回答后用模型复核存疑引用是否被原文支持。默认关闭：会多一次 LLM 调用、增加延迟与成本，失败时自动回退。</span>
+                                    </div>
+                                    <label class="ios-switch">
+                                        <input type="checkbox" id="citation-verify-input" role="switch" aria-label="引用语义复核">
+                                        <span class="ios-slider"></span>
+                                    </label>
+                                </div>
                             </div>
 
                             <div class="settings-section-heading" style="margin-top: 10px;">
@@ -557,7 +567,7 @@
                                         <span class="field-desc">扩展弹窗中的地址应与此一致。</span>
                                     </div>
                                     <div class="bridge-value-with-action">
-                                        <code id="settings-bridge-ws-url" class="bridge-field-code">ws://127.0.0.1:38975/justsearch</code>
+                                        <code id="settings-bridge-ws-url" class="bridge-field-code">ws://127.0.0.1:8000/justsearch</code>
                                         <button type="button" id="settings-bridge-copy-ws-btn" class="secondary-btn bridge-settings-btn compact">
                                             <span class="material-symbols-rounded">content_copy</span>
                                             <span>复制</span>
@@ -668,7 +678,7 @@
                                 <div class="form-group settings-field-row bridge-field-stack">
                                     <div class="settings-field-copy">
                                         <label>常见问题</label>
-                                        <span class="field-desc"><strong>已安装仍未连接：</strong>检查扩展 popup 地址；Docker 下宿主端口可能是 <code>38978</code> 而非 <code>38975</code>。</span>
+                                        <span class="field-desc"><strong>已安装仍未连接：</strong>检查扩展 popup 地址；桥接与 HTTP 服务共用同一端口，默认 8000（本地）或宿主机映射端口（Docker）。</span>
                                         <span class="field-desc"><strong>标签页顶部黄条：</strong>扩展通过 debugger 控制标签时的正常提示，任务结束后会消失。</span>
                                         <span class="field-desc"><strong>只能连一个扩展：</strong>后连接的实例会顶替先前连接。</span>
                                     </div>
@@ -834,7 +844,7 @@
                 <div class="bridge-ws-row">
                     <label for="bridge-ws-url">默认 WebSocket 地址</label>
                     <div class="bridge-ws-controls">
-                        <input id="bridge-ws-url" type="text" readonly value="ws://127.0.0.1:38975/justsearch" aria-label="桥接 WebSocket 地址">
+                        <input id="bridge-ws-url" type="text" readonly value="ws://127.0.0.1:8000/justsearch" aria-label="桥接 WebSocket 地址">
                         <button type="button" id="bridge-copy-ws-btn" class="secondary-btn">复制</button>
                     </div>
                     <span class="field-desc">若后端端口变更，可在扩展弹出页修改后自动重连。</span>
@@ -848,6 +858,6 @@
         </div>
     </div>
 
-    <script type="module" src="/static/js/main.js?v=71"></script>
+    <script type="module" src="/static/js/main.js?v=75"></script>
 </body>
 </html>

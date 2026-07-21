@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **多轮上下文改写（Standalone Query）**：任务分析输出 `resolved_query` / `entities` / `is_followup` / `topic_changed`；短追问（如「具体时间？国内时间？」）会补齐历史实体后再搜索。相关性评估、深度爬取与答案生成统一使用改写后的独立问题，避免话题漂移。
+
+### Changed
+- **对话历史入模压缩**：assistant 长文 / Live Artifacts HTML 去标签并截断后再进入 LLM 上下文，降低噪声淹没主题的风险；模型失败时提供 history-aware fallback，禁止裸短句直接检索。
+- **Live Artifacts 对齐 AMC 渲染路径**：接入 `normalizePreviewableMarkdownContent`；开启 Live Artifacts 时 Markdown/混排答案强制整段进 themed iframe（`coerceLiveModeArtifact`），并清理 `height:100vh` / `overflow:hidden` 等裁切样式，避免表格后出现“细灰条”半截内容。
+
+### Fixed
+- **Live Artifacts 气泡高度被二次压扁 / 过大空白**：对齐 AMC `ArtifactFrame` + `previewBridgeScript`。含 `<details>` 时强制 open；**仅当 bridge 高度≈折叠态时** 用展开高度兜底（防裁切），可信量高可回缩去掉内容下方大空白（此前 text estimate 把高度顶到 2000px+ 且禁止收缩）。模块缓存 `main.js?v=74` / `live-artifacts.js?v=26`。
+
 ## [2.4.0] - 2026-07-15
 
 ### Added

@@ -1,5 +1,10 @@
 import { showToast } from './toast.js';
 import { state } from './state.js?v=5';
+import {
+    assignOccurrenceAttributes,
+    createOccurrenceTracker,
+    shouldSkipTextNode,
+} from './citation-occurrences.js?v=1';
 
 const ARTIFACT_LANGUAGES = new Set(['html', 'svg']);
 const SUPPORTING_LANGUAGES = new Set(['css', 'javascript', 'js']);
@@ -25,6 +30,8 @@ const PREVIEW_CONTENT_SECURITY_POLICY = [
 const PREVIEW_CONTENT_SECURITY_POLICY_META = `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_CONTENT_SECURITY_POLICY}">`;
 // Mirror AMC-WebUI preview base styles: transparent body, natural height (no 100vh lock).
 // Color comes from injectPreviewTheme tokens so dark mode stays readable.
+// Mirror AMC-WebUI preview base + readable defaults when Markdown is coerced into
+// the iframe (tables/headings would otherwise look unstyled without .markdown-body).
 const PREVIEW_BASE_STYLES = `<style data-amc-preview-base="true">
 html, body {
   margin: 0;
@@ -36,13 +43,99 @@ html, body {
   max-height: none !important;
   overflow-x: auto;
   overflow-y: visible !important;
+  line-height: 1.65;
+  font-family: inherit;
 }
 body > section, body > main, body > article, body > div,
-body > [data-amc-stream-preview-root] {
+body > [data-amc-stream-preview-root],
+body > [data-justsearch-live-artifact-root] {
   height: auto !important;
   max-height: none !important;
   min-height: 0 !important;
   overflow: visible !important;
+}
+h1,h2,h3,h4,h5,h6 {
+  color: var(--amc-live-artifact-text, inherit);
+  line-height: 1.35;
+  margin: 0.85em 0 0.45em;
+  font-weight: 700;
+}
+h1 { font-size: 1.45em; }
+h2 { font-size: 1.25em; }
+h3 { font-size: 1.1em; }
+p, li { margin: 0.45em 0; }
+a { color: var(--amc-live-artifact-accent, #2563eb); }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75em 0;
+  font-size: 0.95em;
+}
+th, td {
+  border: 1px solid var(--amc-live-artifact-border, rgba(0,0,0,.1));
+  padding: 0.55em 0.75em;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: var(--amc-live-artifact-surface-muted, rgba(0,0,0,.04));
+  font-weight: 650;
+}
+tr:nth-child(even) td {
+  background: var(--amc-live-artifact-surface, transparent);
+}
+blockquote {
+  margin: 0.75em 0;
+  padding: 0.35em 0 0.35em 0.9em;
+  border-left: 3px solid var(--amc-live-artifact-border, rgba(0,0,0,.15));
+  color: var(--amc-live-artifact-muted, inherit);
+}
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+pre {
+  overflow-x: auto;
+  padding: 0.75em 1em;
+  border-radius: 8px;
+  background: var(--amc-live-artifact-surface-muted, rgba(0,0,0,.04));
+  border: 1px solid var(--amc-live-artifact-border, rgba(0,0,0,.08));
+}
+img, svg { max-width: 100%; height: auto; }
+.citation-group, sup.citation-ref { vertical-align: super; font-size: 0.75em; }
+/* details/summary: natural document flow + visible disclosure marker */
+details {
+  display: block;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+details > *:not(summary) {
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45em;
+}
+summary::-webkit-details-marker { display: none; }
+summary::marker { content: ''; }
+summary::before {
+  content: '▶';
+  display: inline-block;
+  flex: 0 0 auto;
+  margin-top: 0.15em;
+  font-size: 0.72em;
+  line-height: 1;
+  color: var(--amc-live-artifact-muted, #6b7280);
+  transition: transform 0.15s ease;
+}
+details[open] > summary::before {
+  transform: rotate(90deg);
 }
 </style>`;
 const PREVIEW_BASE_FONT_SIZE_ATTRIBUTE = 'data-amc-live-artifact-base-font-size';
@@ -102,7 +195,9 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
 
     const messageId = resolveMessageId(container, options.messageId);
     const artifactSources = normalizeArtifactSources(options.sources);
-    const interactionSpec = extractLiveArtifactInteraction(markdownText, Boolean(options.isStreaming));
+    const isStreaming = Boolean(options.isStreaming);
+    const liveArtifactsMode = resolveLiveArtifactsModeFlag(options);
+    const interactionSpec = extractLiveArtifactInteraction(markdownText, isStreaming);
     if (interactionSpec) {
         syncRegistryForMessage(messageId, []);
         clearArtifactControls(container);
@@ -110,8 +205,10 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
         return [];
     }
 
-    const inlineArtifact = extractInlineLiveArtifact(markdownText, messageId, Boolean(options.isStreaming), {
+    // AMC path: normalize → single live artifact (native HTML or coerced) → ArtifactFrame.
+    const inlineArtifact = getInlineLiveArtifact(markdownText, messageId, isStreaming, {
         suppressUnfencedInlineArtifact: Boolean(options.suppressUnfencedInlineArtifact),
+        liveArtifactsMode,
     });
     if (inlineArtifact) {
         hydrateArtifactCitations(inlineArtifact, artifactSources);
@@ -122,7 +219,10 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
         return [inlineArtifact];
     }
 
-    const artifacts = extractLiveArtifacts(markdownText, messageId);
+    const artifacts = extractLiveArtifacts(
+        normalizePreviewableMarkdownContent(markdownText, { isStreaming }),
+        messageId,
+    );
     artifacts.forEach(artifact => hydrateArtifactCitations(artifact, artifactSources));
     syncRegistryForMessage(messageId, artifacts);
     clearArtifactControls(container);
@@ -151,8 +251,50 @@ export function renderLiveArtifactsForMessage(container, markdownText, options =
     return artifacts;
 }
 
+/**
+ * Resolve a single inline Live Artifact for a message.
+ * When liveArtifactsMode is on (AMC Live Artifacts path), Markdown / mixed
+ * answers are coerced into one themed HTML fragment so they never render as
+ * clipped raw HTML inside the chat bubble.
+ */
 export function getInlineLiveArtifact(markdownText, messageId = 'message', isStreaming = false, options = {}) {
-    return extractInlineLiveArtifact(markdownText, messageId, isStreaming, options);
+    const liveArtifactsMode = resolveLiveArtifactsModeFlag(options);
+    const suppressUnfenced = Boolean(options.suppressUnfencedInlineArtifact);
+    // AMC bare-HTML → fence wrap must NOT run when we intentionally suppress
+    // unfenced artifacts (mode off + citation sources → bubble Markdown path).
+    // Otherwise normalize would re-fence the HTML and bypass suppress.
+    const textForExtract = (liveArtifactsMode || !suppressUnfenced)
+        ? normalizePreviewableMarkdownContent(markdownText, { isStreaming })
+        : String(markdownText || '');
+    const native = extractInlineLiveArtifact(textForExtract, messageId, isStreaming, options);
+    if (native) {
+        native.code = sanitizeClippingStylesInHtml(native.code);
+        if (native.streamHtml) {
+            native.streamHtml = sanitizeClippingStylesInHtml(native.streamHtml);
+        }
+        native.srcdoc = buildSrcdoc(
+            resolveArtifactPreviewCode(native),
+            native.language,
+            [],
+            { frameId: native.id },
+        );
+        return native;
+    }
+    if (liveArtifactsMode) {
+        const forCoerce = normalizePreviewableMarkdownContent(markdownText, { isStreaming });
+        return coerceLiveModeArtifact(forCoerce, messageId, { isStreaming });
+    }
+    return null;
+}
+
+function resolveLiveArtifactsModeFlag(options = {}) {
+    // Only honor an explicit boolean. A caller that forwards an optional field
+    // as {liveArtifactsMode: undefined} should fall back to the global state
+    // value rather than silently disabling Live Artifacts rendering.
+    if (typeof options.liveArtifactsMode === 'boolean') {
+        return options.liveArtifactsMode;
+    }
+    return Boolean(state?.liveArtifactsMode);
 }
 
 export function getLiveArtifactInteraction(markdownText, isStreaming = false) {
@@ -324,6 +466,234 @@ function extractInlineLiveArtifact(markdownText, messageId, isStreaming, options
     return null;
 }
 
+// --- AMC-aligned previewable markdown normalization (previewableMarkdown.ts) ---
+
+const MISLABELED_HTML_FRAGMENT_LANGUAGES = new Set(['css', 'text', 'txt', 'markdown', 'md']);
+const HTML_STRUCTURAL_BLANK_LINE_RE = new RegExp(
+    `\\n[ \\t]*\\n(?=[ \\t]*(?:<!--|<\\/?(?:article|aside|blockquote|button|caption|details|div|figure|figcaption|footer|form|h[1-6]|header|label|li|main|meter|nav|ol|p|progress|section|select|span|summary|table|tbody|td|tfoot|th|thead|tr|ul)(?:\\s|>|/)))`,
+    'gi',
+);
+const FENCED_CODE_BLOCK_GLOBAL_RE = /```([^\n`]*)\n?([\s\S]*?)```/g;
+const OPEN_FENCED_CODE_BLOCK_AT_END_RE = /```([^\n`]*)\n?([\s\S]*)$/;
+const ARTIFACT_ROOT_STYLE =
+    'display:block;width:100%;box-sizing:border-box;max-width:100%;overflow-wrap:anywhere;background:transparent;height:auto;max-height:none;overflow:visible;';
+
+/**
+ * AMC normalizePreviewableMarkdownContent:
+ * unwrap mislabeled fences, normalize raw fragments, wrap bare HTML as artifact fence.
+ */
+export function normalizePreviewableMarkdownContent(markdownContent, options = {}) {
+    const raw = String(markdownContent || '');
+    if (!raw.trim()) return raw;
+    return wrapBareLiveArtifactInteraction(
+        wrapBarePreviewableArtifact(
+            normalizeStandaloneRawHtmlFragment(unwrapMislabeledHtmlFragmentCodeBlocks(raw)),
+            options,
+        ),
+        options,
+    );
+}
+
+function unwrapMislabeledHtmlFragmentCodeBlocks(markdownContent) {
+    if (!markdownContent) return markdownContent;
+    const closed = markdownContent.replace(
+        FENCED_CODE_BLOCK_GLOBAL_RE,
+        (match, rawLanguage = '', rawContent = '') => {
+            const language = normalizeLanguage(rawLanguage);
+            const content = String(rawContent || '').trim();
+            if (MISLABELED_HTML_FRAGMENT_LANGUAGES.has(language) && isStandaloneHtmlFragment(content)) {
+                return content;
+            }
+            return match;
+        },
+    );
+    return closed.replace(
+        OPEN_FENCED_CODE_BLOCK_AT_END_RE,
+        (match, rawLanguage = '', rawContent = '') => {
+            const language = normalizeLanguage(rawLanguage);
+            const content = String(rawContent || '').trim();
+            if (
+                MISLABELED_HTML_FRAGMENT_LANGUAGES.has(language)
+                && isLikelyStreamingHtmlArtifact(content)
+            ) {
+                return content;
+            }
+            return match;
+        },
+    );
+}
+
+function normalizeStandaloneRawHtmlFragment(markdownContent) {
+    const content = String(markdownContent || '').trim();
+    if (
+        !isStandaloneHtmlFragment(content)
+        && !isLikelyStreamingHtmlArtifact(content)
+    ) {
+        return markdownContent;
+    }
+    return content.replace(HTML_STRUCTURAL_BLANK_LINE_RE, '\n');
+}
+
+function wrapBarePreviewableArtifact(markdownContent, options = {}) {
+    const content = String(markdownContent || '').trim();
+    if (!content) return markdownContent;
+    const markupType =
+        (isStandaloneHtmlArtifact(content) && (/^<svg[\s>]/i.test(content) ? 'svg' : 'html'))
+        || (options.isStreaming && isLikelyStreamingHtmlArtifact(content) ? 'html' : null);
+    if (!markupType) return markdownContent;
+    // Already a single live-artifact fence
+    if (extractSingleLiveArtifactFence(content) || extractStreamingLiveArtifactFence(content)) {
+        return markdownContent;
+    }
+    const language = markupType === 'svg' ? 'svg' : LIVE_ARTIFACT_HTML_LANGUAGE;
+    return `\`\`\`${language}\n${content}\n\`\`\``;
+}
+
+function wrapBareLiveArtifactInteraction(markdownContent, options = {}) {
+    const content = String(markdownContent || '').trim();
+    if (!content) return markdownContent;
+    if (extractLiveArtifactInteraction(content, Boolean(options.isStreaming))) {
+        // Already recognized (fenced or bare JSON handled by extractor); if bare JSON, wrap.
+        if (content.startsWith('```')) return markdownContent;
+        if (content.startsWith('{') && content.includes('"instruction"') && content.includes('"schema"')) {
+            return `\`\`\`${LIVE_ARTIFACT_INTERACTION_LANGUAGE}\n${content}\n\`\`\``;
+        }
+    }
+    return markdownContent;
+}
+
+/**
+ * When Live Artifacts mode is on but the model returned Markdown / mixed HTML,
+ * coerce into one root HTML fragment for ArtifactFrame (AMC-style single preview).
+ */
+function coerceLiveModeArtifact(markdownText, messageId, { isStreaming = false } = {}) {
+    const text = String(markdownText || '').trim();
+    if (!text) return null;
+
+    // Prefer native HTML path after soft multi-root wrap.
+    if (prefersHtmlArtifactPath(text)) {
+        const wrapped = wrapAsArtifactRoot(sanitizeClippingStylesInHtml(text));
+        return createInlineArtifact(wrapped, messageId, {
+            isStreaming,
+            language: 'html',
+            coerced: true,
+            coercedFrom: 'html',
+        });
+    }
+
+    // Markdown / mixed prose → HTML → themed iframe (avoids parent-page clip + missing theme vars).
+    const rendered = renderMarkdownHtmlForArtifact(text);
+    if (!rendered.trim()) return null;
+    const wrapped = wrapAsArtifactRoot(sanitizeClippingStylesInHtml(rendered));
+    return createInlineArtifact(wrapped, messageId, {
+        isStreaming,
+        language: 'html',
+        coerced: true,
+        coercedFrom: 'markdown',
+    });
+}
+
+function prefersHtmlArtifactPath(text) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    if (isStandaloneHtmlArtifact(t) || isLikelyStreamingHtmlArtifact(t)) return true;
+    const tagMatches = t.match(/<\/?[a-zA-Z][a-zA-Z0-9:-]*\b[^>]*>/g) || [];
+    const mdSignals = t.match(/^#{1,6}\s|^\|.+\||^\s{0,3}[-*+]\s|^\s{0,3}\d+\.\s/gm) || [];
+    if (t.startsWith('<') && tagMatches.length >= 2) return true;
+    // Substantial HTML mixed into the answer should still go through the iframe.
+    if (tagMatches.length >= 6 && tagMatches.length >= mdSignals.length) return true;
+    return false;
+}
+
+function wrapAsArtifactRoot(html) {
+    const inner = String(html || '').trim();
+    if (!inner) return '';
+    if (/data-justsearch-live-artifact-root\s*=/.test(inner)) return inner;
+    return `<div data-justsearch-live-artifact-root="true" style="${ARTIFACT_ROOT_STYLE}">${inner}</div>`;
+}
+
+function renderMarkdownHtmlForArtifact(markdownText) {
+    const text = String(markdownText || '');
+    try {
+        if (typeof window !== 'undefined' && typeof window.markdownit === 'function') {
+            const mi = window.markdownit({
+                html: true,
+                linkify: true,
+                typographer: true,
+                breaks: false,
+            });
+            let html = mi.render(text);
+            if (window.DOMPurify && typeof window.DOMPurify.sanitize === 'function') {
+                // Keep style/class so model HTML mixed into MD survives; scripts stay forbidden.
+                html = window.DOMPurify.sanitize(html, {
+                    ADD_ATTR: ['target', 'style', 'class', 'colspan', 'rowspan', 'id'],
+                    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+                    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
+                });
+            }
+            return html;
+        }
+    } catch {
+        // fall through
+    }
+    return `<pre style="white-space:pre-wrap;margin:0;">${escapeHtmlBasic(text)}</pre>`;
+}
+
+function escapeHtmlBasic(value) {
+    return String(value || '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[char]));
+}
+
+/**
+ * Force every <details> open in preview HTML so collapsible secondary content is
+ * visible inside fixed-height iframes without relying on postMessage resize.
+ * Users can still collapse sections; height starts at the fully-open measure.
+ */
+function forceOpenAllDetailsInHtml(html) {
+    const raw = String(html || '');
+    // Match a real <details> tag name end (space, attribute, '/', or '>') so custom
+    // elements like <details-panel> are not corrupted into <details open-panel>.
+    if (!raw || !/<details(?:\s|\/>|>)/i.test(raw)) return raw;
+    return raw.replace(/<details(?=\s|\/>|>)(?![^>]*\bopen\b)/gi, '<details open');
+}
+
+/**
+ * AMC / bridge-aligned: neutralize fixed-viewport shells that clip content
+ * (height:100vh, overflow:hidden on content shells).
+ */
+function sanitizeClippingStylesInHtml(html) {
+    const raw = String(html || '');
+    if (!raw || !/style\s*=/i.test(raw)) return raw;
+
+    const rewriteStyle = (styleValue) => {
+        let next = String(styleValue || '');
+        next = next
+            .replace(/(^|;)\s*max-height\s*:\s*(?:100vh|100%)\s*/gi, '$1max-height:none')
+            .replace(/(^|;)\s*height\s*:\s*(?:100vh|100%)\s*/gi, '$1height:auto')
+            .replace(/(^|;)\s*min-height\s*:\s*(?:100vh|100%)\s*/gi, '$1min-height:0')
+            // Only neutralize *clipping* (overflow:hidden) shells — the common "thin
+            // gray bar" failure. Leave overflow-y:auto/scroll intact so artifacts with
+            // intentional scroll containers keep working.
+            .replace(/(^|;)\s*overflow-y\s*:\s*hidden\s*/gi, '$1overflow-y:visible')
+            .replace(/(^|;)\s*overflow\s*:\s*hidden\s*/gi, '$1overflow:visible');
+        return next;
+    };
+
+    // Attribute rewrite without full DOM when possible (works in Node tests too).
+    return raw.replace(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/gi, (match, _q, doubleVal, singleVal) => {
+        const value = doubleVal !== undefined ? doubleVal : singleVal;
+        const rewritten = rewriteStyle(value);
+        if (rewritten === value) return match;
+        const quote = doubleVal !== undefined ? '"' : "'";
+        return ` style=${quote}${rewritten}${quote}`;
+    });
+}
+
 function extractSingleLiveArtifactFence(text) {
     const match = text.match(/^```([^\n`]*)\n([\s\S]*?)\n?```\s*$/);
     if (!match) return null;
@@ -367,8 +737,13 @@ function extractLiveArtifactInteraction(markdownText, isStreaming) {
     return parseLiveArtifactInteractionSpec(content);
 }
 
-function createInlineArtifact(code, messageId, { isStreaming = false, language = 'html' } = {}) {
-    const rawCode = String(code || '');
+function createInlineArtifact(code, messageId, {
+    isStreaming = false,
+    language = 'html',
+    coerced = false,
+    coercedFrom = '',
+} = {}) {
+    const rawCode = sanitizeClippingStylesInHtml(String(code || ''));
     // Always bake live markup into srcdoc so the iframe is never an empty shell
     // waiting on a racy postMessage. STREAM_PREVIEW_ROOT is only a last-resort
     // placeholder when the stream has started but no markup has arrived yet.
@@ -393,6 +768,8 @@ function createInlineArtifact(code, messageId, { isStreaming = false, language =
         inline: true,
         isStreaming,
         streamHtml: isStreaming ? rawCode : '',
+        coerced: Boolean(coerced),
+        coercedFrom: coercedFrom || '',
     };
 }
 
@@ -747,10 +1124,11 @@ ${code}
 </body>
 </html>`;
     } else {
-        // 1) rewrite light-only hardcodes  2) materialize theme tokens to concrete colors
-        // (AMC injects the same tokens; baking values makes dark mode reliable even if :root is missed)
+        // 1) strip viewport clip shells  2) open details for full layout
+        // 3) rewrite light-only hardcodes  4) materialize theme tokens
+        const cleaned = forceOpenAllDetailsInHtml(sanitizeClippingStylesInHtml(code));
         srcdoc = materializeLiveArtifactThemeVars(
-            adaptArtifactHtmlForTheme(linkArtifactCitationsInHtml(code, sources), themeId),
+            adaptArtifactHtmlForTheme(linkArtifactCitationsInHtml(cleaned, sources), themeId),
             themeId,
         );
     }
@@ -852,14 +1230,7 @@ function linkCitationTextNodes(root, sourceById) {
             if (!/\[\d+(?:\s*,\s*\d+)*\]/.test(node.textContent || '')) {
                 return filter.FILTER_REJECT;
             }
-            let parent = node.parentElement;
-            while (parent) {
-                if (['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA', 'TITLE', 'NOSCRIPT'].includes(parent.tagName)) {
-                    return filter.FILTER_REJECT;
-                }
-                parent = parent.parentElement;
-            }
-            return filter.FILTER_ACCEPT;
+            return shouldSkipTextNode(node, root) ? filter.FILTER_REJECT : filter.FILTER_ACCEPT;
         }
     });
 
@@ -867,10 +1238,11 @@ function linkCitationTextNodes(root, sourceById) {
     while (walker.nextNode()) {
         nodes.push(walker.currentNode);
     }
-    nodes.forEach(node => replaceCitationTextNode(node, sourceById));
+    const tracker = createOccurrenceTracker();
+    nodes.forEach(node => replaceCitationTextNode(node, sourceById, tracker));
 }
 
-function replaceCitationTextNode(node, sourceById) {
+function replaceCitationTextNode(node, sourceById, tracker) {
     const text = node.textContent || '';
     const regex = /\[(\d+(?:\s*,\s*\d+)*)\]/g;
     const fragment = document.createDocumentFragment();
@@ -886,12 +1258,13 @@ function replaceCitationTextNode(node, sourceById) {
         group.className = 'citation-group live-artifact-citation-group';
         const ids = match[1].split(',').map(id => id.trim()).filter(Boolean);
         let linkedCount = 0;
+        const groupIndex = tracker.nextGroup();
 
         ids.forEach((id, index) => {
             const source = sourceById.get(id);
             const safeUrl = source ? getSafeSourceUrl(source.url) : '';
             if (source && safeUrl) {
-                group.appendChild(createArtifactCitationLink(id, source, safeUrl));
+                group.appendChild(createArtifactCitationLink(id, source, safeUrl, tracker, groupIndex, index));
                 linkedCount += 1;
             } else {
                 group.appendChild(document.createTextNode(`[${id}]`));
@@ -914,7 +1287,7 @@ function replaceCitationTextNode(node, sourceById) {
     node.parentNode?.replaceChild(fragment, node);
 }
 
-function createArtifactCitationLink(id, source, safeUrl) {
+function createArtifactCitationLink(id, source, safeUrl, tracker, groupIndex, markerIndex) {
     const anchor = document.createElement('a');
     anchor.href = safeUrl || '#';
     anchor.target = '_blank';
@@ -922,9 +1295,9 @@ function createArtifactCitationLink(id, source, safeUrl) {
     anchor.className = 'citation-link live-artifact-citation-link';
     anchor.dataset.liveArtifactSourceUrl = safeUrl || '';
     anchor.dataset.liveArtifactSourceId = id;
-    anchor.dataset.evidenceSourceId = id;
     anchor.title = source.title || source.url || `Source ${id}`;
     anchor.setAttribute('aria-label', `查看来源 ${id} 的原文证据`);
+    assignOccurrenceAttributes(anchor, tracker, id, groupIndex, markerIndex);
     // Use injected theme tokens so citation chips stay readable in dark mode.
     anchor.setAttribute('style', 'color:var(--amc-live-artifact-accent,#2563eb);text-decoration:none;cursor:pointer;margin:0 1px;font-weight:700;font-size:11px;padding:0 4px;border-radius:6px;background:var(--amc-live-artifact-accent-surface,rgba(37,99,235,.12));display:inline-flex;align-items:center;justify-content:center;vertical-align:super;line-height:16px;min-height:16px;white-space:nowrap;');
     anchor.textContent = id;
@@ -1212,41 +1585,97 @@ function injectPreviewBaseFontSize(srcdoc, baseFontSize) {
 
 function injectPreviewBridge(code, frameId = '') {
     const safeFrameId = JSON.stringify(String(frameId || ''));
-    // Bridge resize logic aligned with AMC-WebUI previewBridgeScript.ts:
-    // simple scrollHeight measurement + rAF-debounced scheduleResize.
+    // Bridge resize mirrors AMC-WebUI previewBridgeScript:
+    // body/root scrollHeight + ResizeObserver + MutationObserver.
+    // JustSearch extras: frameId routing, details toggle bursts, citations, stream-render.
     const bridge = `<script>
 (() => {
   const MIN_HEIGHT = ${INLINE_ARTIFACT_MIN_HEIGHT};
+  const HEIGHT_PAD = 8;
   const FRAME_ID = ${safeFrameId};
-  const notifyResize = () => {
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE']);
+  // Keep document free of 100vh / overflow:hidden shells so scrollHeight tracks content
+  // (same role as AMC theme style: body { overflow-x:auto } only).
+  const neutralizeViewportLocks = () => {
     try {
       const body = document.body;
       const root = document.documentElement;
-      // Neutralize common full-viewport locks before measuring (AMC-compatible + 100vh fix).
       if (root) {
         root.style.setProperty('height', 'auto', 'important');
+        root.style.setProperty('min-height', '0', 'important');
         root.style.setProperty('max-height', 'none', 'important');
+        root.style.setProperty('overflow-y', 'visible', 'important');
       }
       if (body) {
         body.style.setProperty('height', 'auto', 'important');
+        body.style.setProperty('min-height', '0', 'important');
         body.style.setProperty('max-height', 'none', 'important');
         body.style.setProperty('overflow-y', 'visible', 'important');
         Array.from(body.children).forEach((el) => {
-          if (!(el instanceof Element)) return;
-          if (['SCRIPT','STYLE','LINK','META','NOSCRIPT','TEMPLATE'].includes(el.tagName)) return;
+          if (!(el instanceof Element) || SKIP_TAGS.has(el.tagName)) return;
           el.style.setProperty('height', 'auto', 'important');
           el.style.setProperty('max-height', 'none', 'important');
           el.style.setProperty('overflow', 'visible', 'important');
         });
       }
-      const height = Math.max(
-        MIN_HEIGHT,
-        body ? body.scrollHeight : 0,
-        body ? body.offsetHeight : 0,
-        root ? root.scrollHeight : 0,
-        root ? root.offsetHeight : 0
-      );
-      parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'resize', height, frameId: FRAME_ID }, '*');
+    } catch {}
+  };
+  /**
+   * AMC-WebUI notifyResize core + open-details bottom rect + pad.
+   * Prefer native scrollHeight (works when html/body are not height-locked).
+   */
+  const measureContentHeight = () => {
+    const body = document.body;
+    const root = document.documentElement;
+    if (!body || !root) return MIN_HEIGHT;
+    neutralizeViewportLocks();
+
+    let contentBottom = 0;
+    try {
+      const visit = (el) => {
+        if (!(el instanceof Element) || SKIP_TAGS.has(el.tagName)) return;
+        const rect = el.getBoundingClientRect();
+        if (!rect || (rect.height === 0 && rect.width === 0 && el.childElementCount === 0)) return;
+        let marginBottom = 0;
+        try {
+          marginBottom = parseFloat(window.getComputedStyle(el).marginBottom) || 0;
+        } catch {}
+        contentBottom = Math.max(contentBottom, rect.bottom + marginBottom);
+      };
+      Array.from(body.children).forEach(visit);
+      // Open details content is often deeper than body.children alone reports.
+      document.querySelectorAll('details[open]').forEach((details) => {
+        visit(details);
+        Array.from(details.children).forEach(visit);
+      });
+    } catch {}
+
+    const scrollY = window.pageYOffset || root.scrollTop || body.scrollTop || 0;
+    // Exact AMC max(body/root scroll/offset) plus content-bottom fallback.
+    return Math.max(
+      MIN_HEIGHT,
+      Math.ceil(contentBottom + scrollY + HEIGHT_PAD),
+      body.scrollHeight || 0,
+      body.offsetHeight || 0,
+      root.scrollHeight || 0,
+      root.offsetHeight || 0
+    );
+  };
+  const notifyResize = (extra = {}) => {
+    try {
+      const height = measureContentHeight();
+      const openDetailsCount = document.querySelectorAll('details[open]').length;
+      const totalDetailsCount = document.querySelectorAll('details').length;
+      parent.postMessage({
+        channel: 'justsearch-live-artifacts',
+        event: 'resize',
+        height,
+        frameId: FRAME_ID,
+        openDetailsCount,
+        totalDetailsCount,
+        detailsOpen: openDetailsCount > 0,
+        ...extra,
+      }, '*');
     } catch {}
   };
   let resizeFrame = 0;
@@ -1256,18 +1685,26 @@ function injectPreviewBridge(code, frameId = '') {
       notifyResize();
       return;
     }
+    // AMC uses a single rAF; double-rAF helps details layout commit before measure.
     resizeFrame = requestAnimationFrame(() => {
-      resizeFrame = 0;
-      notifyResize();
+      requestAnimationFrame(() => {
+        resizeFrame = 0;
+        notifyResize();
+      });
     });
+  };
+  const scheduleResizeBurst = () => {
+    scheduleResize();
+    setTimeout(notifyResize, 0);
+    setTimeout(notifyResize, 50);
+    setTimeout(notifyResize, 120);
+    setTimeout(notifyResize, 300);
   };
   const notifyReady = () => {
     try {
       parent.postMessage({ channel: 'justsearch-live-artifacts', event: 'ready', frameId: FRAME_ID }, '*');
     } catch {}
-    scheduleResize();
-    setTimeout(notifyResize, 50);
-    setTimeout(notifyResize, 250);
+    scheduleResizeBurst();
   };
   // Citation chips open the parent evidence panel instead of navigating away.
   document.addEventListener('click', (event) => {
@@ -1286,6 +1723,11 @@ function injectPreviewBridge(code, frameId = '') {
         channel: 'justsearch-live-artifacts',
         event: 'citation-click',
         sourceId: sourceId,
+        occurrenceId: anchor.getAttribute('data-evidence-occurrence-id') || '',
+        occurrenceIndex: anchor.getAttribute('data-evidence-occurrence-index') || '',
+        groupIndex: anchor.getAttribute('data-evidence-group-index') || '',
+        markerIndex: anchor.getAttribute('data-evidence-marker-index') || '',
+        markerOccurrenceIndex: anchor.getAttribute('data-evidence-marker-occurrence-index') || '',
         url: anchor.getAttribute('data-live-artifact-source-url') || anchor.href || '',
         title: anchor.getAttribute('title') || '',
         frameId: FRAME_ID,
@@ -1346,6 +1788,55 @@ function injectPreviewBridge(code, frameId = '') {
     window.addEventListener('load', notifyReady, { once: true });
   }
   window.addEventListener('resize', scheduleResize);
+  // details[open] is the common failure: body border-box may not change while content grows
+  // past the fixed iframe viewport, so ResizeObserver alone is insufficient.
+  const notifyDetailsToggle = (details) => {
+    if (!(details instanceof HTMLDetailsElement)) return;
+    const openCount = document.querySelectorAll('details[open]').length;
+    const totalCount = document.querySelectorAll('details').length;
+    // Immediate + delayed remeasures; parent also has precomputed expanded height fallback.
+    notifyResize({
+      detailsToggle: true,
+      detailsOpen: Boolean(details.open),
+      openDetailsCount: openCount,
+      totalDetailsCount: totalCount,
+    });
+    scheduleResizeBurst();
+    setTimeout(() => {
+      notifyResize({
+        detailsToggle: true,
+        detailsOpen: Boolean(details.open),
+        openDetailsCount: document.querySelectorAll('details[open]').length,
+        totalDetailsCount: document.querySelectorAll('details').length,
+      });
+    }, 80);
+    setTimeout(() => {
+      notifyResize({
+        detailsToggle: true,
+        detailsOpen: Boolean(details.open),
+        openDetailsCount: document.querySelectorAll('details[open]').length,
+        totalDetailsCount: document.querySelectorAll('details').length,
+      });
+    }, 320);
+  };
+  document.addEventListener('toggle', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLDetailsElement)) return;
+    notifyDetailsToggle(target);
+  }, true);
+  document.addEventListener('click', (event) => {
+    try {
+      const summary = event.target && event.target.closest
+        ? event.target.closest('summary')
+        : null;
+      if (!summary) return;
+      const details = summary.closest('details');
+      // Click can fire before open flips; remeasure after the engine commits state.
+      setTimeout(() => notifyDetailsToggle(details || summary.parentElement), 0);
+      setTimeout(() => notifyDetailsToggle(details || summary.parentElement), 50);
+    } catch {}
+  }, true);
+  // AMC-WebUI: observe documentElement + body size and any DOM mutation.
   if ('ResizeObserver' in window) {
     const observer = new ResizeObserver(scheduleResize);
     if (document.documentElement) observer.observe(document.documentElement);
@@ -1353,7 +1844,11 @@ function injectPreviewBridge(code, frameId = '') {
   }
   if ('MutationObserver' in window) {
     const observer = new MutationObserver(scheduleResize);
-    observer.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true });
+    observer.observe(document.documentElement || document, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
   }
   const sanitizeStreamDocument = (parsedDocument) => {
     parsedDocument.querySelectorAll('script, iframe, object, embed').forEach((node) => node.remove());
@@ -1761,9 +2256,13 @@ function cacheFrameHeight(cacheKey, height) {
 /**
  * Parent-side height probe (AMC-WebUI createStaticPreviewSnapshotContainer pattern).
  * Does not depend on sandboxed iframe postMessage, so short-box failures recover reliably.
+ * @param {string} html
+ * @param {number} widthPx
+ * @param {{ forceOpenDetails?: boolean }} [options]
  */
-function measureArtifactContentHeight(html, widthPx) {
+function measureArtifactContentHeight(html, widthPx, options = {}) {
     if (typeof document === 'undefined') return INLINE_ARTIFACT_DEFAULT_HEIGHT;
+    const forceOpenDetails = Boolean(options.forceOpenDetails);
     const width = Math.max(280, Math.floor(Number(widthPx) || 680));
     const probe = document.createElement('div');
     probe.setAttribute('data-amc-height-probe', 'true');
@@ -1778,6 +2277,8 @@ function measureArtifactContentHeight(html, widthPx) {
         'box-sizing:border-box',
         'overflow:visible',
         'background:transparent',
+        'height:auto',
+        'max-height:none',
     ].join(';');
 
     try {
@@ -1801,6 +2302,16 @@ function measureArtifactContentHeight(html, widthPx) {
                     node.style.setProperty('overflow', 'visible', 'important');
                 }
             });
+            if (forceOpenDetails) {
+                parsed.querySelectorAll('details').forEach((details) => {
+                    details.setAttribute('open', '');
+                    if (details instanceof HTMLElement) {
+                        details.style.setProperty('height', 'auto', 'important');
+                        details.style.setProperty('max-height', 'none', 'important');
+                        details.style.setProperty('overflow', 'visible', 'important');
+                    }
+                });
+            }
             parsed.head.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
                 probe.appendChild(document.importNode(node, true));
             });
@@ -1809,6 +2320,9 @@ function measureArtifactContentHeight(html, widthPx) {
             });
         } else {
             probe.innerHTML = raw;
+            if (forceOpenDetails) {
+                probe.querySelectorAll('details').forEach((details) => details.setAttribute('open', ''));
+            }
         }
 
         document.body.appendChild(probe);
@@ -1840,20 +2354,62 @@ function resolveInlineFrameWidth(viewport, container) {
     return Math.max(280, Math.floor(width));
 }
 
+/**
+ * Rough text-based floor used only when layout probes fail (e.g. jsdom).
+ * Must stay conservative — an inflated estimate was causing huge blank space
+ * under real content when used as a permanent height floor.
+ */
+function estimateArtifactHeightFromMarkup(html) {
+    const text = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const textLength = text.length;
+    const blockHints = (String(html || '').match(/<(p|h[1-6]|li|tr|div|section|article|details|summary|br)\b/gi) || []).length;
+    // Soft floor only — prefer parent probe / iframe bridge for real height.
+    return Math.min(
+        2400,
+        Math.ceil(textLength / 48) * 20 + blockHints * 18 + 96,
+    );
+}
+
 function syncInlineArtifactFrameHeight(viewport, frame, artifact, container) {
     const cacheKey = getArtifactHeightCacheKey(artifact);
     const contentHtml = artifact.isStreaming ? (artifact.streamHtml || artifact.code || '') : (artifact.code || '');
     const width = resolveInlineFrameWidth(viewport, container);
-    const probed = measureArtifactContentHeight(contentHtml, width);
+    const hasDetails = /<details(?:\s|\/>|>)/i.test(contentHtml);
+    // Preview HTML forces details open (see forceOpenAllDetailsInHtml). Parent probe
+    // seeds height; iframe bridge then corrects. Do NOT max with inflated text
+    // estimates — that left a large empty gap under the real content.
+    const collapsed = measureArtifactContentHeight(contentHtml, width);
+    const expanded = hasDetails
+        ? measureArtifactContentHeight(contentHtml, width, { forceOpenDetails: true })
+        : collapsed;
+    // Only use text estimate when layout probes collapse to the min box.
+    const estimated = (hasDetails && expanded <= INLINE_ARTIFACT_MIN_HEIGHT + 8)
+        ? estimateArtifactHeightFromMarkup(contentHtml)
+        : 0;
+    const fullHeight = Math.max(collapsed, expanded, estimated);
+    if (frame) {
+        frame.dataset.liveArtifactCollapsedHeight = String(collapsed);
+        // Store pure expanded probe (not inflated) as anti-clip floor for under-reports.
+        frame.dataset.liveArtifactExpandedHeight = String(Math.max(collapsed, expanded));
+        frame.dataset.liveArtifactHasDetails = hasDetails ? 'true' : 'false';
+    }
     const cached = readCachedFrameHeight(cacheKey);
-    // Prefer the larger of probe vs cache so streaming growth and remounts stay tall.
-    const nextHeight = Math.max(probed, cached, INLINE_ARTIFACT_MIN_HEIGHT);
+    // Prefer fresh content measure over a tall stale cache entry (avoids blank tails).
+    const nextHeight = artifact.isStreaming
+        ? Math.max(fullHeight, cached, INLINE_ARTIFACT_MIN_HEIGHT)
+        : Math.max(fullHeight, INLINE_ARTIFACT_MIN_HEIGHT);
     cacheFrameHeight(cacheKey, nextHeight);
     if (artifact.id) {
         cacheFrameHeight(`stream:${artifact.id}`, nextHeight);
     }
     applyInlineArtifactFrameHeight(viewport, frame, nextHeight, {
+        // Allow bridge to shrink after load when it measures tighter than the probe.
         allowShrink: !artifact.isStreaming,
+        enforceExpandedFloor: false,
     });
     return nextHeight;
 }
@@ -1879,9 +2435,14 @@ function renderInlineArtifactFrame(container, artifact) {
         frame = document.createElement('iframe');
         frame.className = 'live-artifact-inline-iframe';
         frame.title = 'HTML Preview';
-        // Match AMC-WebUI ArtifactFrame sandbox (no allow-same-origin).
-        frame.setAttribute('sandbox', 'allow-scripts allow-forms');
+        // Match AMC-WebUI ArtifactFrame sandbox exactly (no allow-same-origin).
+        // allow-popups enables target=_blank external links inside Live Artifacts.
+        frame.setAttribute(
+            'sandbox',
+            'allow-scripts allow-forms allow-popups allow-modals allow-downloads',
+        );
         frame.setAttribute('scrolling', 'no');
+        frame.setAttribute('allow', 'clipboard-write');
         // Hint the browser's built-in form/scroll styling for the active scheme.
         frame.style.colorScheme = resolveLiveArtifactThemeId();
         frame.addEventListener('load', () => {
@@ -1897,11 +2458,25 @@ function renderInlineArtifactFrame(container, artifact) {
             scheduleInlineArtifactFrameResize(frame, viewport);
             const html = frame.dataset.liveArtifactProbeHtml || '';
             if (html) {
-                const height = measureArtifactContentHeight(html, resolveInlineFrameWidth(viewport, container));
-                applyInlineArtifactFrameHeight(viewport, frame, height, {
+                const width = resolveInlineFrameWidth(viewport, container);
+                const hasDetails = /<details(?:\s|\/>|>)/i.test(html);
+                const height = measureArtifactContentHeight(html, width);
+                const expanded = hasDetails
+                    ? measureArtifactContentHeight(html, width, { forceOpenDetails: true })
+                    : height;
+                const estimated = (hasDetails && expanded <= INLINE_ARTIFACT_MIN_HEIGHT + 8)
+                    ? estimateArtifactHeightFromMarkup(html)
+                    : 0;
+                const fullHeight = Math.max(height, expanded, estimated);
+                frame.dataset.liveArtifactCollapsedHeight = String(height);
+                frame.dataset.liveArtifactExpandedHeight = String(Math.max(height, expanded));
+                frame.dataset.liveArtifactHasDetails = hasDetails ? 'true' : 'false';
+                // Seed height from probe; bridge may tighten afterward (no permanent overshoot).
+                applyInlineArtifactFrameHeight(viewport, frame, fullHeight, {
                     allowShrink: frame.dataset.liveArtifactStreaming !== 'true',
+                    enforceExpandedFloor: false,
                 });
-                cacheFrameHeight(frame.dataset.liveArtifactHeightKey || '', height);
+                cacheFrameHeight(frame.dataset.liveArtifactHeightKey || '', fullHeight);
             }
         });
 
@@ -2313,26 +2888,47 @@ function formatInteractionFollowupPrompt(payload) {
     return lines.join('\n');
 }
 
-function applyInlineArtifactFrameHeight(viewport, frame, height, { allowShrink = true } = {}) {
-    const requested = Math.max(INLINE_ARTIFACT_MIN_HEIGHT, Math.ceil(Number(height) || 0));
+function applyInlineArtifactFrameHeight(viewport, frame, height, {
+    allowShrink = true,
+    enforceExpandedFloor = false,
+} = {}) {
+    // AMC ArtifactFrame: normalizeFrameHeight = max(MIN, ceil(height)).
+    // JustSearch adds a small pad so overflow:hidden does not clip subpixel bottoms.
+    const HEIGHT_PAD = 8;
+    let requested = Math.max(
+        INLINE_ARTIFACT_MIN_HEIGHT,
+        Math.ceil(Number(height) || 0) + HEIGHT_PAD,
+    );
+    // Optional anti-clip floor (only when bridge clearly under-reports collapsed height).
+    // Always enforcing expandedHeight left a large blank gap under real content.
+    if (enforceExpandedFloor && frame?.dataset?.liveArtifactHasDetails === 'true') {
+        const expandedFloor = parseInt(frame.dataset.liveArtifactExpandedHeight, 10) || 0;
+        if (expandedFloor > 0) {
+            requested = Math.max(requested, expandedFloor + HEIGHT_PAD);
+        }
+    }
     const capped = Math.min(INLINE_ARTIFACT_MAX_HEIGHT, requested);
     const current = Math.max(
         parseInt(frame?.style?.height, 10) || 0,
         parseInt(viewport?.style?.height, 10) || 0,
         0,
     );
-    // Match AMC-WebUI: while streaming / recovering, never collapse below current height.
-    const nextHeight = allowShrink ? capped : Math.max(current || INLINE_ARTIFACT_DEFAULT_HEIGHT, capped);
+    // Growth always applies; shrink only when allowShrink is true.
+    const nextHeight = allowShrink
+        ? capped
+        : Math.max(current || INLINE_ARTIFACT_DEFAULT_HEIGHT, capped);
     const next = `${nextHeight}px`;
     if (viewport) {
         viewport.style.height = next;
         viewport.style.minHeight = `${INLINE_ARTIFACT_MIN_HEIGHT}px`;
+        // AMC ArtifactFrame viewport: overflow-hidden + explicit height.
         viewport.style.overflow = 'hidden';
     }
     if (frame) {
         // AMC uses h-full of the viewport; set explicit px so sandbox iframe always fills.
         frame.style.height = next;
         frame.style.minHeight = `${INLINE_ARTIFACT_MIN_HEIGHT}px`;
+        frame.setAttribute('scrolling', 'no');
     }
     if (frame?.dataset?.liveArtifactHeightKey) {
         cacheFrameHeight(frame.dataset.liveArtifactHeightKey, nextHeight);
@@ -2554,12 +3150,45 @@ function handleArtifactFrameMessage(event) {
 
     if (data.event === 'resize' && typeof data.height === 'number' && Number.isFinite(data.height)) {
         if (sourceFrame.kind === 'inline') {
-            const viewport = sourceFrame.frame.closest('.live-artifact-inline-viewport');
-            const streaming = sourceFrame.frame.dataset.liveArtifactStreaming === 'true';
-            // AMC-WebUI only grows from bridge measurements when streaming; final answers may shrink.
-            applyInlineArtifactFrameHeight(viewport, sourceFrame.frame, data.height, {
+            const frame = sourceFrame.frame;
+            const viewport = frame.closest('.live-artifact-inline-viewport');
+            const streaming = frame.dataset.liveArtifactStreaming === 'true';
+            const hasDetails = frame.dataset.liveArtifactHasDetails === 'true';
+            const collapsed = parseInt(frame.dataset.liveArtifactCollapsedHeight, 10) || 0;
+            const expanded = parseInt(frame.dataset.liveArtifactExpandedHeight, 10) || 0;
+
+            // AMC: apply bridge height. JustSearch only blocks the classic under-report
+            // (≈ collapsed / first-summary box) which clipped open details. Trusted
+            // measures may shrink the frame to remove blank space under content.
+            // When the user has collapsed all details, openDetailsCount===0, do NOT
+            // re-enforce the expanded floor — let the iframe shrink with the content.
+            const openDetailsCount = Number.isFinite(data.openDetailsCount)
+                ? data.openDetailsCount
+                : null;
+            const detailsAllCollapsed = openDetailsCount === 0;
+            const underReported = hasDetails
+                && collapsed > 0
+                && !detailsAllCollapsed
+                && data.height <= collapsed + 80;
+            let targetHeight = data.height;
+            if (underReported && expanded > 0) {
+                targetHeight = Math.max(data.height, expanded);
+            } else if (hasDetails && data.height > collapsed + 80) {
+                // Learn real content height from the iframe (may be lower than parent probe).
+                frame.dataset.liveArtifactExpandedHeight = String(Math.ceil(data.height));
+            }
+
+            applyInlineArtifactFrameHeight(viewport, frame, targetHeight, {
+                // Under-report still must be allowed to drop an inflated overshoot down to
+                // the expanded floor (blank-space fix); floor blocks going to summary-only.
                 allowShrink: !streaming,
+                enforceExpandedFloor: underReported,
             });
+        } else if (sourceFrame.kind === 'panel' && panelState?.frame) {
+            // Side panel preview uses the same bridge; grow with content when possible.
+            const panelFrame = panelState.frame;
+            const next = Math.max(INLINE_ARTIFACT_MIN_HEIGHT, Math.ceil(data.height) + 8);
+            panelFrame.style.height = `${Math.min(INLINE_ARTIFACT_MAX_HEIGHT, next)}px`;
         }
         return;
     }
@@ -2815,6 +3444,7 @@ export const __liveArtifactsTestHooks = {
     buildPreviewThemeStyle,
     buildSrcdoc,
     clampLiveArtifactFontSize,
+    coerceLiveModeArtifact,
     ensureArtifactSrcdocTheme,
     extractCodeBlocks,
     extractInlineLiveArtifact,
@@ -2822,6 +3452,7 @@ export const __liveArtifactsTestHooks = {
     extractLiveArtifacts,
     findArtifactFrameByMessage,
     findArtifactFrameByMessageSource,
+    forceOpenAllDetailsInHtml,
     handleArtifactFrameMessage,
     injectPreviewBaseFontSize,
     injectPreviewBaseStyles,
@@ -2834,9 +3465,14 @@ export const __liveArtifactsTestHooks = {
     measureArtifactContentHeight,
     measureInlineArtifactDocumentHeight,
     normalizePreviewDiagnostic,
+    normalizePreviewableMarkdownContent,
     parseLiveArtifactInteractionSpec,
     parseInfoAttributes,
+    prefersHtmlArtifactPath,
     resolveLiveArtifactFontSizePx,
     resolveLiveArtifactThemeId,
+    resolveLiveArtifactsModeFlag,
+    sanitizeClippingStylesInHtml,
     shouldMergeSupportingBlocks,
+    wrapAsArtifactRoot,
 };

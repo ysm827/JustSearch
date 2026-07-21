@@ -151,6 +151,7 @@ class BrowserManager:
             extract_js = f"""(function(selectors, max_results) {{
                 const results = [];
                 let count = 0;
+                const seenUrls = new Set();
 
                 let elements = [];
                 for (const sel of selectors.result_container) {{
@@ -163,30 +164,54 @@ class BrowserManager:
 
                 if (elements.length === 0) return results;
 
+                function resolveLink(el, titleEl, linkSelector) {{
+                    let linkEl = el.querySelector(linkSelector);
+                    // Brave (and some engines): the title node itself is the <a>.
+                    if ((!linkEl || !linkEl.href) && titleEl) {{
+                        if (titleEl.tagName === 'A' && titleEl.href) {{
+                            linkEl = titleEl;
+                        }} else if (titleEl.closest) {{
+                            const parentA = titleEl.closest('a[href]');
+                            if (parentA) linkEl = parentA;
+                        }}
+                    }}
+                    if ((!linkEl || !linkEl.href) && el.matches && el.matches('a[href]')) {{
+                        linkEl = el;
+                    }}
+                    if ((!linkEl || !linkEl.href)) {{
+                        const anyA = el.querySelector('a[href^="http"], a[href^="https"]');
+                        if (anyA) linkEl = anyA;
+                    }}
+                    return linkEl;
+                }}
+
                 for (const el of elements) {{
                     if (count >= max_results) break;
 
                     const titleEl = el.querySelector(selectors.title);
-                    const linkEl = el.querySelector(selectors.link);
+                    const linkEl = resolveLink(el, titleEl, selectors.link);
                     const snippetEl = el.querySelector(selectors.snippet);
                     const dateEl = selectors.date ? el.querySelector(selectors.date) : null;
 
                     if (!titleEl || !linkEl) continue;
 
-                    const title = titleEl.innerText;
-                    const url = linkEl.href;
+                    const title = (titleEl.innerText || titleEl.textContent || titleEl.getAttribute('title') || '').trim();
+                    const url = linkEl.href || '';
+                    if (!title || !url || !url.startsWith('http')) continue;
+                    if (seenUrls.has(url)) continue;
+
                     let snippet = "";
                     let date = "";
 
                     if (dateEl) {{
-                        date = dateEl.innerText;
+                        date = (dateEl.innerText || '').trim();
                     }}
 
                     if (snippetEl) {{
-                        snippet = snippetEl.innerText;
+                        snippet = (snippetEl.innerText || '').trim();
                     }} else {{
-                        let text = el.innerText;
-                        if (text.includes(title)) text = text.replace(title, "");
+                        let text = el.innerText || '';
+                        if (title && text.includes(title)) text = text.replace(title, "");
                         snippet = text.trim().substring(0, 200);
                     }}
 
@@ -197,16 +222,15 @@ class BrowserManager:
                         }}
                     }}
 
-                    if (url && url.startsWith('http')) {{
-                        count++;
-                        results.push({{
-                            id: count,
-                            title: title,
-                            url: url,
-                            snippet: snippet,
-                            date: date
-                        }});
-                    }}
+                    seenUrls.add(url);
+                    count++;
+                    results.push({{
+                        id: count,
+                        title: title,
+                        url: url,
+                        snippet: snippet,
+                        date: date
+                    }});
                 }}
                 return results;
 }})({selectors_json}, {max_results});"""

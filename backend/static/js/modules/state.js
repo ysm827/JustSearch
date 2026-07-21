@@ -15,7 +15,7 @@ export const state = {
     connectionStatus: 'connected', // connected | disconnected | reconnecting
     /** null = unknown, true/false after health poll */
     bridgeConnected: null,
-    bridgeWsUrl: 'ws://127.0.0.1:38975/justsearch',
+    bridgeWsUrl: 'ws://127.0.0.1:8000/justsearch',
     bridgeDownloadUrl: '/api/extension/download',
     bridgeLastCheckedAt: null,
     bridgeExtensionVersion: null,

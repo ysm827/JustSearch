@@ -1,10 +1,10 @@
 import { initializeAuth, normalizeSettings } from './modules/auth.js?v=1';
 import { state, setCurrentSessionId, setLiveArtifactsMode } from './modules/state.js?v=5';
-import { initUI, elements } from './modules/ui.js?v=27';
-import { abandonActiveChatWork, setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=36';
-import { initEvidencePanel } from './modules/evidence-panel.js?v=1';
+import { initUI, elements } from './modules/ui.js?v=31';
+import { abandonActiveChatWork, setupChatHandler, syncQuickSettingsFromState } from './modules/chat.js?v=40';
+import { initEvidencePanel } from './modules/evidence-panel.js?v=2';
 import { openHistorySearch, renderHistory, setupHistoryGroups, setupHistorySearch, updateActiveHistoryItem } from './modules/history-view.js?v=23';
-import { setupSettingsModal } from './modules/settings-modal.js?v=50';
+import { setupSettingsModal } from './modules/settings-modal.js?v=51';
 import { setupSidebar, toggleSidebarFromShortcut } from './modules/sidebar.js?v=19';
 import {
     findOptionForModelPreference,

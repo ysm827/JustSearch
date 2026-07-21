@@ -1,7 +1,7 @@
 // WebSocket 出站连接到 JustSearch 后端,带自动重连。
 // 仿 browser-control-bridge 的 src/background/webSocketTransport.ts,简化。
 
-const DEFAULT_BRIDGE_URL = "ws://127.0.0.1:38975/justsearch";
+const DEFAULT_BRIDGE_URL = "ws://127.0.0.1:8000/justsearch";
 export const BRIDGE_URL_KEY = "JUSTSEARCH_BRIDGE_URL";
 const RECONNECT_DELAY_MS = 2000;
 // chrome.alarms 最小 0.5 分钟,这里用 1 分钟做兜底重连。

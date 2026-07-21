@@ -1,4 +1,9 @@
 import { md } from './utils.js?v=6';
+import {
+    assignOccurrenceAttributes,
+    createOccurrenceTracker,
+    shouldSkipTextNode,
+} from './citation-occurrences.js?v=1';
 
 const _faviconCache = new Map();
 
@@ -115,15 +120,7 @@ export function linkCitationsInElement(root, sources) {
             if (!/\[\d+(?:,\s*\d+)*\]/.test(node.textContent || '')) {
                 return filter.FILTER_REJECT;
             }
-            let parent = node.parentElement;
-            while (parent) {
-                if (['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA', 'TITLE', 'NOSCRIPT'].includes(parent.tagName)) {
-                    return filter.FILTER_REJECT;
-                }
-                if (parent === root) break;
-                parent = parent.parentElement;
-            }
-            return filter.FILTER_ACCEPT;
+            return shouldSkipTextNode(node, root) ? filter.FILTER_REJECT : filter.FILTER_ACCEPT;
         }
     });
 
@@ -131,6 +128,8 @@ export function linkCitationsInElement(root, sources) {
     while (walker.nextNode()) {
         nodesToReplace.push(walker.currentNode);
     }
+
+    const tracker = createOccurrenceTracker();
 
     nodesToReplace.forEach(node => {
         const content = node.textContent || '';
@@ -148,6 +147,7 @@ export function linkCitationsInElement(root, sources) {
             const ids = match[1].split(',').map(id => id.trim());
             const linkSpan = document.createElement('span');
             linkSpan.className = 'citation-group';
+            const groupIndex = tracker.nextGroup();
 
             ids.forEach((id, idx) => {
                 const source = sourceById.get(id);
@@ -157,7 +157,6 @@ export function linkCitationsInElement(root, sources) {
                     // href kept as fallback / middle-click; primary click opens evidence panel.
                     anchor.href = safeUrl || '#';
                     anchor.className = 'citation-link';
-                    anchor.dataset.evidenceSourceId = id;
                     if (source.snippet) anchor.dataset.evidenceSnippet = String(source.snippet).slice(0, 200);
                     if (safeUrl) {
                         anchor.target = '_blank';
@@ -181,6 +180,7 @@ export function linkCitationsInElement(root, sources) {
                     }
 
                     anchor.appendChild(document.createTextNode(id));
+                    assignOccurrenceAttributes(anchor, tracker, id, groupIndex, idx);
                     linkSpan.appendChild(anchor);
 
                     if (idx < ids.length - 1) {

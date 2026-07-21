@@ -11,7 +11,7 @@ import {
 } from './api.js?v=11';
 import { state } from './state.js?v=5';
 import { showToast } from './toast.js';
-import { elements, showConfirm } from './ui.js?v=27';
+import { elements, showConfirm } from './ui.js?v=31';
 
 let _fullHistory = [];
 let _chatGroups = [];

@@ -10,8 +10,17 @@ Analyze the user's input and decide how to search for information.
 **Step 1: URL Detection**
 If the user provides a direct URL, return {{"type": "direct", "url": "THE_URL"}}.
 
-**Step 2: Query Generation**
-Otherwise, generate up to 3 search queries optimized for a search engine:
+**Step 2: Context Resolution (mandatory when history exists)**
+Conversation history may be provided. The latest user message is often a short follow-up that is NOT a valid standalone search query (e.g. "具体时间是什么时候？", "what about the second one?", "国内时间呢？", "tell me more").
+In that case you MUST:
+- Set "is_followup" to true when the latest message depends on prior turns (pronouns, ellipsis, missing subject, "具体/几点/国内时间/那他/英文版" style continuations).
+- Produce "resolved_query": a single self-contained question that can be understood WITHOUT reading history. Include the main entities, event, and constraints from prior turns (who/what/when/where as needed).
+- Extract "entities": key people, teams, products, events, places, or topics from the resolved intent (2-8 short strings).
+- Set "topic_changed" true only if the user clearly switches to a new subject; otherwise false and KEEP prior entities in resolved_query and search queries.
+- NEVER emit search queries that omit the active topic entities when is_followup is true (e.g. do not search only "具体时间 国内时间" without the subject from history).
+
+**Step 3: Query Generation**
+Generate up to 3 search-engine queries from the resolved intent (not from the raw short follow-up alone):
 - Make queries specific and include the relevant year/date for time-sensitive questions
 - For Chinese queries, generate search queries in Chinese. For English queries, generate in English. Match the user's language
 - Use different phrasings or angles to cover multiple aspects of the request
@@ -20,21 +29,26 @@ Otherwise, generate up to 3 search queries optimized for a search engine:
 - Avoid overly broad queries — prefer specific, targeted searches
 - If the user asks about a specific product/tool, include a query with "review" or "评测" for deeper analysis
 - For "how to" questions, include a query with "tutorial" or "教程" or "guide"
+- Every query MUST be self-contained; do NOT reuse prior-turn queries verbatim unless the user asks the same thing again
 
-**Step 3: Context Resolution**
-If conversation history is provided, the user's input may be a follow-up question (e.g., "tell me more about X", "what about his early life?"). In that case:
-- Resolve any pronouns or vague references using the conversation context
-- Generate search queries that are self-contained and specific — do NOT reuse queries from previous turns
-- If the follow-up asks for deeper information on a previously discussed topic, generate targeted queries for that sub-topic
+Return JSON only, one of:
+{{"type": "direct", "url": "THE_URL"}}
+or
+{{"type": "search", "resolved_query": "STANDALONE QUESTION", "queries": ["QUERY_1", "QUERY_2", ...], "entities": ["ENTITY_1", ...], "is_followup": true/false, "topic_changed": true/false}}
 
-Return {{"type": "search", "queries": ["QUERY_1", "QUERY_2", ...]}}.
+Example follow-up:
+History: user asked when Messi's next match is; assistant discussed Argentina vs England World Cup semi-final.
+User: "具体时间是什么时候？国内时间是什么时候？"
+→ resolved_query like "梅西/阿根廷世界杯半决赛对阵英格兰的具体开球时间及北京时间", queries must include 梅西/阿根廷/世界杯/半决赛 etc., not only "具体时间 国内时间".
+
 Output strictly in JSON format."""
 
-RELEVANCE_ASSESSMENT_PROMPT = """You are a relevance filter. Current time is {current_time}. Given a user query and a list of search result snippets (with IDs), select the IDs that are most likely to contain the answer.
+RELEVANCE_ASSESSMENT_PROMPT = """You are a relevance filter. Current time is {current_time}. Given a user query (already decontextualized / standalone when possible) and a list of search result snippets (with IDs), select the IDs that are most likely to contain the answer.
 
 Rules:
 - Prefer official sources (e.g. .gov, .edu, official blogs, documentation) over forum posts or Q&A pages, unless the forum thread is highly specific to the query.
 - Avoid selecting pages that are clearly unrelated shopping links, advertisements, or generic listicles.
+- Reject results that share only generic words (e.g. "时间", "schedule", "直播") but discuss a different person/event/product than the query's main entities.
 - If the query asks for factual/technical information, prefer authoritative sources.
 - If the query is in Chinese, Chinese-language sources may be more relevant.
 - For queries about recent events, prefer newer sources over older ones.
@@ -62,7 +76,8 @@ Current Time: {current_time}
 
 Answer the user's question based strictly on the provided sources.
 
-If conversation history is provided, use it ONLY to understand the user's intent and resolve pronouns/references. Do NOT copy or paraphrase answers from the conversation history — always base your answer on the new sources provided below.
+The Question field is the authoritative, decontextualized intent (follow-ups are already resolved). If conversation history is provided, use it only as secondary context for pronouns/style. Do NOT copy or paraphrase answers from the conversation history — always base your answer on the new sources provided below.
+If the sources clearly discuss a different person/event/product than the Question's main entities, set Status to "insufficient" and explain the topic mismatch in Missing_Info — do not answer the wrong topic.
 
 Rules:
 1. Use the Current Time provided above to interpret relative time expressions like "this year".
@@ -92,7 +107,8 @@ Current Time: {current_time}
 
 Answer the user's question based strictly on the provided sources.
 
-If conversation history is provided, use it ONLY to understand the user's intent and resolve pronouns/references. Do NOT copy or paraphrase answers from the conversation history — always base your answer on the new sources provided below.
+The Question field is the authoritative, decontextualized intent (follow-ups are already resolved). If conversation history is provided, use it only as secondary context for pronouns/style. Do NOT copy or paraphrase answers from the conversation history — always base your answer on the new sources provided below.
+If the sources clearly discuss a different person/event/product than the Question's main entities, set Status to "insufficient" and explain the topic mismatch in Missing_Info — do not answer the wrong topic.
 
 Rules:
 1. Use the Current Time provided above to interpret relative time expressions like "this year".
@@ -193,3 +209,21 @@ def select_live_artifacts_protocol(query: str = "") -> str:
         if "\u4e00" <= ch <= "\u9fff":
             return LIVE_ARTIFACTS_PROMPT_ZH
     return LIVE_ARTIFACTS_PROMPT_EN
+
+
+CITATION_VERIFICATION_PROMPT = """You are a strict citation evidence verifier. Current time: {current_time}.
+
+You will receive several claim/quote pairs. For each pair, judge ONLY whether the quoted passage (from the cited source) supports the claim. Do NOT use outside knowledge. Do NOT infer facts that the passage does not state.
+
+A claim is "SUPPORTED" only when the passage explicitly establishes the claim's subject, predicate, value, date, unit, and polarity. A matching number or date alone is NOT support if the subject, unit, or polarity differs.
+Return "CONTRADICTED" when the passage explicitly negates the claim or states an incompatible value/unit/subject/direction.
+Return "NOT_ENOUGH_INFO" when the passage is merely related, lacks the needed fact, or is insufficient to decide.
+
+Return strict JSON only:
+{{"results": [{{"id": "<claim id>", "verdict": "SUPPORTED|CONTRADICTED|NOT_ENOUGH_INFO", "confidence": 0.0-1.0, "reason": "<short>}}]}}
+
+Rules:
+- Every input id must appear exactly once in the output.
+- "reason" must be at most 120 characters.
+- Do not invent ids. Do not omit ids.
+"""

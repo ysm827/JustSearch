@@ -1,7 +1,7 @@
 import { state, setCurrentSessionId } from './state.js?v=5';
-import { elements } from './ui.js?v=27';
+import { elements } from './ui.js?v=31';
 import { updateActiveHistoryItem, getCachedHistory, openHistorySearch } from './history-view.js?v=23';
-import { abandonActiveChatWork } from './chat.js?v=36';
+import { abandonActiveChatWork } from './chat.js?v=40';
 
 let popoverEl = null;
 let popoverTimeout = null;

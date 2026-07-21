@@ -1,8 +1,19 @@
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+
+let _activeDom = null;
+
+afterEach(() => {
+    try {
+        _activeDom?.window?.close?.();
+    } catch {
+        // ignore
+    }
+    _activeDom = null;
+});
 
 function installBrowserGlobals() {
     const { JSDOM } = require('jsdom');
@@ -34,6 +45,7 @@ function installBrowserGlobals() {
         value: dom.window.navigator,
         configurable: true,
     });
+    _activeDom = dom;
     window.markdownit = () => ({
         render: value => String(value || ''),
         utils: { escapeHtml: value => String(value || '') },

@@ -3,6 +3,7 @@ Basic tests for JustSearch utility functions.
 Run with: python -m pytest tests/ -v
 """
 
+import json
 import pytest
 from types import SimpleNamespace
 
@@ -10,7 +11,13 @@ from backend.app.llm_client import (
     LLMClient,
     LLMProviderConfigurationError,
     ensure_live_artifact_answer,
+    _is_retryable_llm_error,
     _provider_error_message,
+    _build_search_analysis_result,
+    _coerce_bool,
+    _extract_history_anchor_terms,
+    _fallback_search_analysis,
+    _summarize_message_content,
 )
 from backend.app.openai_client import LOCAL_PROVIDER_API_KEY, create_openai_client
 
@@ -25,7 +32,8 @@ def test_openai_client_uses_placeholder_for_empty_local_api_key():
 
 
 class TestLLMContextMessages:
-    def test_full_history_and_assistant_content_are_preserved(self):
+    def test_history_is_kept_but_long_assistant_turns_are_summarized(self):
+        """Multi-turn context keeps all recent roles; long/HTML assistant bodies are compressed."""
         client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
         long_answer = "这是一段很长的 assistant 内容。" * 300
         history = [
@@ -38,9 +46,67 @@ class TestLLMContextMessages:
 
         context = client._build_context_messages(history)
 
-        assert context == history
-        assert context[1]["content"] == long_answer
+        assert [m["role"] for m in context] == [m["role"] for m in history]
+        assert context[0]["content"] == "第一轮"
+        assert context[2]["content"] == "第二轮"
+        assert context[3]["content"] == "短回复"
+        assert context[4]["content"] == "第三轮"
+        # Long assistant content is truncated for token hygiene (not dropped).
+        assert len(context[1]["content"]) < len(long_answer)
+        assert "这是一段很长的 assistant 内容" in context[1]["content"]
         assert "答案已截断" not in context[1]["content"]
+
+
+class TestLLMContextFixes:
+    def test_user_angle_bracket_code_is_not_stripped(self):
+        # Regression: user prose containing <vector> / comparisons must survive.
+        r = _summarize_message_content("user", "what does <vector> do in C++?")
+        assert "vector" in r
+        assert "<vector>" in r
+
+    def test_null_content_becomes_empty_not_literal_none(self):
+        assert _summarize_message_content("assistant", None) == ""
+        assert _summarize_message_content("user", None) == ""
+
+    def test_coerce_bool_rejects_string_false(self):
+        assert _coerce_bool("false") is False
+        assert _coerce_bool("False") is False
+        assert _coerce_bool("true") is True
+        assert _coerce_bool(True) is True
+        assert _coerce_bool(0) is False
+        assert _coerce_bool(1) is True
+        assert _coerce_bool(None) is False
+
+    def test_empty_assistant_turn_keeps_alternation(self):
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        history = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "<div></div>"},  # summarizes to empty
+            {"role": "user", "content": "follow-up"},
+        ]
+        roles = [m["role"] for m in client._build_context_messages(history)]
+        assert roles == ["user", "assistant", "user"]
+
+    def test_fallback_only_adds_timezone_query_for_time_followups(self):
+        history = [
+            {"role": "user", "content": "iPhone 15 价格"},
+            {"role": "assistant", "content": "iPhone 15 起售价已公布。"},
+        ]
+        # Non-time follow-up: should NOT inject "时间 北京时间".
+        r = _fallback_search_analysis("价格呢？", history)
+        assert not any("北京时间" in q and "价格" not in q for q in r["queries"])
+        # Time follow-up: SHOULD include a timezone query.
+        r2 = _fallback_search_analysis("具体时间？国内时间？", history)
+        assert any("北京时间" in q for q in r2["queries"])
+
+    def test_anchor_terms_capture_single_letter_and_strip_punctuation(self):
+        a = _extract_history_anchor_terms([
+            {"role": "user", "content": "C and R languages"},
+            {"role": "assistant", "content": "Python. is great."},
+        ])
+        assert "C" in a and "R" in a
+        assert "Python." not in a  # trailing dot stripped
+        assert "Python" in a
 
 
 class TestLLMResponseParsing:
@@ -51,6 +117,80 @@ class TestLLMResponseParsing:
         )
 
         assert "没有可用订阅" in _provider_error_message(error)
+
+    def test_connection_errors_are_retryable(self):
+        class APIConnectionError(Exception):
+            pass
+
+        assert _is_retryable_llm_error(APIConnectionError("Connection error."))
+        assert _is_retryable_llm_error(TimeoutError("timed out"))
+        assert _is_retryable_llm_error(Exception("Error code: 503 - bad gateway"))
+        assert not _is_retryable_llm_error(Exception("invalid api key unauthorized"))
+
+    def test_generate_answer_retries_connection_error_before_streaming(self, monkeypatch):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        class APIConnectionError(Exception):
+            pass
+
+        class FakeStream:
+            def __init__(self, chunks):
+                self._chunks = chunks
+
+            def __aiter__(self):
+                self._iter = iter(self._chunks)
+                return self
+
+            async def __anext__(self):
+                try:
+                    content = next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content=content),
+                            finish_reason=None,
+                        )
+                    ]
+                )
+
+        class FakeCompletions:
+            def __init__(self):
+                self.calls = 0
+
+            async def create(self, model, messages, stream=False):
+                self.calls += 1
+                if self.calls == 1:
+                    raise APIConnectionError("Connection error.")
+                return FakeStream(
+                    [
+                        "Status: sufficient\nMissing_Info: \nAnswer:\n",
+                        "Tokyo is the capital [1]",
+                    ]
+                )
+
+        async def no_sleep(_delay):
+            return None
+
+        monkeypatch.setattr(llm_module.asyncio, "sleep", no_sleep)
+        monkeypatch.setattr(llm_module, "_GENERATE_ANSWER_RETRIES", 3)
+
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        completions = FakeCompletions()
+        client.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+        result = asyncio.run(
+            client.generate_answer(
+                "capital of Japan",
+                [{"id": 1, "title": "Tokyo", "content": "Tokyo is capital", "url": "https://example.test"}],
+            )
+        )
+
+        assert completions.calls == 2
+        assert "Tokyo" in result["answer"]
+        assert result["status"] == "sufficient"
 
     def test_llm_retry_backoff_releases_concurrency_slot(self, monkeypatch):
         import asyncio
@@ -137,10 +277,10 @@ class TestLLMResponseParsing:
         import asyncio
         result = asyncio.run(client.analyze_task("what does URLSearchParams.delete do"))
 
-        assert result == {
-            "type": "search",
-            "queries": ["URLSearchParams delete MDN"],
-        }
+        assert result["type"] == "search"
+        assert result["queries"] == ["URLSearchParams delete MDN"]
+        assert result["resolved_query"] == "URLSearchParams delete MDN"
+        assert "entities" in result
         assert calls[0]["retries"] == 0
 
     def test_assess_relevance_accepts_plain_string_response(self):
@@ -211,10 +351,9 @@ class TestLLMResponseParsing:
         import asyncio
         result = asyncio.run(client.analyze_task("format drift query"))
 
-        assert result == {
-            "type": "search",
-            "queries": ["URLSearchParams delete MDN"],
-        }
+        assert result["type"] == "search"
+        assert result["queries"] == ["URLSearchParams delete MDN"]
+        assert result["resolved_query"]
         llm_module._ANALYSIS_CACHE.clear()
 
     def test_assess_relevance_parses_multi_digit_ids_from_string(self):
@@ -327,8 +466,11 @@ class TestLLMResponseParsing:
         first = asyncio.run(client.analyze_task("transient query"))
         second = asyncio.run(client.analyze_task("transient query"))
 
-        assert first == {"type": "search", "queries": ["transient query"]}
-        assert second == {"type": "search", "queries": ["recovered analysis"]}
+        assert first["type"] == "search"
+        assert first["queries"] == ["transient query"]
+        assert second["type"] == "search"
+        assert second["queries"] == ["recovered analysis"]
+        assert second["resolved_query"]
         assert calls == 2
         llm_module._ANALYSIS_CACHE.clear()
 
@@ -351,7 +493,9 @@ class TestLLMResponseParsing:
         first["queries"][0] = "mutated by caller"
         second = asyncio.run(client.analyze_task("cache isolation"))
 
-        assert second == {"type": "search", "queries": ["original cached query"]}
+        assert second["type"] == "search"
+        assert second["queries"] == ["original cached query"]
+        assert second["resolved_query"] == "original cached query"
         assert calls == 1
         llm_module._ANALYSIS_CACHE.clear()
 
@@ -420,6 +564,121 @@ class TestLLMResponseParsing:
         assert calls == 1
         llm_module._ANALYSIS_CACHE.clear()
 
+    def test_analyze_task_parses_resolved_query_and_entities(self):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        llm_module._ANALYSIS_CACHE.clear()
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+
+        async def fake_call(*args, **kwargs):
+            return json.dumps(
+                {
+                    "type": "search",
+                    "resolved_query": "梅西阿根廷世界杯半决赛对阵英格兰开球时间北京时间",
+                    "queries": [
+                        "梅西 阿根廷 英格兰 半决赛 开球时间",
+                        "阿根廷 vs 英格兰 世界杯 北京时间",
+                    ],
+                    "entities": ["梅西", "阿根廷", "英格兰", "世界杯半决赛"],
+                    "is_followup": True,
+                    "topic_changed": False,
+                },
+                ensure_ascii=False,
+            )
+
+        client._call_with_retry = fake_call
+        history = [
+            {"role": "user", "content": "梅西的下一场比赛是什么时候？"},
+            {"role": "assistant", "content": "阿根廷对阵英格兰半决赛。"},
+        ]
+        result = asyncio.run(
+            client.analyze_task("具体时间是什么时候？国内时间是什么时候？", history)
+        )
+
+        assert result["type"] == "search"
+        assert "梅西" in result["resolved_query"] or "阿根廷" in result["resolved_query"]
+        assert any("梅西" in q or "阿根廷" in q for q in result["queries"])
+        assert result["is_followup"] is True
+        assert "梅西" in result["entities"] or "阿根廷" in result["entities"]
+        llm_module._ANALYSIS_CACHE.clear()
+
+    def test_analyze_task_followup_fallback_anchors_history_entities(self):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        llm_module._ANALYSIS_CACHE.clear()
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+
+        async def fake_call(*args, **kwargs):
+            raise RuntimeError("upstream down")
+
+        client._call_with_retry = fake_call
+        history = [
+            {"role": "user", "content": "梅西的下一场比赛是什么时候？"},
+            {
+                "role": "assistant",
+                "content": "梅西将代表阿根廷出战世界杯半决赛对阵英格兰。",
+            },
+        ]
+        result = asyncio.run(
+            client.analyze_task("具体时间是什么时候？国内时间是什么时候？", history)
+        )
+
+        assert result["type"] == "search"
+        assert result["is_followup"] is True
+        joined = " ".join([result["resolved_query"], *result["queries"]])
+        assert "梅西" in joined or "阿根廷" in joined or "英格兰" in joined
+        # Must not search the bare follow-up alone.
+        assert result["queries"] != ["具体时间是什么时候？国内时间是什么时候？"]
+        llm_module._ANALYSIS_CACHE.clear()
+
+    def test_analyze_task_repairs_thin_followup_queries_from_model(self):
+        import asyncio
+        from backend.app import llm_client as llm_module
+
+        llm_module._ANALYSIS_CACHE.clear()
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+
+        async def fake_call(*args, **kwargs):
+            # Model forgot entities — classic topic-drift failure mode.
+            return '{"type":"search","queries":["具体时间 国内时间"],"is_followup":true}'
+
+        client._call_with_retry = fake_call
+        history = [
+            {"role": "user", "content": "梅西的下一场比赛是什么时候？"},
+            {"role": "assistant", "content": "阿根廷对阵英格兰的世界杯半决赛。"},
+        ]
+        result = asyncio.run(
+            client.analyze_task("具体时间是什么时候？国内时间是什么时候？", history)
+        )
+
+        joined = " ".join(result["queries"])
+        assert "梅西" in joined or "阿根廷" in joined or "英格兰" in joined
+        assert result["resolved_query"]
+        llm_module._ANALYSIS_CACHE.clear()
+
+    def test_build_context_messages_strips_html_and_truncates_assistant(self):
+        client = LLMClient(api_key="test-key", base_url="https://example.test/v1")
+        history = [
+            {"role": "user", "content": "梅西的下一场比赛是什么时候？"},
+            {
+                "role": "assistant",
+                "content": (
+                    '<section style="display:block"><h2>梅西下一场</h2>'
+                    + ("阿根廷对阵英格兰。" * 80)
+                    + "</section>"
+                ),
+            },
+        ]
+        msgs = client._build_context_messages(history)
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "user"
+        assert msgs[1]["role"] == "assistant"
+        assert "<section" not in msgs[1]["content"]
+        assert "梅西下一场" in msgs[1]["content"] or "阿根廷" in msgs[1]["content"]
+        assert len(msgs[1]["content"]) <= 700
+
 
 class TestLiveArtifactsAnswerFormatting:
     def test_markdown_fallback_is_wrapped_as_inline_live_artifact(self):
@@ -448,6 +707,80 @@ class TestLiveArtifactsAnswerFormatting:
         assert artifact.startswith("<!doctype html>")
         assert "<main>Ready</main>" in artifact
         assert "&lt;html" not in artifact
+
+    def test_chinese_status_envelope_html_is_not_escaped(self):
+        """GLM often emits 状态/缺失信息/回答; tags must stay real HTML."""
+        html = (
+            '<div style="display:block;width:100%;box-sizing:border-box;'
+            'max-width:100%;overflow-wrap:anywhere">'
+            "<h2>跌停股后续走势</h2><p>部分数据缺失[1]</p></div>"
+        )
+        raw = (
+            "状态: 不足\n\n"
+            "缺失信息: 7月14日主力净流入缺失\n\n"
+            f"回答:\n{html}"
+        )
+        artifact = ensure_live_artifact_answer(raw)
+        assert "<h2>跌停股后续走势</h2>" in artifact
+        assert "&lt;div" not in artifact
+        assert "&lt;h2" not in artifact
+        assert "状态:" not in artifact
+        assert "缺失信息" not in artifact
+
+    def test_english_status_envelope_html_is_not_escaped(self):
+        html = (
+            '<section style="display:block;width:100%;box-sizing:border-box;'
+            'max-width:100%;overflow-wrap:anywhere;"><h2>Ready</h2></section>'
+        )
+        raw = f"Status: insufficient\nMissing_Info: need more data\nAnswer:\n{html}"
+        artifact = ensure_live_artifact_answer(raw)
+        assert artifact.startswith("<section")
+        assert "<h2>Ready</h2>" in artifact
+        assert "&lt;section" not in artifact
+
+    def test_prose_prefix_plus_html_is_not_escaped(self):
+        """Partial-answer path used to prepend ⚠️ text and escape the artifact."""
+        html = (
+            '<div style="display:block;width:100%;box-sizing:border-box;'
+            'max-width:100%;overflow-wrap:anywhere"><h2>临时结论</h2></div>'
+        )
+        mixed = (
+            "⚠️ 经过 2 次尝试后，仍无法确认资料足够完整，"
+            f"以下是基于已收集资料整理的临时答案，可能仍不完整。\n\n{html}"
+        )
+        artifact = ensure_live_artifact_answer(mixed)
+        assert "<h2>临时结论</h2>" in artifact
+        assert "&lt;div" not in artifact
+        assert "&lt;h2" not in artifact
+
+    def test_parse_answer_envelope_chinese_insufficient(self):
+        from backend.app.llm_client import _parse_answer_envelope
+
+        parsed = _parse_answer_envelope(
+            "状态：不足\n缺失信息：缺价格\n回答：\n<div><h2>A</h2></div>"
+        )
+        assert parsed["status"] == "insufficient"
+        assert "缺价格" in parsed["missing_info"]
+        assert parsed["answer"].startswith("<div>")
+        assert parsed["had_envelope"] is True
+
+    def test_format_live_artifact_partial_answer_keeps_html(self):
+        from backend.app.workflow import SearchWorkflow
+
+        html = (
+            '<div style="display:block;width:100%;box-sizing:border-box;'
+            'max-width:100%;overflow-wrap:anywhere"><h2>部分答案</h2></div>'
+        )
+        # SearchWorkflow.__init__ is heavy; call unbound helper via a thin stub.
+        formatted = SearchWorkflow._format_live_artifact_partial_answer(
+            SearchWorkflow,
+            html,
+            "经过 1 次尝试后，仍无法确认资料足够完整",
+        )
+        assert 'data-justsearch-partial-banner="true"' in formatted
+        assert "<h2>部分答案</h2>" in formatted
+        assert "&lt;div" not in formatted
+        assert "&lt;h2" not in formatted
 
     def test_generate_answer_uses_live_artifacts_prompt_and_fallback(self):
         import asyncio

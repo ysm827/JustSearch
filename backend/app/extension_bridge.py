@@ -1,7 +1,7 @@
 """JustSearch 浏览器桥接服务端 + JSON-RPC 客户端 + tab 池。
 
 借鉴 browser-control-bridge 的架构,但简化为 JustSearch 自用:
-- 后端起一个 loopback-only 的 WebSocket 服务(`ws://127.0.0.1:38975/justsearch`),
+- WebSocket 与 HTTP 共用同一 uvicorn 端口（默认 8000），路径 /justsearch。
   Chrome 扩展主动连进来,JSON-RPC 2.0 over WS。
 - `BridgeClient` 把工具调用封装成 Python 异步方法,供 `browser_manager` /
   `page_crawler` 使用。所有现有的 `page.evaluate(JS)` 改走 `bridge.evaluate`。
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DEFAULT_WS_HOST = "127.0.0.1"
-DEFAULT_WS_PORT = 38975
+DEFAULT_WS_PORT = 8000
 DEFAULT_WS_PATH = "/justsearch"
 DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
@@ -463,7 +463,11 @@ class BridgeClient:
 # ---------------------------------------------------------------------------
 
 class TabPool:
-    """acquire 创建一个后台 tab,release 归还并标记待清理。无并发限制。"""
+    """acquire 创建一个后台 tab,release 归还并标记待清理。
+
+    爬取并发由 workflow 的 JUSTSEARCH_CRAWL_CONCURRENCY（默认 2）限制；
+    交互点击另有 page_crawler 全局锁串行化 CDP。
+    """
 
     def __init__(self, client: BridgeClient):
         self.client = client

@@ -64,15 +64,20 @@
         "base_url": "https://search.brave.com/search?q={query}",
         "selectors": {
             "result_container": [
+                "div.snippet[data-type='web']",
+                "div.snippet[data-pos]",
+                "div.result-wrapper",
+                "div.snippet.fdb",
                 "div.snippet",
-                "#results .snippet"
+                "#results .snippet",
+                "main [data-type='web']"
             ],
-            "title": "a.result-header, .title",
-            "link": "a.result-header, .title a",
-            "snippet": ".snippet-description, .snippet-content p",
+            "title": "a.title, .search-snippet-title, .title, a.result-header .title, a.result-header, h2 a, h2",
+            "link": "a.title, a.result-header, a[href^='http'], a[href^='https'], .result-content > a, a",
+            "snippet": ".description, .generic-snippet, .snippet-description, .snippet-content p, .snippet-content, p.description",
             "date": ""
         },
-        "wait_selector": "#results, .snippet"
+        "wait_selector": "div.snippet[data-type='web'], div.snippet[data-pos], .snippet, main"
     },
     "baidu": {
         "base_url": "https://www.baidu.com/s?wd={query}&rn={num}",

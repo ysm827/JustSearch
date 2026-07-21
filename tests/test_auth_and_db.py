@@ -1030,7 +1030,9 @@ def test_import_history_package_adds_sessions_and_groups_without_overwriting(tmp
         assert existing["messages"][0]["content"] == "keep original"
         assert imported["title"] == "Imported Chat"
         assert imported["group_id"] == "group-imported"
-        assert imported["messages"][1]["sources"] == [{"title": "Source", "url": "https://example.com"}]
+        assert imported["messages"][1]["sources"] == [
+            {"id": 1, "title": "Source", "url": "https://example.com", "domain": "example.com"}
+        ]
         assert imported["messages"][1]["stats"] == {"sites_searched": 1}
         assert groups == [
             {
@@ -3773,7 +3775,7 @@ def test_chat_endpoint_rejects_when_extension_bridge_disconnected(tmp_path, monk
         )
         monkeypatch.setattr(
             "backend.app.routers.chat.get_ws_endpoint",
-            lambda: "ws://127.0.0.1:38975/justsearch",
+            lambda: "ws://127.0.0.1:8000/justsearch",
         )
         monkeypatch.setattr("backend.app.routers.chat.SearchWorkflow", UnexpectedWorkflow)
 
@@ -3796,7 +3798,7 @@ def test_chat_endpoint_rejects_when_extension_bridge_disconnected(tmp_path, monk
         assert detail["code"] == "BRIDGE_REQUIRED"
         assert "扩展" in detail["message"]
         assert detail["download_url"] == "/api/extension/download"
-        assert "38975" in detail["ws_url"]
+        assert "8000" in detail["ws_url"]
 
         if database._engine is not None:
             await database._engine.dispose()
@@ -3844,7 +3846,7 @@ def test_health_endpoint_includes_bridge_install_metadata(monkeypatch):
     )
     monkeypatch.setattr(
         "backend.app.extension_bridge.get_ws_endpoint",
-        lambda: "ws://127.0.0.1:38975/justsearch",
+        lambda: "ws://127.0.0.1:8000/justsearch",
     )
     monkeypatch.setattr(
         "backend.app.extension_bridge.get_extension_info",
@@ -3878,7 +3880,7 @@ def test_health_endpoint_includes_bridge_install_metadata(monkeypatch):
         assert payload["bridge"]["extension_version_status"] == "disconnected"
         assert payload["bridge"]["update_available"] is False
         assert payload["bridge"]["download_url"] == "/api/extension/download"
-        assert "38975" in payload["bridge"]["ws_url"]
+        assert "8000" in payload["bridge"]["ws_url"]
         assert "chrome://extensions" in payload["bridge"]["install_hint"]
 
     asyncio.run(run())
@@ -3893,7 +3895,7 @@ def test_health_endpoint_reports_extension_version_when_connected(monkeypatch):
     )
     monkeypatch.setattr(
         "backend.app.extension_bridge.get_ws_endpoint",
-        lambda: "ws://127.0.0.1:38975/justsearch",
+        lambda: "ws://127.0.0.1:8000/justsearch",
     )
     monkeypatch.setattr(
         "backend.app.extension_bridge.get_extension_info",
@@ -3942,7 +3944,7 @@ def test_health_endpoint_flags_outdated_extension_version(monkeypatch):
     )
     monkeypatch.setattr(
         "backend.app.extension_bridge.get_ws_endpoint",
-        lambda: "ws://127.0.0.1:38975/justsearch",
+        lambda: "ws://127.0.0.1:8000/justsearch",
     )
     monkeypatch.setattr(
         "backend.app.extension_bridge.get_extension_info",

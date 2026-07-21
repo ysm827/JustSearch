@@ -28,8 +28,10 @@ from ..logging_utils import set_request_id
 from ..search_engine import get_all_engines
 from ..extension_bridge import get_ws_endpoint, is_extension_connected
 from ..citation_evidence import (
+    apply_verification_verdicts,
     build_citation_evidences,
     client_source_payload,
+    select_verification_candidates,
     strip_source_content_for_storage,
 )
 
@@ -170,6 +172,56 @@ def _client_source_payload(
     return client_source_payload(sources, query_hint=query_hint)
 
 
+async def _run_citation_verification(
+    workflow: SearchWorkflow,
+    citations: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Select borderline/high-impact evidence and run one bounded LLM batch.
+
+    Always fails open: on timeout, provider error, or malformed output, the
+    deterministic citations are returned unchanged. Only aggregate counts are
+    logged — never claims, quotes, or source bodies.
+    """
+    candidates = select_verification_candidates(citations, max_items=3)
+    if not candidates:
+        return citations
+    source_by_id = {
+        str(s.get("id")): s for s in sources if isinstance(s, dict) and s.get("id") is not None
+    }
+    items = []
+    for ev in candidates:
+        key = f"{ev.get('occurrence_id')}:{ev.get('claim_index', 0)}"
+        src = source_by_id.get(str(ev.get("source_id") or ev.get("marker") or ""))
+        items.append({
+            "id": key,
+            "claim": ev.get("claim", ""),
+            "quote": ev.get("quote", "") or (src or {}).get("excerpt", ""),
+            "title": ev.get("title", ""),
+        })
+    try:
+        verdicts = await asyncio.wait_for(
+            workflow.verify_citation_claims(items, timeout=6.0),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        logger.info("[Chat] citation verification timed out; using deterministic evidence")
+        return citations
+    except Exception as e:  # noqa: BLE001 — fail open on any verifier failure
+        logger.info("[Chat] citation verification failed (%s); using deterministic evidence", e)
+        return citations
+    if not verdicts:
+        return citations
+    counts = {"SUPPORTED": 0, "CONTRADICTED": 0, "NOT_ENOUGH_INFO": 0}
+    for v in verdicts.values():
+        counts[v.get("verdict", "")] = counts.get(v.get("verdict", ""), 0) + 1
+    logger.info(
+        "[Chat] citation verification: %d candidates, verdicts=%s",
+        len(items), counts,
+    )
+    return apply_verification_verdicts(citations, verdicts)
+
+
 def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
     try:
         parsed = int(value)
@@ -280,6 +332,10 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
     )
     if request.canvas_mode:
         live_artifacts_mode = True
+    citation_verification_enabled = _coerce_bool(
+        defaults.get("citation_verification_enabled"),
+        False,
+    )
 
     # All engines scrape via the real-Chrome extension bridge.
     _require_extension_bridge()
@@ -389,10 +445,17 @@ async def chat_endpoint(http_request: Request, request: ChatRequest):
 
             result = task.result()
             answer_text = result if isinstance(result, str) else str(result or "")
+            citations = build_citation_evidences(answer_text, accumulated_sources)
+
+            # Optional bounded semantic verification (fail-open; never blocks the answer).
+            if citation_verification_enabled:
+                citations = await _run_citation_verification(
+                    workflow, citations, accumulated_sources
+                )
+
             slim_sources = strip_source_content_for_storage(
                 accumulated_sources, query_hint=query_text
             )
-            citations = build_citation_evidences(answer_text, accumulated_sources)
 
             try:
                 path = get_chat_path(session_id)

@@ -4,14 +4,12 @@ services:
     container_name: justsearch
     ports:
       - "127.0.0.1:8001:8000"
-      - "127.0.0.1:38978:38975"
     volumes:
       # 用命名卷而非 ./data 挂载:Docker 管理的虚拟盘 I/O 远快于宿主机挂载卷
       # (实测 78MB/s → 4GB/s),SQLite 写入不再成为瓶颈,前端刷新更快。
       - justsearch_data:/app/data
     environment:
       - JUSTSEARCH_BRIDGE_WS_HOST=${JUSTSEARCH_BRIDGE_WS_HOST:-0.0.0.0}
-      - JUSTSEARCH_BRIDGE_WS_PORT=${JUSTSEARCH_BRIDGE_WS_PORT:-38975}
       - JUSTSEARCH_BRIDGE_WS_PATH=${JUSTSEARCH_BRIDGE_WS_PATH:-/justsearch}
       - BRIDGE_REQUEST_TIMEOUT_MS=${BRIDGE_REQUEST_TIMEOUT_MS:-30000}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8001,http://127.0.0.1:8001,http://localhost,http://127.0.0.1}

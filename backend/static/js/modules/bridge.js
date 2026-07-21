@@ -3,10 +3,8 @@ import { authFetch } from './auth.js?v=1';
 import { showToast } from './toast.js';
 
 const DEFAULT_POLL_INTERVAL_MS = 5000;
-const DEFAULT_WS_URL = 'ws://127.0.0.1:38975/justsearch';
+const DEFAULT_WS_URL = 'ws://127.0.0.1:8000/justsearch';
 const DEFAULT_DOWNLOAD_URL = '/api/extension/download';
-const DOCKER_WEB_PORT = '8001';
-const DOCKER_HOST_BRIDGE_PORT = '38978';
 
 let pollTimer = null;
 let lastKnownConnected = null;
@@ -89,18 +87,17 @@ function formatCheckedAt(ts) {
 
 function buildHostAccessTip(wsUrl) {
     const pagePort = String(window.location.port || '');
-    let recommended = '';
     try {
         const asHttp = wsUrl.replace(/^ws/i, 'http').replace(/^wss/i, 'https');
         const parsed = new URL(asHttp);
-        if (pagePort === DOCKER_WEB_PORT && (parsed.port === '38975' || parsed.port === '')) {
-            recommended = `ws://127.0.0.1:${DOCKER_HOST_BRIDGE_PORT}${parsed.pathname || '/justsearch'}`;
-            return `检测到页面运行在 Docker 映射端口 ${DOCKER_WEB_PORT}。扩展请连接 ${recommended}（宿主映射），而不是容器内的 38975。`;
+        if (parsed.port !== pagePort && pagePort !== '') {
+            const recommended = `ws://127.0.0.1:${pagePort}${parsed.pathname || '/justsearch'}`;
+            return `检测到页面端口为 ${pagePort}，但 WS 地址填的是 ${parsed.port}。扩展请连接 ${recommended}，桥接与 HTTP 共用同一端口。`;
         }
     } catch {
         // ignore parse errors
     }
-    return '扩展弹窗中的地址须与上方「期望 WS 地址」一致。Docker 部署时注意宿主端口映射。';
+    return '桥接地址与 HTTP 服务共用同一端口。默认 8000（本地）或宿主机映射端口（Docker）。';
 }
 
 export async function fetchBridgeStatus() {

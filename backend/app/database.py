@@ -904,6 +904,9 @@ DEFAULT_SETTINGS = {
     "max_iterations": "5",
     "interactive_search": "true",
     "live_artifacts_mode": False,
+    # Optional semantic citation verification (off by default; adds 1 bounded LLM
+    # call after answer generation). Existing settings without this key stay off.
+    "citation_verification_enabled": False,
     # Bridge UX preferences (web UI only; extension WS address is configured in the Chrome popup).
     "bridge_require_before_send": True,
     "bridge_show_banner": True,

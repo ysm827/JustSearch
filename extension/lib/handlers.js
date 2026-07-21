@@ -223,23 +223,25 @@ export function registerHandlers(bridge) {
   bridge.registerRequestHandler("clickAt", async ({ tabId, x, y, button = "left", clickCount = 1 } = {}) => {
     requireInt(tabId, "tabId");
     requireNum(x, "x"); requireNum(y, "y");
+    // Slightly longer than before: parallel crawls still stress debugger; 10s reduces flaky timeouts.
+    const mouseTimeoutMs = 10000;
     await executeCdp({
       tabId,
       method: "Input.dispatchMouseEvent",
       params: { type: "mouseMoved", x, y },
-      timeoutMs: 5000,
+      timeoutMs: mouseTimeoutMs,
     });
     await executeCdp({
       tabId,
       method: "Input.dispatchMouseEvent",
       params: { type: "mousePressed", x, y, button, clickCount },
-      timeoutMs: 5000,
+      timeoutMs: mouseTimeoutMs,
     });
     await executeCdp({
       tabId,
       method: "Input.dispatchMouseEvent",
       params: { type: "mouseReleased", x, y, button, clickCount },
-      timeoutMs: 5000,
+      timeoutMs: mouseTimeoutMs,
     });
     return { ok: true };
   });
@@ -480,33 +482,45 @@ function createCursorArrivalWaiter({ sessionId, turnId, moveSequence }) {
   return waiter;
 }
 
-// 与 page_crawler.py:120-163 的提取 JS 一致,直接复用。
+// 与 page_crawler.py INTERACTIVE_ELEMENTS_JS 保持一致。
 const GET_VISIBLE_ELEMENTS_JS = `(() => {
   const items = [];
   let idCounter = 0;
   function isVisible(elem) {
     if (!elem.getBoundingClientRect || !elem.checkVisibility) return false;
     const rect = elem.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0 && elem.checkVisibility();
+    // Reject 1x1 skip-links and other near-invisible hit targets
+    if (rect.width < 8 || rect.height < 8) return false;
+    if (rect.bottom <= 0 || rect.right <= 0) return false;
+    if (rect.top >= (window.innerHeight || 0) && rect.height < 20) return false;
+    return elem.checkVisibility();
   }
   const candidates = document.querySelectorAll('button, a[href], [role="button"]');
   const blacklist = /^(home|login|sign in|sign up|menu|privacy|terms|登录|注册|分享|首页|关闭|评论|like|share|follow|subscribe|cookie|accept|dismiss|下载 app|open in app|get app|feedback|举报|投诉|more actions)$/i;
   const navPatterns = /^(back|next|previous|prev|1|2|3|4|5|6|7|8|9|10|first|last|<|>|<<|>>)$/i;
+  const skipNoise = /^(skip to (main )?content|skip navigation|跳转到?内容|跳至(主)?内容|skip to main|跳过导航)$/i;
   for (const el of candidates) {
     if (!isVisible(el)) continue;
-    const text = (el.innerText || el.textContent || '').trim();
+    const text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
     if (text.length < 2 || text.length > 50) continue;
     if (blacklist.test(text)) continue;
     if (navPatterns.test(text)) continue;
+    if (skipNoise.test(text)) continue;
+    const href = (el.getAttribute && el.getAttribute('href')) || '';
+    if (href === '#' || href === '#content' || href === '#bodyContent' || href === '#main') continue;
     const parent = el.closest('header, footer, nav, .navbar, .footer, .header, .sidebar, .nav-bar, #header, #footer, #nav');
     if (parent) continue;
     const rect = el.getBoundingClientRect();
+    // Near origin with tiny box is almost always a11y skip chrome
+    if (rect.x + rect.width / 2 < 4 && rect.y + rect.height / 2 < 4) continue;
     items.push({
       id: "js-interact-" + (idCounter++),
       text: text,
       tag: el.tagName.toLowerCase(),
       x: rect.x + rect.width / 2,
-      y: rect.y + rect.height / 2
+      y: rect.y + rect.height / 2,
+      w: rect.width,
+      h: rect.height
     });
     if (items.length >= 30) break;
   }

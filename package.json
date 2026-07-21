@@ -5,7 +5,7 @@
   "type": "module",
   "description": "AI-powered deep search assistant",
   "scripts": {
-    "test:frontend": "node --test tests/frontend/*.test.mjs && node tests/frontend/live-artifacts-dom-check.mjs"
+    "test:frontend": "node --test --test-force-exit tests/frontend/*.test.mjs && node tests/frontend/live-artifacts-dom-check.mjs"
   },
   "devDependencies": {
     "jsdom": "^29.0.1"

@@ -321,3 +321,204 @@
     background-color: var(--warning-light);
     font-size: 14px;
 }
+
+/* --- Citation evidence panel --- */
+.evidence-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    width: min(440px, 94vw);
+    height: 100dvh;
+    background: var(--bg-elevated);
+    border-left: 1px solid var(--border);
+    box-shadow: -16px 0 40px rgb(0 0 0 / 14%);
+    transform: translateX(102%);
+    visibility: hidden;
+    transition: transform .22s ease, visibility .22s ease;
+}
+
+.evidence-panel.open {
+    transform: translateX(0);
+    visibility: visible;
+}
+
+.evidence-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elevated);
+}
+
+.evidence-panel-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.evidence-panel-icon { color: var(--primary); }
+.evidence-panel-title { color: var(--text-primary); font-weight: 700; }
+.evidence-panel-subtitle { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+.evidence-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    overscroll-behavior: contain;
+}
+
+.evidence-source-card,
+.evidence-claim-card {
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+}
+
+.evidence-source-meta,
+.evidence-claim-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+}
+
+.evidence-domain,
+.evidence-date {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.evidence-source-title {
+    margin: 8px 0 0;
+    color: var(--text-primary);
+    font-size: 15px;
+    line-height: 1.45;
+}
+
+.evidence-claims {
+    display: grid;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.evidence-status,
+.evidence-verification {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.evidence-status-verified,
+.evidence-verification-verified {
+    color: var(--success);
+    background: var(--success-light);
+}
+
+.evidence-status-likely {
+    color: var(--primary);
+    background: var(--primary-light);
+}
+
+.evidence-status-related,
+.evidence-verification-related {
+    color: var(--warning);
+    background: var(--warning-light);
+}
+
+.evidence-status-missing,
+.evidence-verification-missing {
+    color: var(--error);
+    background: var(--error-light);
+}
+
+.evidence-section-label {
+    margin-top: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.evidence-claim {
+    margin: 6px 0 0;
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+.evidence-quote {
+    margin: 7px 0 0;
+    padding: 10px 12px;
+    border-left: 3px solid var(--primary);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: var(--text-secondary);
+    background: var(--bg-elevated);
+    line-height: 1.65;
+    white-space: pre-wrap;
+}
+
+.evidence-hint,
+.evidence-empty {
+    margin: 8px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.evidence-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.evidence-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+    font: inherit;
+    font-size: 13px;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.evidence-action-btn.primary {
+    color: var(--text-on-primary, white);
+    border-color: var(--primary);
+    background: var(--primary);
+}
+
+.evidence-copy-btn { margin-top: 10px; }
+
+.evidence-panel-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+}
+
+body.evidence-panel-open { overflow: hidden; }
+
+@media (max-width: 600px) {
+    .evidence-panel { width: 100vw; }
+    .evidence-panel-body { padding: 12px; }
+}

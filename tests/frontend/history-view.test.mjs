@@ -4,6 +4,9 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
+// Must match history-view.js import: `./ui.js?v=31` so both share one `elements` object.
+const UI_MODULE = '../../backend/static/js/modules/ui.js?v=31';
+
 function installBrowserGlobals() {
     const { JSDOM } = require('jsdom');
     const dom = new JSDOM(`
@@ -37,7 +40,7 @@ function installBrowserGlobals() {
 }
 
 test('history search uses backend full-text results without replacing cached history', async () => {
-    installBrowserGlobals();
+    const dom = installBrowserGlobals();
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;
     const requests = [];
@@ -48,10 +51,9 @@ test('history search uses backend full-text results without replacing cached his
     };
     globalThis.clearTimeout = () => {};
     try {
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
+        const { elements, initUI } = await import(UI_MODULE);
         const historyView = await import('../../backend/static/js/modules/history-view.js?test=fts-search');
-        elements.historyList = document.getElementById('history-list');
-        elements.historySearchInput = document.getElementById('history-search-input');
+        initUI();
 
         globalThis.fetch = async (input) => {
             requests.push(String(input));
@@ -87,11 +89,12 @@ test('history search uses backend full-text results without replacing cached his
     } finally {
         globalThis.setTimeout = originalSetTimeout;
         globalThis.clearTimeout = originalClearTimeout;
+        dom.window.close();
     }
 });
 
 test('history item export opens in an isolated new window', async () => {
-    installBrowserGlobals();
+    const dom = installBrowserGlobals();
     const openedWindows = [];
 
     window.open = (...args) => {
@@ -99,23 +102,26 @@ test('history item export opens in an isolated new window', async () => {
         return null;
     };
 
-    const { elements } = await import('../../backend/static/js/modules/ui.js?v=25');
-    const historyView = await import('../../backend/static/js/modules/history-view.js?test=export-window');
-    elements.historyList = document.getElementById('history-list');
-    elements.historySearchInput = document.getElementById('history-search-input');
+    try {
+        const { initUI } = await import(UI_MODULE);
+        const historyView = await import('../../backend/static/js/modules/history-view.js?test=export-window');
+        initUI();
 
-    historyView.renderHistory(
-        [{ id: 'chat id?x=1', title: 'Export target', timestamp: '2026-01-03T00:00:00Z' }],
-        '',
-        { onSelect: () => {}, onDelete: () => {} },
-        [],
-    );
+        historyView.renderHistory(
+            [{ id: 'chat id?x=1', title: 'Export target', timestamp: '2026-01-03T00:00:00Z' }],
+            '',
+            { onSelect: () => {}, onDelete: () => {} },
+            [],
+        );
 
-    document.querySelector('.history-export-btn').click();
+        document.querySelector('.history-export-btn').click();
 
-    assert.deepEqual(openedWindows, [[
-        '/api/history/chat%20id%3Fx%3D1/export',
-        '_blank',
-        'noopener,noreferrer',
-    ]]);
+        assert.deepEqual(openedWindows, [[
+            '/api/history/chat%20id%3Fx%3D1/export',
+            '_blank',
+            'noopener,noreferrer',
+        ]]);
+    } finally {
+        dom.window.close();
+    }
 });

@@ -5,9 +5,9 @@ import {
     createMessageActionRail,
     createRegenerateButton
 } from './utils.js?v=6';
-import { extractSources, hasCitationSources, linkCitationsInElement, normalizeCitationSources, renderWithCitations } from './source-renderer.js?v=9';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=20';
-import { bindCitationEvidenceClicks, setEvidenceContext } from './evidence-panel.js?v=1';
+import { extractSources, hasCitationSources, linkCitationsInElement, normalizeCitationSources, renderWithCitations } from './source-renderer.js?v=10';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=27';
+import { bindCitationEvidenceClicks, setEvidenceContext } from './evidence-panel.js?v=2';
 import { state } from './state.js?v=5';
 
 const USER_MESSAGE_COLLAPSE_CHARACTER_THRESHOLD = 600;
@@ -423,15 +423,22 @@ export function appendMessage(role, content, logs = null, sources = null, stats 
         answerBody.dataset.liveArtifactsMessageId = `history-${messageIndex ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         // Live Artifacts 模式下保留内联 HTML 走 iframe 预览（样式完整、引用照常链接）；
         // 仅在该模式关闭时，遇到意外 HTML 才退回带引用的 Markdown 渲染。
+        // AMC-aligned: Live Artifacts mode always prefers a single themed iframe
+        // (native HTML or Markdown coerced to HTML). Only fall back to bubble
+        // Markdown when the mode is off and there is no standalone HTML artifact.
         const suppressUnfencedInlineArtifact = !state.liveArtifactsMode && hasCitationSources(resolvedSources);
-        if (!getInlineLiveArtifact(content, answerBody.dataset.liveArtifactsMessageId, false, { suppressUnfencedInlineArtifact })) {
+        const liveArtifactOptions = {
+            suppressUnfencedInlineArtifact,
+            liveArtifactsMode: Boolean(state.liveArtifactsMode),
+        };
+        if (!getInlineLiveArtifact(content, answerBody.dataset.liveArtifactsMessageId, false, liveArtifactOptions)) {
             answerBody.innerHTML = renderWithCitations(content, resolvedSources);
         }
         renderLiveArtifactsForMessage(answerBody, content, {
             messageId: answerBody.dataset.liveArtifactsMessageId,
             isStreaming: false,
             sources: resolvedSources,
-            suppressUnfencedInlineArtifact,
+            ...liveArtifactOptions,
         });
         linkCitationsInElement(answerBody, resolvedSources);
         setEvidenceContext({ sources: resolvedSources, citations });

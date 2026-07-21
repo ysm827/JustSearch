@@ -12,6 +12,7 @@ const {
     applyInlineArtifactFrameHeight,
     buildSrcdoc,
     clampLiveArtifactFontSize,
+    coerceLiveModeArtifact,
     extractInlineLiveArtifact,
     extractLiveArtifactInteraction,
     extractLiveArtifacts,
@@ -24,7 +25,11 @@ const {
     linkArtifactCitationsInHtml,
     measureArtifactContentHeight,
     normalizePreviewDiagnostic,
+    normalizePreviewableMarkdownContent,
     parseLiveArtifactInteractionSpec,
+    sanitizeClippingStylesInHtml,
+    forceOpenAllDetailsInHtml,
+    resolveLiveArtifactsModeFlag,
 } = __liveArtifactsTestHooks;
 
 const require = createRequire(import.meta.url);
@@ -138,6 +143,155 @@ test('AMC-style raw inline HTML fragments render as inline Live Artifact frames'
     assert.match(artifact.srcdoc, /justsearch-live-artifacts/);
 });
 
+test('normalizePreviewableMarkdownContent wraps bare HTML like AMC', () => {
+    const html = '<section><h2>Hello</h2><p>World</p></section>';
+    const normalized = normalizePreviewableMarkdownContent(html);
+    assert.match(normalized, /```amc-live-artifact-html/);
+    assert.match(normalized, /<section>/);
+});
+
+test('sanitizeClippingStylesInHtml removes viewport shells that cause thin bars', () => {
+    const raw = '<div style="height:100vh;max-height:100%;overflow:hidden;color:red">Score</div>';
+    const cleaned = sanitizeClippingStylesInHtml(raw);
+    assert.match(cleaned, /height:\s*auto/i);
+    assert.match(cleaned, /max-height:\s*none/i);
+    assert.match(cleaned, /overflow:\s*visible/i);
+    assert.match(cleaned, /Score/);
+});
+
+test('sanitizeClippingStylesInHtml preserves intentional scroll containers', () => {
+    // Regression: overflow-y:auto/scroll must NOT be rewritten to visible — that
+    // breaks artifacts with deliberate scrollable panels.
+    const raw = '<div style="height:300px;overflow-y:auto">log lines</div>';
+    const cleaned = sanitizeClippingStylesInHtml(raw);
+    assert.match(cleaned, /overflow-y:\s*auto/i);
+    assert.match(cleaned, /log lines/);
+    // overflow:hidden (the actual clip failure) is still neutralized.
+    const clipped = sanitizeClippingStylesInHtml('<div style="overflow:hidden">x</div>');
+    assert.match(clipped, /overflow:\s*visible/i);
+});
+
+test('forceOpenAllDetailsInHtml does not corrupt custom elements like <details-panel>', () => {
+    // Regression: the old <details\b regex turned <details-panel> into <details open-panel>.
+    const html = '<details-panel>hi</details-panel><details><summary>m</summary><p>x</p></details>';
+    const out = forceOpenAllDetailsInHtml(html);
+    assert.match(out, /<details-panel>hi<\/details-panel>/);
+    assert.doesNotMatch(out, /<details open-panel/);
+    // Real <details> still gets forced open.
+    assert.match(out, /<details open>/);
+});
+
+test('resolveLiveArtifactsModeFlag falls back to global state for explicit undefined', () => {
+    installBrowserGlobals();
+    // Simulate global mode on; an explicit undefined must fall back, not disable.
+    const orig = typeof window !== 'undefined' && window.state ? window.state.liveArtifactsMode : undefined;
+    assert.equal(resolveLiveArtifactsModeFlag({ liveArtifactsMode: undefined }), Boolean(orig));
+    assert.equal(resolveLiveArtifactsModeFlag({ liveArtifactsMode: false }), false);
+    assert.equal(resolveLiveArtifactsModeFlag({ liveArtifactsMode: true }), true);
+    assert.equal(resolveLiveArtifactsModeFlag({}), Boolean(orig));
+});
+
+test('handleArtifactFrameMessage shrinks iframe when all details collapse', () => {
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div class="live-artifact-inline-viewport" style="height:1108px">
+                <iframe
+                  class="live-artifact-inline-iframe"
+                  style="height:1108px"
+                  data-live-artifact-frame-id="collapse-frame-1"
+                  data-live-artifact-collapsed-height="522"
+                  data-live-artifact-expanded-height="1100"
+                  data-live-artifact-has-details="true"
+                ></iframe>
+            </div>
+        </body>
+    `);
+    const viewport = document.querySelector('.live-artifact-inline-viewport');
+    const frame = document.querySelector('.live-artifact-inline-iframe');
+    Object.defineProperty(frame, 'contentWindow', {
+        configurable: true,
+        value: { id: 'mock-collapse-frame' },
+    });
+    // Bridge reports all details collapsed and a small content height.
+    handleArtifactFrameMessage({
+        source: frame.contentWindow,
+        data: {
+            channel: 'justsearch-live-artifacts',
+            event: 'resize',
+            height: 540,
+            openDetailsCount: 0,
+            totalDetailsCount: 2,
+            detailsOpen: false,
+            frameId: 'collapse-frame-1',
+        },
+    });
+    // Must NOT be pinned back to the ~1108 expanded floor; should follow content (~540 + pad).
+    const h = parseInt(viewport.style.height, 10);
+    assert.ok(h < 1000, `expected shrink below 1000, got ${h}`);
+});
+
+test('liveArtifactsMode coerces Markdown answers into a single themed iframe artifact', () => {
+    installBrowserGlobals();
+    window.markdownit = () => ({
+        render: (value) => {
+            const text = String(value || '');
+            if (text.includes('梅西')) {
+                return '<h2>梅西下一场比赛</h2><table><tr><td>对阵</td><td>英格兰</td></tr></table><div style="height:100vh;overflow:hidden">实时积分</div>';
+            }
+            return text;
+        },
+    });
+    window.DOMPurify = {
+        sanitize: (value) => String(value || ''),
+    };
+
+    const markdown = [
+        '## 梅西下一场比赛核心信息',
+        '',
+        '根据公开来源，下一场为半决赛。',
+        '',
+        '| 项目 | 内容 |',
+        '| --- | --- |',
+        '| 对阵双方 | 阿根廷 vs 英格兰 |',
+        '',
+        '<div style="height:100vh;overflow:hidden">实时积分情况</div>',
+    ].join('\n');
+
+    const artifact = getInlineLiveArtifact(markdown, 'message-coerce-md', false, {
+        liveArtifactsMode: true,
+    });
+
+    assert.ok(artifact, 'expected coerced live artifact');
+    assert.equal(artifact.inline, true);
+    assert.equal(artifact.coerced, true);
+    assert.equal(artifact.coercedFrom, 'markdown');
+    assert.match(artifact.code, /data-justsearch-live-artifact-root/);
+    assert.match(artifact.code, /梅西下一场比赛/);
+    assert.match(artifact.code, /实时积分/);
+    // Clipping shells must be neutralized before srcdoc bake.
+    assert.doesNotMatch(artifact.code, /height:\s*100vh/i);
+    assert.match(artifact.srcdoc, /--amc-live-artifact-text|--amc-live-artifact-font-size|justsearch-live-artifacts/);
+});
+
+test('liveArtifactsMode off leaves pure Markdown as non-artifact', () => {
+    const markdown = '## Title\n\nJust a paragraph with [1] cite.';
+    const artifact = getInlineLiveArtifact(markdown, 'message-md-off', false, {
+        liveArtifactsMode: false,
+    });
+    assert.equal(artifact, null);
+});
+
+test('coerceLiveModeArtifact wraps multi-root HTML under a single root', () => {
+    const html = '<h2>A</h2><p>B</p><div style="overflow:hidden;max-height:100vh">C</div>';
+    const artifact = coerceLiveModeArtifact(html, 'message-multi-root', { isStreaming: false });
+    assert.ok(artifact);
+    assert.equal(artifact.coercedFrom, 'html');
+    assert.match(artifact.code, /data-justsearch-live-artifact-root/);
+    assert.match(artifact.code, />C</);
+    assert.doesNotMatch(artifact.code, /max-height:\s*100vh/i);
+});
+
 test('inline Live Artifact fragments can include scoped style blocks', () => {
     const html = '<style>.metric{color:#0f766e}</style><section class="metric"><strong>Styled</strong></section>';
     const artifact = extractInlineLiveArtifact(html, 'message-style', false);
@@ -187,7 +341,27 @@ test('Live Artifact srcdoc uses AMC-style CSP and preview diagnostics', () => {
     assert.match(srcdoc, /body > section/);
     assert.match(srcdoc, /notifyResize/);
     assert.match(srcdoc, /scheduleResize/);
+    assert.match(srcdoc, /scheduleResizeBurst/);
+    assert.match(srcdoc, /measureContentHeight/);
+    assert.match(srcdoc, /HTMLDetailsElement/);
+    assert.match(srcdoc, /addEventListener\('toggle'/);
     assert.match(srcdoc, /frameId: FRAME_ID/);
+});
+
+test('Live Artifact srcdoc remeasures height when details toggle', () => {
+    const srcdoc = buildSrcdoc(
+        '<section><details><summary>more</summary><p>hidden body</p></details></section>',
+        'html',
+        [],
+        { frameId: 'details-test' },
+    );
+    // Collapse chrome must not trap expanded content inside a fixed viewport shell.
+    assert.match(srcdoc, /details\s*\{[\s\S]*overflow:\s*visible\s*!important/);
+    assert.match(srcdoc, /scheduleResizeBurst/);
+    assert.match(srcdoc, /details\[open\]/);
+    // Preview forces details open so content is visible without postMessage resize.
+    assert.match(srcdoc, /<details open/i);
+    assert.match(srcdoc, /summary::before/);
 });
 
 test('Live Artifact srcdoc injects configured base font size', () => {
@@ -311,11 +485,12 @@ test('inline artifact resize applies height to both viewport and iframe', () => 
 
     const viewport = document.querySelector('.live-artifact-inline-viewport');
     const frame = document.querySelector('.live-artifact-inline-iframe');
+    // Parent applies a small height pad so expanded details are not clipped.
     const applied = applyInlineArtifactFrameHeight(viewport, frame, 980.4);
 
-    assert.equal(applied, 981);
-    assert.equal(viewport.style.height, '981px');
-    assert.equal(frame.style.height, '981px');
+    assert.equal(applied, 989);
+    assert.equal(viewport.style.height, '989px');
+    assert.equal(frame.style.height, '989px');
     assert.equal(viewport.style.minHeight, '120px');
 
     const floor = applyInlineArtifactFrameHeight(viewport, frame, 12);
@@ -325,8 +500,8 @@ test('inline artifact resize applies height to both viewport and iframe', () => 
 
     applyInlineArtifactFrameHeight(viewport, frame, 800);
     const noShrink = applyInlineArtifactFrameHeight(viewport, frame, 200, { allowShrink: false });
-    assert.equal(noShrink, 800);
-    assert.equal(viewport.style.height, '800px');
+    assert.equal(noShrink, 808);
+    assert.equal(viewport.style.height, '808px');
 });
 
 test('parent-side height probe expands past short iframe defaults', () => {
@@ -336,6 +511,151 @@ test('parent-side height probe expands past short iframe defaults', () => {
     }</section>`;
     const height = measureArtifactContentHeight(longHtml, 640);
     assert.ok(height > 320, `expected probed height > 320, got ${height}`);
+});
+
+test('parent-side height probe accepts forceOpenDetails option', () => {
+    installBrowserGlobals();
+    const html = `
+      <div style="display:block;width:100%">
+        <h2>Title</h2>
+        <p>Intro paragraph for the collapsed baseline.</p>
+        <details>
+          <summary>More</summary>
+          ${Array.from({ length: 25 }, (_, i) => `<p>Hidden row ${i} ${'x'.repeat(40)}</p>`).join('')}
+        </details>
+      </div>
+    `;
+    const collapsed = measureArtifactContentHeight(html, 640);
+    const expanded = measureArtifactContentHeight(html, 640, { forceOpenDetails: true });
+    // jsdom may not layout <details>; just require a stable finite height and non-throw.
+    assert.ok(Number.isFinite(collapsed) && collapsed >= 120);
+    assert.ok(Number.isFinite(expanded) && expanded >= collapsed);
+});
+
+test('details-toggle resize falls back to precomputed expanded height', () => {
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div class="live-artifact-inline-viewport" style="height:200px">
+                <iframe
+                  class="live-artifact-inline-iframe"
+                  style="height:200px"
+                  data-live-artifact-frame-id="details-frame-1"
+                  data-live-artifact-collapsed-height="200"
+                  data-live-artifact-expanded-height="900"
+                  data-live-artifact-has-details="true"
+                ></iframe>
+            </div>
+        </body>
+    `);
+
+    const viewport = document.querySelector('.live-artifact-inline-viewport');
+    const frame = document.querySelector('.live-artifact-inline-iframe');
+    Object.defineProperty(frame, 'contentWindow', {
+        configurable: true,
+        value: { id: 'mock-details-frame' },
+    });
+
+    // Bridge under-reports height (classic fixed-iframe chicken-and-egg).
+    handleArtifactFrameMessage({
+        source: frame.contentWindow,
+        data: {
+            channel: 'justsearch-live-artifacts',
+            event: 'resize',
+            height: 210,
+            detailsToggle: true,
+            detailsOpen: true,
+            openDetailsCount: 1,
+            totalDetailsCount: 1,
+            frameId: 'details-frame-1',
+        },
+    });
+
+    assert.equal(viewport.style.height, '908px');
+    assert.equal(frame.style.height, '908px');
+});
+
+test('under-reported resize never collapses to first-summary height for details artifacts', () => {
+    // Regression: bridge scrollHeight ≈ collapsed clipped open details content.
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div class="live-artifact-inline-viewport" style="height:2138px">
+                <iframe
+                  class="live-artifact-inline-iframe"
+                  style="height:2138px"
+                  data-live-artifact-frame-id="details-floor-1"
+                  data-live-artifact-collapsed-height="522"
+                  data-live-artifact-expanded-height="1100"
+                  data-live-artifact-has-details="true"
+                ></iframe>
+            </div>
+        </body>
+    `);
+
+    const viewport = document.querySelector('.live-artifact-inline-viewport');
+    const frame = document.querySelector('.live-artifact-inline-iframe');
+    Object.defineProperty(frame, 'contentWindow', {
+        configurable: true,
+        value: { id: 'mock-floor-frame' },
+    });
+
+    handleArtifactFrameMessage({
+        source: frame.contentWindow,
+        data: {
+            channel: 'justsearch-live-artifacts',
+            event: 'resize',
+            height: 522,
+            frameId: 'details-floor-1',
+        },
+    });
+
+    assert.equal(viewport.style.height, '1108px');
+    assert.equal(frame.style.height, '1108px');
+});
+
+test('trusted bridge resize can shrink inflated height to remove blank space', () => {
+    // Parent probe / text estimate overshot; iframe measured real content shorter.
+    installBrowserGlobals(`
+        <!doctype html>
+        <body>
+            <div class="live-artifact-inline-viewport" style="height:2146px">
+                <iframe
+                  class="live-artifact-inline-iframe"
+                  style="height:2146px"
+                  data-live-artifact-frame-id="details-shrink-1"
+                  data-live-artifact-collapsed-height="522"
+                  data-live-artifact-expanded-height="2138"
+                  data-live-artifact-has-details="true"
+                ></iframe>
+            </div>
+        </body>
+    `);
+
+    const viewport = document.querySelector('.live-artifact-inline-viewport');
+    const frame = document.querySelector('.live-artifact-inline-iframe');
+    Object.defineProperty(frame, 'contentWindow', {
+        configurable: true,
+        value: { id: 'mock-shrink-frame' },
+    });
+
+    handleArtifactFrameMessage({
+        source: frame.contentWindow,
+        data: {
+            channel: 'justsearch-live-artifacts',
+            event: 'resize',
+            height: 980,
+            openDetailsCount: 2,
+            totalDetailsCount: 2,
+            detailsOpen: true,
+            frameId: 'details-shrink-1',
+        },
+    });
+
+    assert.equal(viewport.style.height, '988px');
+    assert.equal(frame.style.height, '988px');
+    // Trusted iframe measure becomes the new expanded floor (drops inflated probe).
+    assert.equal(frame.dataset.liveArtifactExpandedHeight, '980');
 });
 
 test('resize postMessage from inline frame grows the clipped viewport', () => {
@@ -365,8 +685,8 @@ test('resize postMessage from inline frame grows the clipped viewport', () => {
         },
     });
 
-    assert.equal(viewport.style.height, '1560px');
-    assert.equal(frame.style.height, '1560px');
+    assert.equal(viewport.style.height, '1568px');
+    assert.equal(frame.style.height, '1568px');
 });
 
 test('resize postMessage can route by frameId without contentWindow match', () => {
@@ -392,8 +712,8 @@ test('resize postMessage can route by frameId without contentWindow match', () =
         },
     });
 
-    assert.equal(viewport.style.height, '2400px');
-    assert.equal(frame.style.height, '2400px');
+    assert.equal(viewport.style.height, '2408px');
+    assert.equal(frame.style.height, '2408px');
 });
 
 test('Live Artifact CSP injection preserves existing document heads', () => {
@@ -455,7 +775,7 @@ test('quick Live Artifacts button toggles AMC-style active prompt state', async 
             </body>
         `);
         const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=40');
         const button = document.getElementById('quick-live-artifacts-btn');
 
         state.settings = { search_engine: 'google', interactive_search: true };
@@ -533,7 +853,7 @@ test('quick interactive search button coerces string false before toggling', asy
             </body>
         `);
         const { state, setSettings } = await import('../../backend/static/js/modules/state.js?v=5');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=40');
         const button = document.getElementById('quick-interactive-btn');
         const checkbox = document.getElementById('interactive-search-input');
 
@@ -617,8 +937,11 @@ test('inline Live Artifact citations inside the iframe become safe clickable sou
 
     const frame = container.querySelector('.live-artifact-inline-iframe');
     assert.ok(frame);
-    // Align with ArtifactFrame sandbox (no allow-same-origin / no allow-popups).
-    assert.equal(frame.getAttribute('sandbox'), 'allow-scripts allow-forms');
+    // Align with AMC ArtifactFrame sandbox (no allow-same-origin; popups for target=_blank).
+    assert.equal(
+        frame.getAttribute('sandbox'),
+        'allow-scripts allow-forms allow-popups allow-modals allow-downloads',
+    );
     assert.match(frame.srcdoc, /data-live-artifact-source-url="https:\/\/two\.example\/report"/);
     assert.match(frame.srcdoc, /window\.open\(url, '_blank'\)/);
     assert.match(frame.srcdoc, /opened\.opener = null/);
@@ -641,7 +964,7 @@ test('saved HTML answers with sources render citation links instead of inline ar
 
     const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=27');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=31');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -678,7 +1001,7 @@ test('saved rich HTML table answers link citation tags in place', async () => {
 
     const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=27');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=31');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -728,7 +1051,7 @@ test('saved HTML answers with JSON-encoded sources still render citation links',
 
     const { state, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
     setLiveArtifactsMode(false);
-    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=27');
+    const { elements, appendMessage } = await import('../../backend/static/js/modules/ui.js?v=31');
     Object.assign(elements, {
         chatContainer: document.getElementById('chat-container'),
         heroSection: document.getElementById('hero-section'),
@@ -1242,8 +1565,8 @@ test('streaming chat re-renders citations when sources arrive after answer chunk
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=27');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=31');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=40');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'late-sources-session' },
@@ -1340,8 +1663,8 @@ test('streaming chat marks SSE error events as failed instead of completed', asy
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=27');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=31');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=40');
         const encoder = new TextEncoder();
         const events = [
             { type: 'meta', session_id: 'error-status-session' },
@@ -1436,8 +1759,8 @@ test('streaming raw HTML answer exits inline artifact mode when sources arrive',
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=27');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=31');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=40');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1537,8 +1860,8 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
 
     try {
         const { state, setCurrentSessionId, setLiveArtifactsMode } = await import('../../backend/static/js/modules/state.js?v=5');
-        const { elements } = await import('../../backend/static/js/modules/ui.js?v=27');
-        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=36');
+        const { elements } = await import('../../backend/static/js/modules/ui.js?v=31');
+        const { setupChatHandler } = await import('../../backend/static/js/modules/chat.js?v=40');
         const encoder = new TextEncoder();
         const htmlAnswer = '<div style="display:block;width:100%"><h2>LinuxDo 是什么？</h2><p>来源给出的官网是 linux.do/。[2]</p></div>';
         const events = [
@@ -1626,7 +1949,7 @@ test('streaming raw HTML answer links citations from final answer sources', asyn
 
 test('citation rendering resolves sparse source ids instead of array positions', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=10');
 
     const html = renderWithCitations('Sparse citation [4]', [
         { id: 2, title: 'Second', url: 'https://two.example' },
@@ -1644,7 +1967,7 @@ test('citation rendering resolves sparse source ids instead of array positions',
 
 test('citation rendering normalizes bare-domain source urls', async () => {
     installBrowserGlobals();
-    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
+    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=10');
 
     const html = renderWithCitations('官网 [2]', [
         { id: 2, title: 'Linux Do', url: 'linux.do/' },
@@ -1666,7 +1989,7 @@ test('citation rendering normalizes bare-domain source urls', async () => {
 
 test('citation hydration links raw citation tags left in rendered HTML', async () => {
     installBrowserGlobals();
-    const { linkCitationsInElement } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
+    const { linkCitationsInElement } = await import('../../backend/static/js/modules/source-renderer.js?v=10');
 
     const container = document.createElement('div');
     container.innerHTML = [
@@ -1690,7 +2013,7 @@ test('citation hydration links raw citation tags left in rendered HTML', async (
 
 test('citation rendering accepts JSON-encoded source arrays', async () => {
     installBrowserGlobals();
-    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
+    const { hasCitationSources, renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=10');
 
     const html = renderWithCitations(
         '<div><p>官网来源 [2]</p><code>[2]</code></div>',
@@ -1712,7 +2035,7 @@ test('citation rendering accepts JSON-encoded source arrays', async () => {
 
 test('citation rendering links citations from embedded reference markdown when sources are absent', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=10');
 
     const html = renderWithCitations([
         '官网 来源给出的官网是 linux.do/。[2]',
@@ -1737,7 +2060,7 @@ test('citation rendering links citations from embedded reference markdown when s
 
 test('citation rendering neutralizes non-http source urls', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=10');
 
     const html = renderWithCitations('Unsafe citation [1]', [
         { id: 1, title: 'Unsafe', url: 'javascript:alert(1)' },
@@ -1757,7 +2080,7 @@ test('citation rendering neutralizes non-http source urls', async () => {
 
 test('citation rendering tolerates malformed source payloads', async () => {
     installBrowserGlobals();
-    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=8');
+    const { renderWithCitations } = await import('../../backend/static/js/modules/source-renderer.js?v=10');
 
     assert.doesNotThrow(() => renderWithCitations('No sources [1]', { id: 1, url: 'https://bad.example' }));
     assert.doesNotThrow(() => renderWithCitations(null, [{ id: 1, url: 'https://safe.example' }]));

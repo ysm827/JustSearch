@@ -412,9 +412,8 @@ def test_search_web_records_wait_selector_timeout_as_selector_failure(monkeypatc
     assert asyncio.run(manager.search_web("FastAPI CORS")) == []
 
 
-def test_search_web_records_verification_page_as_blocked(monkeypatch):
-    # 检测到反爬页面(blocked):_read_page_state 返回包含标记的 content,
-    # 验证码/反爬轮询会一直等(这里把超时压到 0 让它快速返回)。
+def test_search_web_returns_empty_when_bridge_extract_yields_nothing(monkeypatch):
+    """After bridge redesign, captcha is handled in real Chrome; backend just extracts."""
     class FakeTabPool:
         def __init__(self, client):
             pass
@@ -439,35 +438,32 @@ def test_search_web_records_verification_page_as_blocked(monkeypatch):
             pass
 
         async def evaluate(self, tab_id, js, timeout_ms=None):
-            return None
+            # Wait-selector finds a container, but extract returns nothing
+            # (e.g. captcha interstitial without result cards).
+            if "function(selectors" in js:
+                return []
+            if ".length" in js:
+                return 1
+            return []
 
         async def get_tab_url(self, tab_id):
-            return "https://brave.example/search"
-
-    async def fake_read_page_state(self, bridge, tab_id):
-        return "正在验证您不是机器人 在您继续搜索之前进行快速检查。 pow-captcha", ""
+            return "https://search.brave.com/search?q=FastAPI"
 
     monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
     monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: FakeBridge())
-    monkeypatch.setattr(
-        browser_manager.BrowserManager, "_read_page_state", fake_read_page_state
-    )
-    # 把验证等待超时压到 0,立即失败返回 []。
-    monkeypatch.setattr(browser_manager, "_MANUAL_VERIFICATION_TIMEOUT_SECONDS", 0.0)
 
     manager = BrowserManager(engine="brave", max_results=3)
+    assert asyncio.run(manager.search_web("FastAPI CORS", allow_fallback=False, use_cache=False)) == []
 
-    assert asyncio.run(manager.search_web("FastAPI CORS", allow_fallback=False)) == []
 
-
-def test_blocked_search_page_with_session_opens_manual_verification_and_continues(monkeypatch):
-    # 桥接重构后验证码改为轮询检测:第一次 _read_page_state 返回反爬标记,
-    # 轮询时第二次返回干净(用户已通过验证),搜索继续。
+def test_search_web_with_session_extracts_results_via_bridge(monkeypatch):
+    """Happy path: wait-selector + extract IIFE return results for a session."""
     class FakeTabPool:
         def __init__(self, client):
             pass
 
         async def acquire(self, session_id=None):
+            assert session_id == "session-1"
             return {"tab_id": 1}
 
         async def release(self, tab):
@@ -487,8 +483,6 @@ def test_blocked_search_page_with_session_opens_manual_verification_and_continue
             pass
 
         async def evaluate(self, tab_id, js, timeout_ms=None):
-            # 提取 IIFE 以 (function(selectors 开头;wait-selector 探针只是 querySelectorAll(...).length。
-            # 必须先判 IIFE,因为 IIFE 内部也含 .length。
             if "function(selectors" in js:
                 return [
                     {
@@ -503,49 +497,32 @@ def test_blocked_search_page_with_session_opens_manual_verification_and_continue
             return None
 
         async def get_tab_url(self, tab_id):
-            return "https://brave.example/search"
+            return "https://search.brave.com/search?q=FastAPI"
 
     async def fake_resolve(url, log_func=None):
         return url
 
     logs = []
-    call_count = {"n": 0}
-
-    async def fake_read_page_state(self, bridge, tab_id):
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            return "正在验证您不是机器人 在您继续搜索之前进行快速检查。 pow-captcha", ""
-        # 轮询期间:干净页面 → 验证通过。
-        return "", ""
-
     monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
     monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: FakeBridge())
     monkeypatch.setattr(browser_manager, "resolve_redirect_url", fake_resolve)
-    monkeypatch.setattr(
-        browser_manager.BrowserManager, "_read_page_state", fake_read_page_state
-    )
 
     manager = BrowserManager(engine="brave", max_results=3)
-
     results = asyncio.run(
         manager.search_web(
             "FastAPI CORS",
             allow_fallback=False,
             session_id="session-1",
             log_func=logs.append,
+            use_cache=False,
         )
     )
 
     assert results[0]["title"] == "CORS (Cross-Origin Resource Sharing) - FastAPI"
-    assert any("ACTION_REQUIRED: SEARCH_VERIFICATION_REQUIRED" in msg for msg in logs)
-    assert any("收到验证完成信号" in msg for msg in logs)
+    assert any("成功解析" in msg for msg in logs)
 
 
-def test_google_captcha_without_session_returns_without_waiting(monkeypatch):
-    # 桥接重构后验证码改为轮询检测。无 session_id 时仍会提示用户手动解决,
-    # 但不会注册 interaction session(已移除)。这里验证:
-    # - _read_page_state 返回 CAPTCHA 标记
-    # - 轮询超时后返回 []
+def test_search_web_navigate_failure_returns_empty(monkeypatch):
     class FakeTabPool:
         def __init__(self, client):
             pass
@@ -564,7 +541,7 @@ def test_google_captcha_without_session_returns_without_waiting(monkeypatch):
             return False
 
         async def navigate(self, tab_id, url, timeout_ms=20000):
-            return {"tabId": tab_id, "url": url}
+            raise RuntimeError("navigation failed")
 
         async def scroll_by(self, *a, **k):
             pass
@@ -575,20 +552,11 @@ def test_google_captcha_without_session_returns_without_waiting(monkeypatch):
         async def get_tab_url(self, tab_id):
             return "https://www.google.com/search?q=FastAPI%20CORS"
 
-    async def fake_read_page_state(self, bridge, tab_id):
-        return "unusual traffic from your computer network", ""
-
     monkeypatch.setattr(browser_manager, "TabPool", FakeTabPool)
     monkeypatch.setattr(browser_manager, "get_bridge_client", lambda: FakeBridge())
-    monkeypatch.setattr(
-        browser_manager.BrowserManager, "_read_page_state", fake_read_page_state
-    )
-    # 把验证等待超时压到 0,立即失败返回 []。
-    monkeypatch.setattr(browser_manager, "_MANUAL_VERIFICATION_TIMEOUT_SECONDS", 0.0)
 
     manager = BrowserManager(engine="google", max_results=3)
-
-    assert asyncio.run(manager.search_web("FastAPI CORS", allow_fallback=False)) == []
+    assert asyncio.run(manager.search_web("FastAPI CORS", allow_fallback=False, use_cache=False)) == []
 
 
 def test_search_web_cache_is_isolated_from_returned_results(monkeypatch):
@@ -883,7 +851,9 @@ def test_search_selector_loader_skips_invalid_engines(monkeypatch, tmp_path):
 
     assert list(loaded.keys()) == ["custom"]
     assert loaded["custom"]["selectors"]["result_container"] == [".item"]
-    assert loaded["custom"]["captcha_check"] == ["captcha"]
+    # captcha_check is ignored after bridge redesign (solved in real Chrome).
+    assert "captcha_check" not in loaded["custom"]
+    assert loaded["custom"]["wait_selector"] == ".item"
 
 
 def test_workflow_records_failed_searches_as_empty(monkeypatch):
@@ -1435,6 +1405,88 @@ def test_workflow_returns_partial_answer_after_exhausting_iterations():
     assert stats["iterations"] == 6
     assert stats["prompt_tokens"] == 3
     assert stats["completion_tokens"] == 5
+
+
+def test_workflow_uses_resolved_query_for_search_and_answer():
+    """Follow-up turns must drive relevance/answer with decontextualized intent."""
+    captured = {"search_query": None, "answer_query": None, "search_queries": None}
+
+    class AnalysisLLM:
+        async def analyze_task(self, _query, _history):
+            return {
+                "type": "search",
+                "resolved_query": "梅西阿根廷世界杯半决赛对阵英格兰开球时间北京时间",
+                "queries": ["梅西 阿根廷 英格兰 半决赛 开球时间"],
+                "entities": ["梅西", "阿根廷", "英格兰"],
+                "is_followup": True,
+                "topic_changed": False,
+            }
+
+    class AnswerLLM:
+        total_prompt_tokens = 1
+        total_completion_tokens = 1
+
+        async def generate_answer(
+            self,
+            query,
+            _sources,
+            _history,
+            _stream_callback,
+            canvas_mode=False,
+            live_artifacts_mode=False,
+        ):
+            captured["answer_query"] = query
+            return {"status": "sufficient", "answer": "开球时间待官方确认。"}
+
+    workflow = SearchWorkflow(
+        api_key="test",
+        base_url="https://example.test/v1",
+        model="fallback-model",
+        search_engine="google",
+        max_results=3,
+    )
+    workflow.step_llms["analysis"] = AnalysisLLM()
+    workflow.step_llms["answer"] = AnswerLLM()
+
+    async def fake_handle_search(search_queries, search_history, visited_urls, iteration,
+                                 progress_callback, user_input, source_id_counter):
+        captured["search_queries"] = list(search_queries)
+        captured["search_query"] = user_input
+        return (
+            [
+                {
+                    "id": 1,
+                    "title": "World Cup semi",
+                    "url": "https://example.com/wc",
+                    "content": "Argentina vs England kickoff TBD.",
+                }
+            ],
+            1,
+            1,
+        )
+
+    workflow._handle_search = fake_handle_search
+    progress = []
+
+    result = asyncio.run(
+        workflow.run(
+            "具体时间是什么时候？国内时间是什么时候？",
+            progress.append,
+            None,
+            [
+                {"role": "user", "content": "梅西的下一场比赛是什么时候？"},
+                {"role": "assistant", "content": "阿根廷对阵英格兰半决赛。"},
+            ],
+            None,
+            None,
+        )
+    )
+
+    assert "开球时间" in result or "待官方确认" in result
+    assert captured["search_query"] and "梅西" in captured["search_query"]
+    assert captured["answer_query"] and "梅西" in captured["answer_query"]
+    assert any("梅西" in q or "阿根廷" in q for q in (captured["search_queries"] or []))
+    assert any("上下文改写" in msg for msg in progress)
 
 
 def test_run_interactive_mode_passes_tab_id_to_evaluate_and_clicks():

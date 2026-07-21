@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import time
 import uuid
 from typing import List, Dict, Callable, Any, Optional
@@ -184,14 +185,43 @@ class SearchWorkflow:
         return self._format_references(prefix + answer, sources)
 
     def _format_live_artifact_partial_answer(self, answer: str, reason: str) -> str:
+        """Wrap a partial Live Artifact with an HTML banner — never plain-text-prefix HTML.
+
+        Prepending Chinese warning text to a raw HTML artifact used to force
+        ``ensure_live_artifact_answer`` down the Markdown path, which HTML-escaped
+        every tag and showed source markup in the chat bubble.
+        """
         answer = (answer or "").strip()
         if not answer:
             return ""
 
-        prefix = (
-            f"⚠️ {reason}，以下是基于已收集资料整理的临时答案，可能仍不完整。\n\n"
+        body = ensure_live_artifact_answer(answer)
+        if not body:
+            return ""
+
+        # Escape only the reason string; body is already trusted HTML from ensure_*.
+        reason_safe = (
+            str(reason or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
         )
-        return ensure_live_artifact_answer(prefix + answer)
+        banner = (
+            '<div role="note" data-justsearch-partial-banner="true" '
+            'style="margin:0 0 0.75rem 0;padding:0.65rem 0.85rem;'
+            "border-left:3px solid var(--amc-live-artifact-accent,#f59e0b);"
+            "background:var(--amc-live-artifact-surface,transparent);"
+            "color:var(--amc-live-artifact-muted,inherit);font-size:0.92em;"
+            'line-height:1.45;overflow-wrap:anywhere;">'
+            f"⚠️ {reason_safe}，以下是基于已收集资料整理的临时答案，可能仍不完整。"
+            "</div>"
+        )
+        return (
+            '<div style="display:block;width:100%;box-sizing:border-box;'
+            'max-width:100%;overflow-wrap:anywhere;background:transparent;">'
+            f"{banner}{body}</div>"
+        )
 
     async def _handle_direct_url(self, url: str, visited_urls: set,
                                   progress_callback: Callable[[str], None],
@@ -365,13 +395,30 @@ class SearchWorkflow:
                 uncached_items.append(item)
                 uncached_indices.append(i)
 
-        # Crawl only uncached pages — unlimited concurrency
+        # Crawl uncached pages with bounded concurrency (debugger/CDP chokes when
+        # many tabs run interactive Input events at once). Default 2.
         if uncached_items:
-            tasks = [
-                self.browser.crawl_page(item['url'], log_func=progress_callback, interactive_mode=self.interactive_search, query=user_input, llm_client=self._llm_for_step("interaction"), session_id=self.session_id)
-                for item in uncached_items
-            ]
-            contents = await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                crawl_limit = max(1, int(os.environ.get("JUSTSEARCH_CRAWL_CONCURRENCY", "2")))
+            except (ValueError, TypeError):
+                crawl_limit = 2
+            sem = asyncio.Semaphore(crawl_limit)
+
+            async def _crawl_one(item):
+                async with sem:
+                    return await self.browser.crawl_page(
+                        item['url'],
+                        log_func=progress_callback,
+                        interactive_mode=self.interactive_search,
+                        query=user_input,
+                        llm_client=self._llm_for_step("interaction"),
+                        session_id=self.session_id,
+                    )
+
+            contents = await asyncio.gather(
+                *[_crawl_one(item) for item in uncached_items],
+                return_exceptions=True,
+            )
             # Cache results
             for content, orig_idx, item in zip(contents, uncached_indices, uncached_items):
                 if isinstance(content, Exception):
@@ -406,6 +453,20 @@ class SearchWorkflow:
 
         return new_sources, source_id_counter
 
+    async def verify_citation_claims(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        timeout: float = 6.0,
+    ) -> dict[str, dict[str, Any]]:
+        """Run one bounded semantic verification batch using the answer-step model.
+
+        The router owns fail-open behavior; this method deliberately exposes no
+        private client internals and requires no fifth provider/model setting.
+        """
+        client = self._llm_for_step("answer")
+        return await client.verify_citation_claims(items, timeout=timeout)
+
     async def run(self, user_input: str, progress_callback: Callable[[str], None], stream_callback: Optional[Callable[[str], None]] = None, history: Optional[List[Dict[str, str]]] = None, source_callback: Optional[Callable[[List[Dict]], None]] = None, stats_callback: Optional[Callable[[Dict], None]] = None) -> str:
         """
         Executes the JustSearch Workflow with iterative refinement.
@@ -420,6 +481,9 @@ class SearchWorkflow:
             source_id_counter = 0
             total_search_results = 0
             start_time = time.monotonic()
+            # Decontextualized intent used for relevance / crawl / answer (Phase-1 multi-turn).
+            resolved_query = (user_input or "").strip()
+            analysis_entities: list = []
             
             while iteration < self.max_iterations:
                 iteration += 1
@@ -434,15 +498,35 @@ class SearchWorkflow:
                 if iteration == 1:
                     analysis_input = user_input
                 else:
+                    entity_hint = f"\nKnown entities from prior analysis: {analysis_entities}" if analysis_entities else ""
                     analysis_input = (
-                        f"Original User Question: {user_input}\n"
+                        f"Original User Question: {resolved_query or user_input}\n"
+                        f"Raw latest user message: {user_input}\n"
                         f"Previous Search Queries Tried: {search_history}\n"
                         f"Reason previous results were insufficient: {last_feedback}\n"
-                        f"Task: Generate a NEW, different search query (or specific URL) to find the missing information."
+                        f"{entity_hint}\n"
+                        f"Task: Generate a NEW, different self-contained search query (or specific URL) "
+                        f"to find the missing information. Keep the same topic/entities unless the user changed topic."
                     )
 
                 analysis = await self._llm_for_step("analysis").analyze_task(analysis_input, history)
                 logger.info("[Workflow] 任务分析结果: type=%s, data=%s", analysis.get("type", ""), json.dumps(analysis, ensure_ascii=False)[:150])
+
+                if analysis.get("type") != "direct":
+                    candidate_resolved = str(analysis.get("resolved_query") or "").strip()
+                    if candidate_resolved:
+                        resolved_query = candidate_resolved
+                    elif analysis.get("queries"):
+                        resolved_query = str(analysis["queries"][0]).strip() or resolved_query
+                    analysis_entities = list(analysis.get("entities") or analysis_entities or [])
+                    if analysis.get("is_followup") and resolved_query != user_input:
+                        progress_callback(f"上下文改写: {resolved_query[:120]}")
+                    logger.info(
+                        "[Workflow] resolved_query=%s entities=%s followup=%s",
+                        resolved_query[:120],
+                        analysis_entities,
+                        analysis.get("is_followup"),
+                    )
 
                 new_sources = []
 
@@ -450,17 +534,19 @@ class SearchWorkflow:
                     raw_url = analysis.get("url")
                     url = raw_url
                     new_sources, source_id_counter = await self._handle_direct_url(
-                        url, visited_urls, progress_callback, user_input, source_id_counter
+                        url, visited_urls, progress_callback, resolved_query or user_input, source_id_counter
                     )
                 else:
                     search_queries = analysis.get("queries", [])
                     # Fallback for single query or if model returns old format
                     if not search_queries and analysis.get("query"):
                         search_queries = [analysis.get("query")]
+                    if not search_queries and resolved_query:
+                        search_queries = [resolved_query]
 
                     new_sources, source_id_counter, search_count = await self._handle_search(
                         search_queries, search_history, visited_urls, iteration,
-                        progress_callback, user_input, source_id_counter
+                        progress_callback, resolved_query or user_input, source_id_counter
                     )
                     total_search_results += search_count
                 
@@ -484,8 +570,10 @@ class SearchWorkflow:
                 if source_callback:
                     source_callback(accumulated_sources)
                 
+                # Use decontextualized question so generation stays on-topic for follow-ups.
+                answer_query = resolved_query or user_input
                 result = await self._llm_for_step("answer").generate_answer(
-                    user_input,
+                    answer_query,
                     accumulated_sources,
                     history,
                     stream_callback,

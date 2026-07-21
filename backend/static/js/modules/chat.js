@@ -16,10 +16,10 @@ import {
 } from './state.js?v=5';
 import { createCopyButton, createMessageActionRail, createRegenerateButton } from './utils.js?v=6';
 import { updateActiveHistoryItem } from './history-view.js?v=23';
-import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=27';
-import { extractSources, hasCitationSources, linkCitationsInElement, renderWithCitations } from './source-renderer.js?v=9';
-import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=20';
-import { bindCitationEvidenceClicks, setEvidenceContext } from './evidence-panel.js?v=1';
+import { createDynamicLogContainer, createLogEntry, scrollToBottom, appendMessage, renderMessages, showConfirm, createMessageShell } from './ui.js?v=31';
+import { extractSources, hasCitationSources, linkCitationsInElement, renderWithCitations } from './source-renderer.js?v=10';
+import { getInlineLiveArtifact, renderLiveArtifactsForMessage } from './live-artifacts.js?v=27';
+import { bindCitationEvidenceClicks, setEvidenceContext } from './evidence-panel.js?v=2';
 import {
     applyIntensityPresetToSettings,
     getIntensityPreset,
@@ -448,17 +448,22 @@ export function setupChatHandler(elements, renderHistory) {
             const resolvedSources = hasCitationSources(currentSources)
                 ? currentSources
                 : extractSources(currentAnswerBuffer);
-            // Live Artifacts 模式下保留内联 HTML 走 iframe 预览（样式完整、引用照常链接）；
-            // 仅在该模式关闭时，遇到意外 HTML 才退回带引用的 Markdown 渲染。
+            // AMC-aligned Live Artifacts path: native HTML → iframe; when the mode
+            // is on, Markdown / mixed answers are coerced into one themed iframe so
+            // clipped parent-page HTML (thin gray bars) cannot appear.
             const suppressUnfencedInlineArtifact = !state.liveArtifactsMode && hasCitationSources(resolvedSources);
-            if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, isStreaming, { suppressUnfencedInlineArtifact })) {
+            const liveArtifactOptions = {
+                suppressUnfencedInlineArtifact,
+                liveArtifactsMode: Boolean(state.liveArtifactsMode),
+            };
+            if (!getInlineLiveArtifact(currentAnswerBuffer, liveArtifactMessageId, isStreaming, liveArtifactOptions)) {
                 contentWrapper.innerHTML = renderWithCitations(currentAnswerBuffer, resolvedSources);
             }
             renderLiveArtifactsForMessage(contentWrapper, currentAnswerBuffer, {
                 messageId: liveArtifactMessageId,
                 isStreaming,
                 sources: resolvedSources,
-                suppressUnfencedInlineArtifact,
+                ...liveArtifactOptions,
             });
             linkCitationsInElement(contentWrapper, resolvedSources);
             setEvidenceContext({ sources: resolvedSources, citations: currentCitations });
